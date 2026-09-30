@@ -147,7 +147,7 @@ erDiagram
 
 ```mermaid
 flowchart LR
-  subgraph IN[Sign-in, v0.1]
+  subgraph IN[Sign-in, v1.0]
     L[Local user<br/>users.yaml]
     P[Proxy headers<br/>trusted CIDR + shared secret]
     T[PAT<br/>MCP only]
@@ -301,7 +301,7 @@ sequenceDiagram
   H-->>U: {threadId, message, steps}
 ```
 
-### Sign-in modes (v0.1)
+### Sign-in modes (v1.0)
 
 ```mermaid
 sequenceDiagram
@@ -320,5 +320,5 @@ sequenceDiagram
     H->>H: peer in trustedCIDRs AND secret matches? else strip
     H-->>U: session minted; dropped if header identity changes
   end
-  Note over U,H: Native OIDC / SAML / GitHub OAuth are planned for v0.2
+  Note over U,H: Native OIDC / SAML / GitHub OAuth are planned for v1.1
 ```

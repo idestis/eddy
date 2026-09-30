@@ -34,7 +34,7 @@ On the main branch:
 
 ## Release & Changelog
 
-- [ ] First release: tag `v0.1.0` on main; the release workflow publishes git-cliff notes, images and charts
+- [ ] First release: tag `v1.0.0` on main; the release workflow publishes git-cliff notes, images and charts
 - [ ] Subsequent releases: `git tag vX.Y.Z` locally, push with `git push origin vX.Y.Z`
 - [ ] Release workflow generates release notes from `cliff.toml` config automatically
 - [ ] Update CHANGELOG.md after each release (normally done via task/Taskfile automation)

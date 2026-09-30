@@ -1,9 +1,9 @@
-# Eddy: spec v0.1 (MVP)
+# Eddy: spec v1.0
 
-> **MVP changes (2026-09-30).** Where this spec and the ADRs disagree, the ADRs win:
-> - Sign-in is local users plus trusted-proxy headers ([ADR-0003](docs/adr/0003-mvp-security.md)). GitHub OAuth, OIDC and SAML move to v0.2.
+> **v1.0 changes (2026-09-30).** Where this spec and the ADRs disagree, the ADRs win:
+> - Sign-in is local users plus trusted-proxy headers ([ADR-0003](docs/adr/0003-mvp-security.md)). GitHub OAuth, OIDC and SAML move to v1.1.
 > - Hub-owned data (sessions, PATs, threads, audit) lives in SQLite on a PVC ([ADR-0002](docs/adr/0002-hub-storage.md)). Cluster state stays in Kubernetes.
-> - New in the MVP: `/mcp` for Claude Code and other MCP clients, review **threads** on resources, AWS Bedrock as an Ask AI provider, and runtime kill switches.
+> - New in v1.0: `/mcp` for Claude Code and other MCP clients, review **threads** on resources, AWS Bedrock as an Ask AI provider, and runtime kill switches.
 > - The API contract is [docs/api.md](docs/api.md).
 
 A keyboard-first, multi-cluster web UI for FluxCD. Open source (Apache-2.0), Go backend, TanStack frontend. It is installed as a **hub** in one cluster and an **agent** in each workload cluster.
@@ -36,7 +36,7 @@ Single module `github.com/eddy-gitops/eddy` (placeholder org), two binaries, Go 
 | `internal/flux` | Flux kinds, version discovery, status summarizers, inventory parsing |
 | `internal/agent` | Informers, store, WebSocket session, impersonated actions |
 | `internal/hub` | HTTP API, SSE, agent registry, SAR-based filtering, audit, Ask AI |
-| `internal/auth` | Local users, trusted-proxy headers, sessions, CSRF, PATs, group mapping (OIDC/SAML in v0.2) |
+| `internal/auth` | Local users, trusted-proxy headers, sessions, CSRF, PATs, group mapping (OIDC/SAML in v1.1) |
 | `internal/store` | Hub storage: SQLite (default) and memory backends (ADR-0002) |
 | `internal/threads` | RBAC-aware review threads on resources |
 | `internal/mcp` | MCP server at `/mcp` (streamable HTTP, PAT bearer) |
@@ -93,7 +93,7 @@ Main dependencies: `client-go`, `coder/websocket`, `modelcontextprotocol/go-sdk`
 - **Audit:** JSON log lines with user, groups, cluster, action, target and result. Cluster audit logs also record the real user through impersonation.
 - **Security headers:** strict CSP, `frame-ancestors 'none'`, `nosniff`.
 
-## Auth (v0.2 target; the MVP uses ADR-0003)
+## Auth (v1.1 target; v1.0 uses ADR-0003)
 
 | Provider | Notes |
 |---|---|
@@ -124,7 +124,7 @@ spec:
 status:                    # written by hub (status subresource)
   phase: Connected         # Connected | Disconnected
   lastSeen: "2026-09-30T10:00:00Z"
-  agentVersion: v0.1.0
+  agentVersion: v1.0.0
   kubernetesVersion: v1.33.1
   fluxVersion: v2.7.0
   resources: 412
@@ -205,7 +205,7 @@ Conventions and security invariants live in [CLAUDE.md](CLAUDE.md).
 
 ## Roadmap
 
-1. **v0.1 (MVP):** the scope in this spec as amended by ADR-0002 and ADR-0003: local and proxy auth, SQLite store, threads, MCP, Anthropic and Bedrock
-2. **v0.2:** GitHub OAuth2, OIDC and SAML sign-in; MCP OAuth; Postgres store and multi-replica hub; mTLS for agents; `eddy register` CLI
-3. **v0.3:** diff view (`flux diff`), image automation kinds, notification-controller alerts in the UI
+1. **v1.0:** the scope in this spec as amended by ADR-0002 and ADR-0003: local and proxy auth, SQLite store, threads, MCP, Anthropic and Bedrock
+2. **v1.1:** GitHub OAuth2, OIDC and SAML sign-in; MCP OAuth; multiple hub replicas (ADR-0004); mTLS for agents; `eddy register` CLI
+3. **v1.2:** diff view (`flux diff`), image automation kinds, notification-controller alerts in the UI
 4. **Later:** streaming Ask AI, audit webhook, Backstage plugin

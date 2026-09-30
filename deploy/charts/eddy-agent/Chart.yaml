@@ -2,8 +2,8 @@ apiVersion: v2
 name: eddy-agent
 description: Eddy agent. Runs in every workload cluster and dials out to the Eddy hub.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 1.0.0
+appVersion: "1.0.0"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/eddy-gitops/eddy
 sources:

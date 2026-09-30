@@ -1,6 +1,6 @@
 # ADR-0003: MVP security architecture (auth, PATs, MCP, Ask AI, ingress)
 
-- **Status:** Accepted · **Date:** 2026-09-30 · **Supersedes:** the Auth section of SPEC v0.1 for the MVP
+- **Status:** Accepted · **Date:** 2026-09-30 · **Supersedes:** the Auth section of SPEC for v1.0
 - **Context:** SAML, OAuth2 and OIDC move to the next phase. The MVP targets installs behind an internal ingress. It adds PATs, an MCP endpoint and a multi-provider Ask AI. The SPEC's core invariants stay unchanged.
 
 ## 1. Decision summary
@@ -205,13 +205,13 @@ Cache-Control: no-store                 (on /api, /auth, /mcp, index.html; hashe
   - Forbid libraries that inject `<style>` tags. React `style={}` goes through CSSOM and is fine.
   - No Google Fonts or other CDNs.
   - Dev (`npm run dev`) runs without these headers. Only the Go server sets them.
-- **Trusted Types:** add `require-trusted-types-for 'script'` as Report-Only in v0.1 and enforce it in v0.2.
+- **Trusted Types:** add `require-trusted-types-for 'script'` as Report-Only in v1.0 and enforce it in v1.1.
 - **CORS:** none anywhere. The SPA is same-origin.
 
 ## 10. Explicitly deferred
 
 - **Sign-in:** SAML 2.0, GitHub OAuth2, OIDC (Google, Okta, Entra, Dex). MCP OAuth 2.1 authorization (protected-resource metadata), so MCP clients can drop PATs.
-- **Agents:** mTLS for the agent channel (v0.2).
+- **Agents:** mTLS for the agent channel (v1.1).
 - **Scale:** a Postgres store backend and a multi-replica hub (HA). Until then, one replica with SQLite on a PVC.
 - **Local users:** WebAuthn/TOTP.
 - **PATs:** per-cluster or per-namespace scoping. GitHub secret-scanning partner registration.

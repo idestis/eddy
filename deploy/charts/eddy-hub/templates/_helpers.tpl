@@ -54,7 +54,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail (printf "replicaCount=%d is not supported with store.driver=%s: SQLite and the memory store are per-pod. Use replicaCount=1 (multi-replica needs the Postgres store, planned for v0.2)." (int .Values.replicaCount) .Values.store.driver) -}}
 {{- end -}}
 {{- if not (has .Values.store.driver (list "sqlite" "memory")) -}}
-{{- fail (printf "store.driver %q is not supported in v0.1 (sqlite, memory)" .Values.store.driver) -}}
+{{- fail (printf "store.driver %q is not supported (sqlite, memory)" .Values.store.driver) -}}
 {{- end -}}
 {{- if and .Values.oauth2Proxy.enabled (not .Values.credentialsSecret) (not .Values.config.auth.proxy.insecureSkipSharedSecret) -}}
 {{- fail "oauth2Proxy.enabled needs credentialsSecret with the proxy shared secret (EDDY_PROXY_SECRET, >= 32 random bytes), so the hub trusts only your proxy." -}}

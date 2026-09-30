@@ -4,7 +4,7 @@
   "properties": {
     "publicURL": {"type": "string", "pattern": "^https?://[^/\\s]+$", "description": "Browser-facing origin, no path."},
     "agentsPublicURL": {"type": "string"},
-    "replicaCount": {"type": "integer", "minimum": 0, "description": "v0.1 supports a single replica (SQLite); the templates fail for more."},
+    "replicaCount": {"type": "integer", "minimum": 0, "description": "A single replica is supported (SQLite); the templates fail for more."},
     "image": {
       "type": "object",
       "properties": {

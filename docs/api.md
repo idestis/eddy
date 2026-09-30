@@ -48,7 +48,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
   "provider": "local", "csrf": "…",
   "features": {"ai": true, "aiProvider": "bedrock", "mcp": true, "mcpWrites": true,
                "logs": true, "ephemeralStore": false, "devMode": false},
-  "version": "v0.1.0"
+  "version": "v1.0.0"
 }
 ```
 
@@ -110,7 +110,7 @@ Bodies are plain text or Markdown. The UI renders them with no raw HTML and no i
 - **Response:** `{threadId, message: Message, steps: [{tool, args, bytes}]}`
 
 Each ask is stored in a private thread of type `ask`. If you are over the per-user limit you get 429 `rate_limited`, and invalid input gives 400. The reply comes back in one piece,
-with no streaming in v0.1.
+with no streaming in v1.0.
 
 ## Personal access tokens
 

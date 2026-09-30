@@ -18,7 +18,7 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# v0.1 supports a single replica (SQLite). The chart fails if you raise this.
+# A single replica is supported (SQLite); multiple replicas are planned for v1.1. The chart fails if you raise this.
 replicaCount: 1
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ credentialsSecret: ""
 # Extra environment variables for the hub container.
 extraEnv: []
 
-# Storage. v0.1 ships SQLite (on a PVC) and a memory driver for dev.
+# Storage. Eddy ships SQLite (on a PVC) and a memory driver for dev.
 store:
   driver: sqlite                   # sqlite | memory (dev only: loses everything on restart)
   retention:

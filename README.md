@@ -7,8 +7,8 @@ palette, reconcile or suspend with a single key, and read logs, events and YAML 
 leaving the keyboard. We built it for our own platform work and share it in case it helps
 yours.
 
-> **Status: v0.1 MVP, pre-release.** APIs, Helm values and the CRD group
-> (`gitops.eddy.dev`) may change before v1.
+> **Status: v1.0, early release.** The core is stable. Sign-in providers and high
+> availability arrive in v1.1 (see the roadmap below).
 
 ![Eddy resource list](docs/images/list.png)
 
@@ -32,9 +32,9 @@ yours.
     your identity and guardrails, and leave review threads on resources.
   - Ask AI works with the Anthropic API or AWS Bedrock.
 
-## What's in v0.1 and what's next
+## What's in v1.0 and what's next
 
-| Area | Ready in v0.1 | Next (v0.2+) |
+| Area | Ready in v1.0 | Next (v1.1+) |
 |---|---|---|
 | Clusters | Hub and agents over outbound WebSocket, `Cluster` CRD, token auth | mTLS for agents, `eddy register` CLI |
 | Flux | Kustomization, HelmRelease, Git/OCI/Helm repositories, HelmChart, Bucket; workloads and pods; inventory tree | Image automation, notification alerts, `flux diff` view |
@@ -45,7 +45,7 @@ yours.
 | MCP | `/mcp` with fleet-wide read tools, guarded actions and thread tools | Log follow, subscriptions |
 | Threads | Review threads on any resource or cluster, from people, Claude Code and Ask AI | Mentions, notifications, webhooks |
 | Ask AI | Anthropic API or AWS Bedrock (IRSA, Guardrails), read-only tools, redaction | Streaming answers |
-| Storage | SQLite on a PVC (single replica); memory for dev | Postgres backend, multi-replica hub |
+| Storage | Embedded SQLite, no external database needed | Multiple hub replicas (HA) |
 | Ops | Helm charts, internal ingress examples, audit log, runtime kill switches | Prometheus dashboards, audit webhook |
 
 ## Architecture

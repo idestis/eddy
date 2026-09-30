@@ -18,7 +18,7 @@ The MVP adds hub-owned data that Kubernetes does not hold:
 | Audit log | append-only | every action, MCP call and AI tool step | 90 days |
 | User prefs | small JSON per user | rare | kept |
 
-The goals are `helm install` into one namespace with no mandatory external infra, a single replica for v0.1 with a real path to HA, easy backups, and testability. Thread reads must be filtered by the **same SAR check as the target resource** in the workload cluster, not by RBAC in the hub cluster.
+The goals are `helm install` into one namespace with no mandatory external infra, a single replica for v1.0 with a real path to HA, easy backups, and testability. Thread reads must be filtered by the **same SAR check as the target resource** in the workload cluster, not by RBAC in the hub cluster.
 
 ## Decision
 
@@ -27,7 +27,7 @@ The goals are `helm install` into one namespace with no mandatory external infra
 1. **Kubernetes (unchanged, GitOps-managed):** the `Cluster` CRD (spec, plus status written by the hub), agent token Secrets, the session/signing key Secret, the local-users Secret (bcrypt hashes from Helm values) and the hub config ConfigMap.
 2. **`store/sqlite` is the default backend.** It uses `modernc.org/sqlite` (pure Go, no CGO, currently v1.60.1) with a file on a PVC at `/var/lib/eddy/eddy.db`, WAL mode and forward-only embedded migrations.
 3. **`store/memory`** backs unit tests and `make dev-hub`. It is never the Helm default.
-4. **`store/postgres`** (pgx/v5) is planned for v0.2 HA. It is not built in v0.1, but the interface, schema and conformance tests are written to be portable to it.
+4. **`store/postgres`** (pgx/v5) was considered for HA. It is not built in v1.0 (HA is decided in ADR-0004), but the interface, schema and conformance tests are written to be portable to it.
 5. **The store knows nothing about authorization.** The hub service layer filters every thread read through the existing `Authorizer` (SAR cache).
 
 This replaces the spec's "sessions in memory, Redis later". Sessions move into the store, so a restart no longer logs everyone out, and Redis is no longer planned.
@@ -53,7 +53,7 @@ This replaces the spec's "sessions in memory, Redis later". Sessions move into t
 |---|---|---|
 | (a) In-memory only | Rejected as default, kept for tests and dev | A restart loses PATs (Claude Code breaks), threads and audit. Unacceptable once threads exist. |
 | (b) SQLite on PVC | **Chosen** | Best ratio of simplicity to capability. Pure-Go driver keeps static builds and distroless images. |
-| (c) PostgreSQL | Deferred to v0.2 as an option | Right for HA, but a mandatory Postgres (or a bundled chart) is the heaviest ask for OSS adopters. It stays opt-in (`store.driver: postgres`, `existingSecret` DSN). |
+| (c) PostgreSQL | Deferred; see ADR-0004 | Right for HA, but a mandatory Postgres (or a bundled chart) is the heaviest ask for OSS adopters. It stays opt-in (`store.driver: postgres`, `existingSecret` DSN). |
 | (d) K8s API (Thread CRD, ConfigMaps) | Rejected for app data | See below. |
 | (e) Hybrid | **Chosen**, as (b) plus K8s for config | |
 
@@ -255,7 +255,7 @@ A thread stores only a `ResourceRef`, never a snapshot of the resource.
 
 ```yaml
 store:
-  driver: sqlite            # sqlite | memory (dev only) | postgres (v0.2)
+  driver: sqlite            # sqlite | memory (dev only) | more drivers per ADR-0004
   sqlite: {path: /var/lib/eddy/eddy.db}
   postgres: {existingSecret: "", key: dsn}
   retention: {auditDays: 90, sessionIdle: 12h, sessionMax: 168h, tokenMaxTTL: 2160h, resolvedThreadsDays: 0, askThreadsDays: 30}

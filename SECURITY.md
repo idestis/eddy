@@ -13,7 +13,7 @@ to ship a fix or mitigation within 30 days for high-severity issues.
 
 ## Supported versions
 
-Eddy is pre-1.0. Only the latest minor release receives security fixes.
+Only the latest minor release receives security fixes.
 
 ## Security model
 

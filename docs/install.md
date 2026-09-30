@@ -52,7 +52,7 @@ kubectl -n eddy create secret generic eddy-credentials \
 Hash a password for each local user. `hash-password` reads stdin, so the password stays out of shell history:
 
 ```sh
-read -rs PW && printf '%s' "$PW" | docker run --rm -i ghcr.io/eddy-gitops/eddy-hub:0.1.0 hash-password
+read -rs PW && printf '%s' "$PW" | docker run --rm -i ghcr.io/eddy-gitops/eddy-hub:1.0.0 hash-password
 ```
 
 Then write `hub-values.yaml`:
@@ -102,7 +102,7 @@ ingress:
 Install it:
 
 ```sh
-helm install eddy-hub oci://ghcr.io/eddy-gitops/charts/eddy-hub --version 0.1.0 \
+helm install eddy-hub oci://ghcr.io/eddy-gitops/charts/eddy-hub --version 1.0.0 \
   --namespace eddy -f hub-values.yaml
 ```
 
@@ -177,7 +177,7 @@ For each entry the chart creates a `Cluster` custom resource (`kubectl get clust
 `helm upgrade` (or `helm install`) on the hub prints the exact command per cluster in NOTES.txt. It looks like this:
 
 ```sh
-helm install eddy-agent oci://ghcr.io/eddy-gitops/charts/eddy-agent --version 0.1.0 \
+helm install eddy-agent oci://ghcr.io/eddy-gitops/charts/eddy-agent --version 1.0.0 \
   --kube-context prod-eu --namespace eddy-system --create-namespace \
   --set cluster.name=prod-eu \
   --set hub.url=wss://eddy-agents.internal.example.com/agent/v1/connect \

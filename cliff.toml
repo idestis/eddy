@@ -52,4 +52,4 @@ commit_parsers = [
 
 [bump]
 # The first release, when no v* tag exists yet.
-initial_tag = "v0.1.0"
+initial_tag = "v1.0.0"
