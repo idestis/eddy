@@ -12,6 +12,13 @@ WARNING: hub.url is not set (wss://<hub agent endpoint>/agent/v1/connect).
 WARNING: no token. Set token.existingSecret or token.value (the hub chart's NOTES print how).
 {{- end }}
 
+{{- $n := max 1 (int .Values.replicaCount) }}
+Replicas: {{ .Values.replicaCount }} (hot standbys for each other). limits.* are split between them:
+each pod gets QPS {{ max 1 (div (int .Values.limits.qps) $n) }}, burst {{ max 1 (div (int .Values.limits.burst) $n) }}, {{ max 1 (div (int .Values.limits.concurrency) $n) }} requests and {{ max 1 (div (int .Values.limits.logStreams) $n) }} log streams in flight.
+{{- if gt (int .Values.replicaCount) 1 }}
+Agent replicas need an eddy-hub that understands Hello.instance (ADR-0004, v1.0.0 or later).
+{{- end }}
+
 Check the connection:
   kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "eddy-agent.fullname" . }}
 The cluster should show as Connected in the hub UI (kubectl get clusters.gitops.eddy.dev on the hub).

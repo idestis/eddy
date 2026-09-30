@@ -2,7 +2,7 @@
 {{- $uiPort := include "eddy-hub.port" .Values.config.listen.ui }}
 {{- $agentsPort := include "eddy-hub.port" .Values.config.listen.agents }}
 {{- $metricsPort := include "eddy-hub.port" .Values.config.listen.metrics }}
-{{- $ephemeral := eq (include "eddy-hub.ephemeral" .) "true" }}
+{{- $postgres := eq .Values.store.driver "postgres" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,10 +11,9 @@ metadata:
   labels:
     {{- include "eddy-hub.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
-  # SQLite on a ReadWriteOnce volume: never run two pods at once.
+  replicas: {{ include "eddy-hub.replicas" . }}
   strategy:
-    type: Recreate
+    {{- toYaml .Values.strategy | nindent 4 }}
   selector:
     matchLabels:
       {{- include "eddy-hub.selectorLabels" . | nindent 6 }}
@@ -57,6 +56,20 @@ spec:
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef: {fieldPath: metadata.namespace}
+            # Name and address of this replica on the peer channel and in agent_sessions.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+            - name: POD_IP
+              valueFrom:
+                fieldRef: {fieldPath: status.podIP}
+            {{- if $postgres }}
+            - name: EDDY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.store.postgres.dsnSecret.name }}
+                  key: {{ .Values.store.postgres.dsnSecret.key }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -70,6 +83,9 @@ spec:
             {{- end }}
             - {name: agents, containerPort: {{ $agentsPort }}}
             - {name: metrics, containerPort: {{ $metricsPort }}}
+            {{- if $postgres }}
+            - {name: peer, containerPort: {{ .Values.peer.port }}}
+            {{- end }}
           # With the sidecar the UI listener is bound to 127.0.0.1, which the kubelet cannot
           # reach, so liveness uses the agent listener (every listener serves /healthz).
           livenessProbe:
@@ -88,7 +104,6 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
             - {name: tmp, mountPath: /tmp}
-            - {name: data, mountPath: /var/lib/eddy}
             - {name: config, mountPath: /etc/eddy/hub.yaml, subPath: hub.yaml, readOnly: true}
             - {name: users, mountPath: /etc/eddy/users, readOnly: true}
             - {name: key, mountPath: /etc/eddy/key, readOnly: true}
@@ -129,13 +144,6 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 16Mi}
-        - name: data
-          {{- if and .Values.persistence.enabled (not $ephemeral) }}
-          persistentVolumeClaim:
-            claimName: {{ default (printf "%s-data" (include "eddy-hub.fullname" .)) .Values.persistence.existingClaim }}
-          {{- else }}
-          emptyDir: {sizeLimit: 1Gi}
-          {{- end }}
         - name: config
           configMap: {name: {{ include "eddy-hub.fullname" . }}}
         - name: users
@@ -167,15 +175,34 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- if .Values.affinity }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+        {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "eddy-hub.selectorLabels" . | nindent 20 }}
+        {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.topologySpreadConstraints }}
+      {{- if .Values.topologySpreadConstraints }}
       topologySpreadConstraints:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+      {{- else if .Values.topologySpread.enabled }}
+      topologySpreadConstraints:
+        {{- range list "topology.kubernetes.io/zone" "kubernetes.io/hostname" }}
+        - maxSkew: 1
+          topologyKey: {{ . }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "eddy-hub.selectorLabels" $ | nindent 14 }}
+        {{- end }}
       {{- end }}

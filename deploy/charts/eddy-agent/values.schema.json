@@ -35,7 +35,20 @@
         "groups": {"type": "array", "items": {"type": "string", "minLength": 1, "not": {"pattern": "^system:"}}}
       }
     },
-    "replicaCount": {"type": "integer", "minimum": 0, "maximum": 1},
+    "replicaCount": {"type": "integer", "minimum": 0},
+    "strategy": {"type": "object"},
+    "podDisruptionBudget": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "maxUnavailable": {"type": ["integer", "string"]}}},
+    "limits": {
+      "type": "object",
+      "properties": {
+        "qps": {"type": "integer", "minimum": 1},
+        "burst": {"type": "integer", "minimum": 1},
+        "concurrency": {"type": "integer", "minimum": 1},
+        "logStreams": {"type": "integer", "minimum": 1},
+        "sarConcurrency": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
     "healthPort": {"type": "integer", "minimum": 1, "maximum": 65535},
     "networkPolicy": {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
   }

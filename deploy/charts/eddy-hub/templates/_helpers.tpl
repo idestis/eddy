@@ -45,16 +45,26 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "eddy-hub.ephemeral" -}}
-{{- if or (not .Values.persistence.enabled) (eq .Values.store.driver "memory") -}}true{{- end -}}
+{{- if eq .Values.store.driver "memory" -}}true{{- end -}}
+{{- end -}}
+
+{{/* Replicas: the memory store lives inside one pod, so it always runs one. */}}
+{{- define "eddy-hub.replicas" -}}
+{{- if eq .Values.store.driver "memory" -}}1{{- else -}}{{ int .Values.replicaCount }}{{- end -}}
+{{- end -}}
+
+{{/* DNS name of the headless peer Service. */}}
+{{- define "eddy-hub.peerService" -}}
+{{- printf "%s-peers.%s.svc" (include "eddy-hub.fullname" .) .Release.Namespace -}}
 {{- end -}}
 
 {{/* Validation: fail early with a clear message. */}}
 {{- define "eddy-hub.validate" -}}
-{{- if and (gt (int .Values.replicaCount) 1) (ne .Values.store.driver "postgres") -}}
-{{- fail (printf "replicaCount=%d is not supported with store.driver=%s: SQLite and the memory store are per-pod. Use replicaCount=1 (multi-replica needs the Postgres store, planned for v0.2)." (int .Values.replicaCount) .Values.store.driver) -}}
+{{- if not (has .Values.store.driver (list "postgres" "memory")) -}}
+{{- fail (printf "store.driver %q is not supported (postgres, memory). SQLite was removed in favour of PostgreSQL (ADR-0004)." .Values.store.driver) -}}
 {{- end -}}
-{{- if not (has .Values.store.driver (list "sqlite" "memory")) -}}
-{{- fail (printf "store.driver %q is not supported (sqlite, memory)" .Values.store.driver) -}}
+{{- if and (eq .Values.store.driver "postgres") (not .Values.store.postgres.dsnSecret.name) -}}
+{{- fail "store.postgres.dsnSecret.name is required: a Secret whose key (store.postgres.dsnSecret.key, default dsn) holds the PostgreSQL DSN. With CloudNativePG use {name: <cluster>-app, key: uri}. store.driver=memory is for evaluation only." -}}
 {{- end -}}
 {{- if and .Values.oauth2Proxy.enabled (not .Values.credentialsSecret) (not .Values.config.auth.proxy.insecureSkipSharedSecret) -}}
 {{- fail "oauth2Proxy.enabled needs credentialsSecret with the proxy shared secret (EDDY_PROXY_SECRET, >= 32 random bytes), so the hub trusts only your proxy." -}}
@@ -88,8 +98,15 @@ hub.yaml as YAML. User config first, then the values the chart owns.
 {{- if $sidecar -}}
 {{- $_ := set $auth "proxy" (dict "enabled" true "trustedCIDRs" (default (list "127.0.0.1/32") .Values.config.auth.proxy.trustedCIDRs)) -}}
 {{- end -}}
-{{- $store := dict "driver" .Values.store.driver "path" "/var/lib/eddy/eddy.db" "ephemeral" (eq (include "eddy-hub.ephemeral" .) "true") "retention" .Values.store.retention -}}
+{{- $store := dict "driver" .Values.store.driver "retention" .Values.store.retention -}}
+{{- if eq .Values.store.driver "postgres" -}}
+{{- $_ := set $store "postgres" (dict "dsnEnv" "EDDY_DATABASE_URL" "maxOpenConns" (int .Values.store.postgres.maxOpenConns)) -}}
+{{- end -}}
 {{- $owned := dict "publicURL" .Values.publicURL "namespace" .Release.Namespace "listen" $listen "auth" $auth "store" $store "runtime" (dict "flagsFile" "/etc/eddy/runtime/flags.yaml") -}}
+{{- if eq .Values.store.driver "postgres" -}}
+{{/* podName and advertise default to $POD_NAME and $POD_IP (set in the Deployment). */}}
+{{- $_ := set $owned "peer" (dict "listen" (printf ":%d" (int .Values.peer.port)) "service" (include "eddy-hub.peerService" .)) -}}
+{{- end -}}
 {{- $cfg := mustMergeOverwrite (deepCopy .Values.config) $owned -}}
 {{- toYaml $cfg -}}
 {{- end -}}

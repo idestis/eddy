@@ -8,10 +8,20 @@ UI:  {{ .Values.publicURL }}
 {{- end }}
 {{- if eq (include "eddy-hub.ephemeral" .) "true" }}
 
-WARNING: the store is EPHEMERAL ({{ if eq .Values.store.driver "memory" }}store.driver=memory{{ else }}persistence.enabled=false{{ end }}).
-  Every pod restart or reschedule logs out all users, invalidates every MCP token
-  (clients get 401) and loses threads and in-database audit events.
-  Set persistence.enabled=true for anything beyond a demo.
+################################################################################
+##  WARNING: store.driver=memory. FOR EVALUATION ONLY.                        ##
+##  Every pod restart logs out all users, invalidates every MCP token         ##
+##  (clients get 401) and loses threads and in-database audit events.         ##
+##  It always runs ONE replica (replicaCount is ignored): no HA either.       ##
+##  For anything real, use PostgreSQL: store.driver=postgres and              ##
+##  store.postgres.dsnSecret (see docs/install.md, CloudNativePG example).    ##
+################################################################################
+{{- else }}
+
+Store: PostgreSQL from Secret {{ .Values.store.postgres.dsnSecret.name }} (key {{ .Values.store.postgres.dsnSecret.key }}).
+  {{ .Values.replicaCount }} active/active replicas; they relay agent traffic over the peer
+  Service {{ include "eddy-hub.peerService" . }}:{{ .Values.peer.port }}.
+  Back up the database with pg_dump or your operator's backups.
 {{- end }}
 {{- if and .Values.config.auth.local.enabled (not .Values.users.existingSecret) (not .Values.users.list) }}
 

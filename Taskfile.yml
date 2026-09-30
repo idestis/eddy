@@ -65,8 +65,8 @@ tasks:
 
   # Local mode (docs/development.md). Task variables: CONTEXTS=ctx1,ctx2[=name] (default: the
   # current context), ALLOW_WRITES=1, ALLOW_WRITES_PROTECTED=1, PROTECT=<regex> (default
-  # (?i)prod), SQLITE=1, and LOCAL=0 for the real impersonating agent (kind). They override
-  # EDDY_AGENT_* from the environment or .env.
+  # (?i)prod), PG=1 (the postgres store from dev:pg instead of memory), and LOCAL=0 for the
+  # real impersonating agent (kind). They override EDDY_AGENT_* from the environment or .env.
   dev:
     desc: "Local mode: hub, agent (your kube contexts, read-only) and web with hot reload. CONTEXTS=a,b"
     env: &dev-env
@@ -75,14 +75,22 @@ tasks:
       ALLOW_WRITES: '{{.ALLOW_WRITES | default ""}}'
       ALLOW_WRITES_PROTECTED: '{{.ALLOW_WRITES_PROTECTED | default ""}}'
       PROTECT: '{{.PROTECT | default ""}}'
-      SQLITE: '{{.SQLITE | default ""}}'
+      PG: '{{.PG | default ""}}'
     deps: [ui:install]
     cmds: [hack/dev.sh all]
 
   dev:config:
-    desc: Write .dev/hub.yaml and .dev/agent-token for local mode (CONTEXTS=, PROTECT=, SQLITE=1)
+    desc: Write .dev/hub.yaml and .dev/agent-token for local mode (CONTEXTS=, PROTECT=, PG=1)
     env: *dev-env
     cmds: [hack/dev.sh config]
+
+  dev:pg:
+    desc: Start a throwaway postgres:17 on 127.0.0.1:55432 (named volume eddy-dev-pg) and print the DSN
+    cmds: [hack/dev.sh pg]
+
+  dev:pg:down:
+    desc: Stop the dev:pg container (the volume keeps the data)
+    cmds: [hack/dev.sh pg-down]
 
   dev:hub:
     desc: Run the hub with hot reload (air, -tags dev), the generated .dev/hub.yaml and fake login
@@ -121,7 +129,8 @@ tasks:
     desc: Lint and template the Helm charts
     cmds:
       - helm lint deploy/charts/eddy-hub deploy/charts/eddy-agent
-      - helm template eddy deploy/charts/eddy-hub > /dev/null
+      - helm template eddy deploy/charts/eddy-hub --set store.postgres.dsnSecret.name=eddy-db > /dev/null
+      - helm template eddy deploy/charts/eddy-hub --set store.driver=memory > /dev/null
       - helm template eddy deploy/charts/eddy-agent --set cluster.name=test --set hub.url=wss://hub.example.com/agent/v1/connect --set token.value=x > /dev/null
 
   kind:up:

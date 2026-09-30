@@ -136,16 +136,30 @@ jobs:
         with:
           persist-credentials: false
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-      - run: helm lint deploy/charts/eddy-hub deploy/charts/eddy-agent
-      - run: helm template eddy deploy/charts/eddy-hub > /dev/null
+      - run: helm lint deploy/charts/eddy-hub deploy/charts/eddy-agent --set store.postgres.dsnSecret.name=eddy-db
+      # PostgreSQL is required unless the evaluation-only memory store is chosen.
+      - run: helm template eddy deploy/charts/eddy-hub --set store.postgres.dsnSecret.name=eddy-db > /dev/null
+      - run: helm template eddy deploy/charts/eddy-hub --set store.driver=memory > /dev/null
+      - name: Hub chart without a DSN Secret must fail
+        run: "! helm template eddy deploy/charts/eddy-hub > /dev/null 2>&1"
       - run: >
           helm template eddy deploy/charts/eddy-agent
           --set cluster.name=test
           --set hub.url=wss://hub.example.com/agent/v1/connect
           --set token.value=x > /dev/null
+      - run: >
+          helm template eddy deploy/charts/eddy-agent
+          --set cluster.name=test
+          --set hub.url=wss://hub.example.com/agent/v1/connect
+          --set token.existingSecret=agent-token
+          --set replicaCount=3 --set limits.qps=30
+          --set 'impersonation.groups={eddy:authenticated,eddy:platform}' > /dev/null
       - name: Hub chart with every optional block enabled
         run: >
           helm template eddy deploy/charts/eddy-hub
+          --set store.postgres.dsnSecret.name=eddy-db-app --set store.postgres.dsnSecret.key=uri
+          --set replicaCount=3
+          --set 'networkPolicy.egress.postgresTo[0].podSelector.matchLabels.cnpg\.io/cluster=eddy-db'
           --set credentialsSecret=creds
           --set oauth2Proxy.enabled=true --set oauth2Proxy.existingSecret=o2p
           --set ingress.ui.enabled=true --set 'ingress.ui.hosts={eddy.example.com}'

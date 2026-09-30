@@ -41,3 +41,24 @@ spec:
     - name: http
       port: {{ .Values.service.agents.httpPort }}
       targetPort: agents
+{{- if eq .Values.store.driver "postgres" }}
+---
+# Headless Service for the peer channel: its DNS lists every hub pod, ready or not, so
+# replicas can link to each other before they are Ready (readiness waits for those links).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}-peers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "eddy-hub.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: peer
+      port: {{ .Values.peer.port }}
+      targetPort: peer
+{{- end }}

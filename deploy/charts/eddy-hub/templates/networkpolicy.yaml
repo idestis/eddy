@@ -1,6 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $np := .Values.networkPolicy }}
 {{- $ui := ternary "4180" (include "eddy-hub.port" .Values.config.listen.ui) .Values.oauth2Proxy.enabled }}
+{{- $postgres := eq .Values.store.driver "postgres" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -36,6 +37,15 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    {{- if $postgres }}
+    # The peer channel: only other hub pods of this release.
+    - ports:
+        - {port: {{ .Values.peer.port }}, protocol: TCP}
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "eddy-hub.selectorLabels" . | nindent 14 }}
+    {{- end }}
   {{- if $np.egress.enabled }}
   egress:
     - ports:
@@ -48,6 +58,22 @@ spec:
         - {port: {{ . }}, protocol: TCP}
         {{- end }}
         {{- end }}
+    {{- if $postgres }}
+    - ports:
+        {{- range $np.egress.postgresPorts }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+      {{- with $np.egress.postgresTo }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    - ports:
+        - {port: {{ .Values.peer.port }}, protocol: TCP}
+      to:
+        - podSelector:
+            matchLabels:
+              {{- include "eddy-hub.selectorLabels" . | nindent 14 }}
+    {{- end }}
     {{- with $np.egress.extra }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

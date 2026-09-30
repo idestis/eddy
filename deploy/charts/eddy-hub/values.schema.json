@@ -4,7 +4,11 @@
   "properties": {
     "publicURL": {"type": "string", "pattern": "^https?://[^/\\s]+$", "description": "Browser-facing origin, no path."},
     "agentsPublicURL": {"type": "string"},
-    "replicaCount": {"type": "integer", "minimum": 0, "description": "A single replica is supported (SQLite); the templates fail for more."},
+    "replicaCount": {"type": "integer", "minimum": 0, "description": "Active/active hub replicas. More than 1 needs store.driver=postgres."},
+    "strategy": {"type": "object"},
+    "podDisruptionBudget": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "maxUnavailable": {"type": ["integer", "string"]}}},
+    "peer": {"type": "object", "properties": {"port": {"type": "integer", "minimum": 1, "maximum": 65535}}},
+    "topologySpread": {"type": "object", "properties": {"enabled": {"type": "boolean"}}},
     "image": {
       "type": "object",
       "properties": {
@@ -18,7 +22,19 @@
     "store": {
       "type": "object",
       "properties": {
-        "driver": {"enum": ["sqlite", "memory"]},
+        "driver": {"enum": ["postgres", "memory"]},
+        "postgres": {
+          "type": "object",
+          "properties": {
+            "dsnSecret": {
+              "type": "object",
+              "properties": {"name": {"type": "string"}, "key": {"type": "string", "minLength": 1}},
+              "additionalProperties": false
+            },
+            "maxOpenConns": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
         "retention": {
           "type": "object",
           "properties": {
@@ -27,16 +43,6 @@
             "askThreadsDays": {"type": "integer", "minimum": 0}
           }
         }
-      }
-    },
-    "persistence": {
-      "type": "object",
-      "properties": {
-        "enabled": {"type": "boolean"},
-        "existingClaim": {"type": "string"},
-        "storageClass": {"type": "string"},
-        "accessModes": {"type": "array", "items": {"type": "string"}},
-        "size": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti)?$"}
       }
     },
     "users": {

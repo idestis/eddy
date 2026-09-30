@@ -41,7 +41,28 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-replicaCount: 1
+# Agent replicas (ADR-0004). Every replica watches the cluster and connects to the hub; the
+# hub serves the cluster from the oldest one and keeps the others as hot standbys, so losing
+# a pod or node does not disconnect the cluster. The cost is one set of watches per replica.
+replicaCount: 2
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# Control-plane protection, for the agent Deployment as a whole: the chart divides every value
+# by replicaCount (rounding down, at least 1) before passing it to each pod, so the API server
+# sees the same total load whatever the replica count.
+limits:
+  qps: 20             # client-go QPS (EDDY_KUBE_QPS), for the agent's own clients and, separately, all impersonated ones
+  burst: 40           # client-go burst (EDDY_KUBE_BURST)
+  concurrency: 16     # user requests in flight (EDDY_MAX_CONCURRENT); hub replicas prefer the agent connected to them, so every agent replica may serve
+  logStreams: 8       # log streams in flight (EDDY_MAX_LOG_STREAMS)
+  sarConcurrency: 8   # SubjectAccessReviews in flight (EDDY_MAX_SAR_CONCURRENT)
 
 extraEnv: []
 
@@ -77,6 +98,8 @@ healthPort: 8081
 
 nodeSelector: {}
 tolerations: []
+# Default: prefer replicas on different nodes (podAntiAffinity, preferred). Setting affinity
+# replaces that default.
 affinity: {}
 priorityClassName: ""
 

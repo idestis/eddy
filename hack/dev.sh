@@ -3,13 +3,15 @@
 # `task dev:web`. DEV ONLY: nothing here is used by the charts or the release images.
 #
 #   hack/dev.sh config   write .dev/hub.yaml (and .dev/agent-token when missing)
+#   hack/dev.sh pg       start a throwaway postgres:17 on 127.0.0.1:55432 and print its DSN
+#   hack/dev.sh pg-down  stop it (the named volume keeps the data)
 #   hack/dev.sh hub      the hub with hot reload (air, -tags dev)
 #   hack/dev.sh agent    the agent with hot reload; local mode unless LOCAL=0
 #   hack/dev.sh web      Vite on http://localhost:5173
 #   hack/dev.sh all      config, then hub, agent and web together; Ctrl+C stops all
 #
 # Settings, highest precedence first: task variables (CONTEXTS=, LOCAL=, ALLOW_WRITES=,
-# ALLOW_WRITES_PROTECTED=, PROTECT=, SQLITE=), then the environment or .env (EDDY_AGENT_*),
+# ALLOW_WRITES_PROTECTED=, PROTECT=, PG=), then the environment or .env (EDDY_AGENT_*),
 # then the defaults. See docs/development.md.
 set -euo pipefail
 
@@ -19,13 +21,17 @@ AIR_VERSION=v1.67.4
 HUB_AGENT_URL=ws://127.0.0.1:8443/agent/v1/connect
 TOKEN_FILE=.dev/agent-token
 HUB_CONFIG=.dev/hub.yaml
+PG_CONTAINER=eddy-dev-pg
+PG_VOLUME=eddy-dev-pg
+PG_IMAGE=postgres:17
+PG_DSN="postgres://eddy:eddy-dev@127.0.0.1:55432/eddy?sslmode=disable"
 
 contexts="${CONTEXTS:-${EDDY_AGENT_CONTEXTS:-}}"
 local_mode="${LOCAL:-${EDDY_AGENT_LOCAL:-1}}"
 allow_writes="${ALLOW_WRITES:-${EDDY_AGENT_ALLOW_WRITES:-0}}"
 allow_writes_protected="${ALLOW_WRITES_PROTECTED:-0}"
 protect="${PROTECT:-${EDDY_AGENT_PROTECT:-(?i)prod}}"
-sqlite="${SQLITE:-0}"
+pg="${PG:-0}"
 
 die() {
   echo "hack/dev.sh: $*" >&2
@@ -59,16 +65,50 @@ cmd_config() {
     contexts=""
   fi
   local args=(--contexts "$contexts" --protect "$protect" --out "$HUB_CONFIG" --token-file "$TOKEN_FILE")
-  if is_true "$sqlite"; then
-    args+=(--sqlite)
+  if is_true "$pg"; then
+    export EDDY_DATABASE_URL="${EDDY_DATABASE_URL:-$PG_DSN}"
+    args+=(--postgres)
   fi
   go run -tags dev ./cmd/hub dev-config "${args[@]}"
+}
+
+# cmd_pg starts (or reuses) the dev PostgreSQL. The port is bound to loopback only, and
+# the password is a fixed dev value: never expose this container.
+cmd_pg() {
+  command -v docker >/dev/null 2>&1 || die "docker is required for task dev:pg"
+  if docker container inspect "$PG_CONTAINER" >/dev/null 2>&1; then
+    if [[ $(docker container inspect -f '{{.State.Running}}' "$PG_CONTAINER") != true ]]; then
+      docker start "$PG_CONTAINER" >/dev/null
+    fi
+  else
+    docker run -d --name "$PG_CONTAINER" \
+      -e POSTGRES_USER=eddy -e POSTGRES_PASSWORD=eddy-dev -e POSTGRES_DB=eddy \
+      -p 127.0.0.1:55432:5432 -v "$PG_VOLUME:/var/lib/postgresql/data" "$PG_IMAGE" >/dev/null
+  fi
+  local i
+  for i in $(seq 1 60); do
+    if docker exec "$PG_CONTAINER" pg_isready -U eddy -d eddy >/dev/null 2>&1; then
+      echo "PostgreSQL is ready. DSN (task dev PG=1 uses it; export it for anything else):"
+      echo "  EDDY_DATABASE_URL=$PG_DSN"
+      return 0
+    fi
+    [[ $i == 60 ]] && die "PostgreSQL did not become ready; see: docker logs $PG_CONTAINER"
+    sleep 1
+  done
+}
+
+cmd_pg_down() {
+  docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+  echo "stopped $PG_CONTAINER; the data stays in the $PG_VOLUME volume (docker volume rm $PG_VOLUME deletes it)"
 }
 
 cmd_hub() {
   [[ -f $HUB_CONFIG ]] || die "$HUB_CONFIG is missing; run: task dev:config"
   load_token
   export EDDY_DEV_MODE=1
+  if is_true "$pg"; then
+    export EDDY_DATABASE_URL="${EDDY_DATABASE_URL:-$PG_DSN}"
+  fi
   air_cmd
   exec "${AIR[@]}" -c .air.hub.toml
 }
@@ -128,6 +168,9 @@ prefix() {
 }
 
 cmd_all() {
+  if is_true "$pg"; then
+    cmd_pg
+  fi
   cmd_config
   load_token
   local names=(hub agent web) colors=(36 35 32) i
@@ -180,12 +223,14 @@ cmd_all() {
 
 case "${1:-}" in
 config) cmd_config ;;
+pg) cmd_pg ;;
+pg-down) cmd_pg_down ;;
 hub) cmd_hub ;;
 agent) cmd_agent ;;
 web) cmd_web ;;
 all) cmd_all ;;
 *)
-  echo "usage: hack/dev.sh config|hub|agent|web|all" >&2
+  echo "usage: hack/dev.sh config|pg|pg-down|hub|agent|web|all" >&2
   exit 2
   ;;
 esac
