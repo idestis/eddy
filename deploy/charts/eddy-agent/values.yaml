@@ -29,6 +29,8 @@ impersonation:
   # Remember eddy:authenticated, which every signed-in user carries.
   groups: []
   # e.g. ["eddy:authenticated", "eddy:platform", "eddy:oncall"]
+  # Users the agent refuses to impersonate, checked again after the hub's own check.
+  denyUserPrefixes: ["system:", "eks:", "kubernetes-admin"]
 
 nameOverride: ""
 fullnameOverride: ""

@@ -63,6 +63,8 @@ spec:
             - name: EDDY_ALLOWED_GROUPS
               value: {{ join "," .Values.impersonation.groups | quote }}
             {{- end }}
+            - name: EDDY_DENY_USER_PREFIXES
+              value: {{ join "," .Values.impersonation.denyUserPrefixes | quote }}
             {{- if .Values.hub.allowInsecure }}
             - name: EDDY_ALLOW_INSECURE
               value: "1"
