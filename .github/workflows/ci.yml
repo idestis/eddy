@@ -56,6 +56,22 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     name: Go (vet, staticcheck, test)
     runs-on: ubuntu-24.04
+    # The store conformance suite runs against this server (internal/store/postgres).
+    # Each test creates and drops its own schema.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: eddy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EDDY_TEST_POSTGRES_DSN: postgres://postgres:eddy@127.0.0.1:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

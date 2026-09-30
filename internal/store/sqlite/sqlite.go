@@ -8,6 +8,12 @@
 // query-only connections. Schema changes are forward-only embedded
 // migrations (see migrate.go). All times are stored as unix milliseconds.
 //
+// Rate limits, agent sessions and events are kept in process (see
+// internal/store/internal/inproc), so this backend supports one replica only.
+//
+// ADR-0004 replaces this backend with internal/store/postgres. It is kept
+// only until the hub has moved over, and will then be deleted.
+//
 // See docs/adr/0002-hub-storage.md.
 package sqlite
 
@@ -26,6 +32,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/internal/inproc"
 	"github.com/idestis/eddy/internal/store/internal/storeutil"
 )
 
@@ -49,6 +56,10 @@ type Store struct {
 	w    *sql.DB // single writer connection, BEGIN IMMEDIATE
 	r    *sql.DB // read-only pool
 	log  *slog.Logger
+
+	limits *inproc.RateLimits
+	agents *inproc.AgentSessions
+	events inproc.Events
 }
 
 var _ store.Store = (*Store)(nil)
@@ -82,7 +93,10 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 	w.SetConnMaxLifetime(0)
 	w.SetConnMaxIdleTime(0)
 
-	s := &Store{path: o.Path, w: w, log: o.Logger.With("component", "store.sqlite")}
+	s := &Store{
+		path: o.Path, w: w, log: o.Logger.With("component", "store.sqlite"),
+		limits: inproc.NewRateLimits(), agents: inproc.NewAgentSessions(), events: inproc.NewEvents(),
+	}
 	if err := w.PingContext(ctx); err != nil {
 		_ = w.Close()
 		return nil, fmt.Errorf("sqlite: open %s: %w", o.Path, err)
@@ -136,6 +150,10 @@ func (s *Store) Threads() store.Threads   { return threads{s} }
 func (s *Store) Audit() store.Audit       { return audit{s} }
 func (s *Store) Prefs() store.Prefs       { return prefs{s} }
 
+func (s *Store) RateLimits() store.RateLimits       { return s.limits }
+func (s *Store) AgentSessions() store.AgentSessions { return s.agents }
+func (s *Store) Events() store.Events               { return s.events }
+
 // Ping checks both connection pools.
 func (s *Store) Ping(ctx context.Context) error {
 	if err := s.w.PingContext(ctx); err != nil {
@@ -147,8 +165,9 @@ func (s *Store) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Close closes both pools.
+// Close closes both pools and every event subscription.
 func (s *Store) Close() error {
+	s.events.Close()
 	return errors.Join(s.r.Close(), s.w.Close())
 }
 
@@ -168,6 +187,9 @@ func (s *Store) Prune(ctx context.Context, now time.Time, r store.Retention) (st
 	var st store.PruneStats
 	nowMs := storeutil.Ms(now)
 	var err error
+
+	st.RateLimits = s.limits.Prune(now)
+	st.AgentSessions = s.agents.Prune(now.Add(-store.AgentSessionPruneAfter))
 
 	if st.Sessions, err = s.deleteBatched(ctx, "sessions", "expires_at <= ?", nowMs); err != nil {
 		return st, err

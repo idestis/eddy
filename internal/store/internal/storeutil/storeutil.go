@@ -335,3 +335,60 @@ func PrepareToken(t store.Token) (store.Token, error) {
 	t.RevokedAt = NormPtr(t.RevokedAt)
 	return t, nil
 }
+
+// CheckRateLimit validates the arguments of RateLimits.Hit.
+func CheckRateLimit(key string, window time.Duration) error {
+	if key == "" {
+		return fmt.Errorf("%w: rate-limit key is required", store.ErrInvalid)
+	}
+	if window < time.Millisecond {
+		return fmt.Errorf("%w: rate-limit window must be at least 1ms, got %s", store.ErrInvalid, window)
+	}
+	return nil
+}
+
+// PrepareAgentSession validates and normalises a session for
+// AgentSessions.Upsert.
+func PrepareAgentSession(s store.AgentSession) (store.AgentSession, error) {
+	if s.Cluster == "" || s.HubPod == "" || s.AgentInstance == "" {
+		return s, fmt.Errorf("%w: agent session cluster, hub pod and agent instance are required", store.ErrInvalid)
+	}
+	if s.Seq < 0 {
+		return s, fmt.Errorf("%w: agent session seq must not be negative", store.ErrInvalid)
+	}
+	s.ConnectedAt = NowIfZero(s.ConnectedAt)
+	if s.HeartbeatAt.IsZero() {
+		s.HeartbeatAt = s.ConnectedAt
+	}
+	s.HeartbeatAt = Norm(s.HeartbeatAt)
+	return s, nil
+}
+
+// EncodeEvent validates e for Events.Publish and returns its JSON form.
+func EncodeEvent(e store.Event) ([]byte, error) {
+	switch e.Kind {
+	case store.EventThread, store.EventRevoke, store.EventAgent:
+	default:
+		return nil, fmt.Errorf("%w: event kind %q", store.ErrInvalid, e.Kind)
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return nil, fmt.Errorf("store: encode event: %w", err)
+	}
+	if len(b) > store.MaxEventBytes {
+		return nil, fmt.Errorf("%w: event larger than %d bytes", store.ErrLimit, store.MaxEventBytes)
+	}
+	return b, nil
+}
+
+// DecodeEvent parses an event produced by EncodeEvent.
+func DecodeEvent(b []byte) (store.Event, error) {
+	var e store.Event
+	if err := json.Unmarshal(b, &e); err != nil {
+		return store.Event{}, fmt.Errorf("store: decode event: %w", err)
+	}
+	if e.Kind == "" {
+		return store.Event{}, errors.New("store: decode event: kind is missing")
+	}
+	return e, nil
+}

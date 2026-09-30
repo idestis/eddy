@@ -2,8 +2,9 @@
 // a single mutex. Everything is lost when the process exits, so it is meant
 // for tests and `task dev:hub`, never for production.
 //
-// It implements exactly the semantics of the sqlite backend; both are checked
-// by the storetest conformance suite.
+// It implements exactly the semantics of the postgres backend; both are
+// checked by the storetest conformance suite. Rate limits, agent sessions
+// and events stay inside the process, which is correct for one replica only.
 package memory
 
 import (
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/internal/inproc"
 	"github.com/idestis/eddy/internal/store/internal/storeutil"
 )
 
@@ -31,6 +33,10 @@ type Store struct {
 	auditSeq int64
 	prefs    map[string]json.RawMessage
 	closed   bool
+
+	limits *inproc.RateLimits
+	agents *inproc.AgentSessions
+	events inproc.Events
 }
 
 type threadRec struct {
@@ -48,6 +54,9 @@ func New() *Store {
 		threads:  map[string]*threadRec{},
 		msgIDs:   map[string]string{},
 		prefs:    map[string]json.RawMessage{},
+		limits:   inproc.NewRateLimits(),
+		agents:   inproc.NewAgentSessions(),
+		events:   inproc.NewEvents(),
 	}
 }
 
@@ -56,6 +65,10 @@ func (s *Store) Tokens() store.Tokens     { return tokens{s} }
 func (s *Store) Threads() store.Threads   { return threads{s} }
 func (s *Store) Audit() store.Audit       { return audit{s} }
 func (s *Store) Prefs() store.Prefs       { return prefs{s} }
+
+func (s *Store) RateLimits() store.RateLimits       { return s.limits }
+func (s *Store) AgentSessions() store.AgentSessions { return s.agents }
+func (s *Store) Events() store.Events               { return s.events }
 
 // Ping reports whether the store is open.
 func (s *Store) Ping(context.Context) error {
@@ -67,11 +80,13 @@ func (s *Store) Ping(context.Context) error {
 	return nil
 }
 
-// Close marks the store closed. Data is kept so tests can still inspect it.
+// Close marks the store closed and closes every event subscription. Data is
+// kept so tests can still inspect it.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	s.events.Close()
 	return nil
 }
 
@@ -86,6 +101,8 @@ func (s *Store) Prune(_ context.Context, now time.Time, r store.Retention) (stor
 	var st store.PruneStats
 	nowMs := storeutil.Ms(now)
 
+	st.RateLimits = s.limits.Prune(now)
+	st.AgentSessions = s.agents.Prune(now.Add(-store.AgentSessionPruneAfter))
 	for k, v := range s.sessions {
 		if storeutil.Ms(v.ExpiresAt) <= nowMs {
 			delete(s.sessions, k)

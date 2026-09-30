@@ -116,10 +116,23 @@ type Tokens struct {
 }
 
 type Store struct {
-	Driver    string    `json:"driver"`    // sqlite | memory
+	// Driver is postgres | memory | sqlite. sqlite is deprecated by ADR-0004
+	// and will be removed; it supports one replica only.
+	Driver    string    `json:"driver"`
 	Path      string    `json:"path"`      // sqlite file, default /var/lib/eddy/eddy.db
-	Ephemeral bool      `json:"ephemeral"` // set by the chart when persistence is off
+	Ephemeral bool      `json:"ephemeral"` // sqlite: set by the chart when persistence is off
+	Postgres  Postgres  `json:"postgres"`
 	Retention Retention `json:"retention"`
+}
+
+// Postgres configures the postgres store driver.
+type Postgres struct {
+	// DSNEnv names the environment variable holding the connection string
+	// (a libpq URL or keyword/value string). Default EDDY_DATABASE_URL. The
+	// DSN is never read from the config file because it may hold a password.
+	DSNEnv string `json:"dsnEnv"`
+	// MaxOpenConns caps the connection pool per replica. Default 10.
+	MaxOpenConns int `json:"maxOpenConns"`
 }
 
 type Retention struct {
@@ -285,6 +298,8 @@ func (h *Hub) applyDefaults() {
 
 	def(&h.Store.Driver, "sqlite")
 	def(&h.Store.Path, "/var/lib/eddy/eddy.db")
+	def(&h.Store.Postgres.DSNEnv, "EDDY_DATABASE_URL")
+	defI(&h.Store.Postgres.MaxOpenConns, 10)
 	defI(&h.Store.Retention.AuditDays, 90)
 	defI(&h.Store.Retention.AskThreadsDays, 30)
 
@@ -340,9 +355,16 @@ func (h *Hub) Validate() error {
 		errs = append(errs, errors.New("auth.tokens.threadWriteScope must be read or operate"))
 	}
 	switch h.Store.Driver {
+	case "postgres":
+		if os.Getenv(h.Store.Postgres.DSNEnv) == "" {
+			errs = append(errs, fmt.Errorf("store.postgres: %s must hold the database DSN", h.Store.Postgres.DSNEnv))
+		}
+		if h.Store.Postgres.MaxOpenConns < 1 {
+			errs = append(errs, errors.New("store.postgres.maxOpenConns must be at least 1"))
+		}
 	case "sqlite", "memory":
 	default:
-		errs = append(errs, fmt.Errorf("store.driver %q is not supported (sqlite, memory)", h.Store.Driver))
+		errs = append(errs, fmt.Errorf("store.driver %q is not supported (postgres, memory, sqlite)", h.Store.Driver))
 	}
 	if h.AI.Enabled {
 		switch h.AI.Provider {

@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/store/internal/pgtest"
 	"github.com/idestis/eddy/internal/store/memory"
+	"github.com/idestis/eddy/internal/store/postgres"
 	"github.com/idestis/eddy/internal/store/sqlite"
 	"github.com/idestis/eddy/internal/store/storeopen"
 )
@@ -24,7 +26,8 @@ func TestOpen(t *testing.T) {
 		{"memory warns", config.Store{Driver: "memory"}, "memory", true, false},
 		{"sqlite default driver", config.Store{}, "sqlite", false, false},
 		{"sqlite ephemeral warns", config.Store{Driver: "sqlite", Ephemeral: true}, "sqlite", true, false},
-		{"unknown driver", config.Store{Driver: "postgres"}, "", false, true},
+		{"unknown driver", config.Store{Driver: "mysql"}, "", false, true},
+		{"postgres without DSN", config.Store{Driver: "postgres", Postgres: config.Postgres{DSNEnv: "EDDY_TEST_UNSET_DSN"}}, "", false, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,5 +65,29 @@ func TestOpen(t *testing.T) {
 				t.Fatalf("warned = %v, want %v; log: %s", warned, tc.wantWarn, buf.String())
 			}
 		})
+	}
+}
+
+func TestOpenPostgres(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	t.Setenv("EDDY_TEST_STOREOPEN_DSN", dsn)
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	s, err := storeopen.Open(t.Context(), config.Store{
+		Driver:   "postgres",
+		Postgres: config.Postgres{DSNEnv: "EDDY_TEST_STOREOPEN_DSN", MaxOpenConns: 2},
+	}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if _, ok := s.(*postgres.Store); !ok {
+		t.Fatalf("got %T", s)
+	}
+	if err := s.Ping(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), `"level":"WARN"`) {
+		t.Fatalf("unexpected warning: %s", buf.String())
 	}
 }

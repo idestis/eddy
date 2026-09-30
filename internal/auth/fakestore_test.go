@@ -21,11 +21,14 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{sess: &fakeSessions{m: map[string]store.Session{}}, tok: &fakeTokens{m: map[string]store.Token{}}}
 }
 
-func (f *fakeStore) Sessions() store.Sessions { return f.sess }
-func (f *fakeStore) Tokens() store.Tokens     { return f.tok }
-func (f *fakeStore) Threads() store.Threads   { return nil }
-func (f *fakeStore) Audit() store.Audit       { return nil }
-func (f *fakeStore) Prefs() store.Prefs       { return nil }
+func (f *fakeStore) Sessions() store.Sessions           { return f.sess }
+func (f *fakeStore) Tokens() store.Tokens               { return f.tok }
+func (f *fakeStore) Threads() store.Threads             { return nil }
+func (f *fakeStore) Audit() store.Audit                 { return nil }
+func (f *fakeStore) Prefs() store.Prefs                 { return nil }
+func (f *fakeStore) RateLimits() store.RateLimits       { return nil }
+func (f *fakeStore) AgentSessions() store.AgentSessions { return nil }
+func (f *fakeStore) Events() store.Events               { return nil }
 func (f *fakeStore) Prune(context.Context, time.Time, store.Retention) (store.PruneStats, error) {
 	return store.PruneStats{}, nil
 }

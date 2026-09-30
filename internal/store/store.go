@@ -1,11 +1,14 @@
 // Package store persists hub-owned data: sessions, personal access tokens,
-// threads and messages, audit events and user preferences. Cluster state is
+// threads and messages, audit events and user preferences. It also holds the
+// state hub replicas share with each other: rate-limit counters, the agent
+// session registry and cross-replica event notifications. Cluster state is
 // never stored here; Kubernetes is the source of truth for it.
 //
 // The store does no authorization. Callers (internal/hub, internal/mcp)
 // filter every read through fleet.Service.
 //
-// See docs/adr/0002-hub-storage.md.
+// See docs/adr/0004-hub-high-availability.md (and, for the schema reasoning,
+// docs/adr/0002-hub-storage.md).
 package store
 
 import (
@@ -30,7 +33,15 @@ type Store interface {
 	Threads() Threads
 	Audit() Audit
 	Prefs() Prefs
-	// Prune deletes expired sessions, old tokens, old audit rows and expired threads.
+	// RateLimits returns the fixed-window counters shared by every replica.
+	RateLimits() RateLimits
+	// AgentSessions returns the registry of which replica holds which agent
+	// connection.
+	AgentSessions() AgentSessions
+	// Events returns the cross-replica notification channel.
+	Events() Events
+	// Prune deletes expired sessions, old tokens, old audit rows, expired
+	// threads, ended rate-limit windows and stale agent sessions.
 	Prune(ctx context.Context, now time.Time, r Retention) (PruneStats, error)
 	Ping(ctx context.Context) error
 	Close() error
@@ -250,4 +261,126 @@ type Retention struct {
 
 type PruneStats struct {
 	Sessions, Tokens, Audit, Threads int64
+	// RateLimits counts ended rate-limit windows; AgentSessions counts agent
+	// sessions whose heartbeat is older than AgentSessionPruneAfter.
+	RateLimits, AgentSessions int64
+}
+
+// ---- rate limits ----
+
+// RateLimits is a set of fixed-window counters keyed by an opaque string
+// such as "login:user:alice" or "mcp:calls:<token id>". Every replica sees
+// the same counters, so a limit holds for the fleet as a whole.
+//
+// A key's window starts at its first hit and lasts for the window passed
+// with that hit; the first hit at or after the window's end starts a new
+// window with a count of one. Windows are therefore fixed (not sliding) but
+// anchored to the key rather than to the clock, which also lets a single
+// hit act as a lockout of exact length (see Get).
+//
+// Counters are throwaway state: a backend may lose them on a crash, which
+// only resets the limit. Concurrency caps ("at most N calls in flight") are
+// not modelled here; they stay per replica.
+type RateLimits interface {
+	// Hit adds one to key's counter and returns the new count and whether
+	// it is within limit (count <= limit). A limit of zero or less means no
+	// limit. Concurrent hits on one key are counted exactly. The window
+	// applies only when Hit starts a new window. window must be positive;
+	// key must not be empty (ErrInvalid otherwise).
+	Hit(ctx context.Context, key string, window time.Duration, limit int, now time.Time) (count int, allowed bool, err error)
+	// Get returns key's count in its current window and when that window
+	// ends, without counting a hit. It returns zero values when the key has
+	// no window open at now.
+	Get(ctx context.Context, key string, now time.Time) (count int, resetAt time.Time, err error)
+	// Reset forgets key, for example after a successful login. It is
+	// idempotent.
+	Reset(ctx context.Context, key string) error
+}
+
+// ---- agent sessions ----
+
+// AgentSession records that hub replica HubPod holds a WebSocket from agent
+// process AgentInstance for Cluster. Seq is the agent's per-process dial
+// counter; a reconnect of the same instance has a higher Seq.
+type AgentSession struct {
+	Cluster       string
+	HubPod        string
+	HubAddr       string // host:port of HubPod's peer listener
+	AgentInstance string
+	Seq           int64
+	ConnectedAt   time.Time
+	HeartbeatAt   time.Time
+}
+
+// AgentSessionPruneAfter is how old a heartbeat must be before Prune deletes
+// the session. Readers use a much shorter freshness bound (see List).
+const AgentSessionPruneAfter = 5 * time.Minute
+
+// AgentSessions is the registry of agent connections across hub replicas.
+// A row is identified by (Cluster, AgentInstance): an agent instance has at
+// most one live session, wherever it is. Different instances of one cluster
+// coexist (agent replicas).
+type AgentSessions interface {
+	// Upsert records a session. If the instance already has one, it is
+	// replaced when s.Seq is higher, or refreshed when s.Seq is equal and
+	// s.HubPod is the same replica; otherwise Upsert returns ErrConflict
+	// (a stale dial lost the race). ConnectedAt defaults to now and
+	// HeartbeatAt to ConnectedAt. Cluster, HubPod and AgentInstance are
+	// required (ErrInvalid).
+	Upsert(ctx context.Context, s AgentSession) error
+	// Heartbeat sets HeartbeatAt on the session held by hubPod. It returns
+	// ErrNotFound when no such session exists, which means another replica
+	// has taken the instance over (or the row was pruned) and the caller
+	// should drop its connection or Upsert again.
+	Heartbeat(ctx context.Context, cluster, hubPod, agentInstance string, at time.Time) error
+	// Delete removes the session if hubPod still holds it, so a replica
+	// never deletes a session another replica has taken over. Idempotent.
+	Delete(ctx context.Context, cluster, hubPod, agentInstance string) error
+	// List returns the sessions of cluster ("" means every cluster) whose
+	// heartbeat is after freshAfter, oldest connection first (ties broken
+	// by HubPod, then AgentInstance). The first entry is the primary.
+	List(ctx context.Context, cluster string, freshAfter time.Time) ([]AgentSession, error)
+	// DeleteByHub removes every session held by hubPod, for example when a
+	// replica starts or drains. Idempotent.
+	DeleteByHub(ctx context.Context, hubPod string) error
+}
+
+// ---- events ----
+
+// Event kinds. Publishers use EventThread, EventRevoke and EventAgent.
+// EventResync is sent only by the store, to tell subscribers that events may
+// have been missed (for example after the listener reconnected) and that
+// they should re-read what they cache.
+const (
+	EventThread = "thread" // ID is a thread id
+	EventRevoke = "revoke" // ID is a subject or token id whose credentials were revoked
+	EventAgent  = "agent"  // Cluster's agent sessions changed
+	EventResync = "resync"
+)
+
+// MaxEventBytes caps the JSON encoding of one Event.
+const MaxEventBytes = 1 << 10
+
+// Event is a cross-replica notification. It carries ids only; receivers
+// re-read the rows they care about.
+type Event struct {
+	Kind    string `json:"kind"`
+	ID      string `json:"id,omitempty"`
+	Cluster string `json:"cluster,omitempty"`
+}
+
+// Events fans notifications out to every replica, including the publisher.
+// Delivery is best effort: an event can be lost when a subscriber falls
+// behind or the connection to the database drops, so subscribers must also
+// re-read state periodically. After a reconnect the store sends an
+// EventResync.
+type Events interface {
+	// Publish sends e to every subscriber on every replica. e.Kind must be
+	// EventThread, EventRevoke or EventAgent (ErrInvalid otherwise), and its
+	// JSON encoding at most MaxEventBytes (ErrLimit otherwise).
+	Publish(ctx context.Context, e Event) error
+	// Subscribe returns a channel of events. Events published after
+	// Subscribe returns are delivered. The channel is closed when ctx is
+	// done or the store is closed.
+	Subscribe(ctx context.Context) (<-chan Event, error)
 }

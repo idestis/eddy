@@ -70,6 +70,19 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Prune/ResolvedThreads", testPruneResolvedThreads},
 		{"Prune/AskThreads", testPruneAskThreads},
 		{"Prune/Disabled", testPruneDisabled},
+		{"Prune/RateLimitsAndAgentSessions", testPruneShared},
+		{"RateLimits/Window", testRateLimitWindow},
+		{"RateLimits/GetReset", testRateLimitGetReset},
+		{"RateLimits/Validation", testRateLimitValidation},
+		{"RateLimits/Concurrent", testRateLimitConcurrent},
+		{"AgentSessions/UpsertList", testAgentUpsertList},
+		{"AgentSessions/Takeover", testAgentTakeover},
+		{"AgentSessions/Heartbeat", testAgentHeartbeat},
+		{"AgentSessions/Delete", testAgentDelete},
+		{"AgentSessions/Validation", testAgentValidation},
+		{"Events/PublishSubscribe", testEventsPublishSubscribe},
+		{"Events/Unsubscribe", testEventsUnsubscribe},
+		{"Events/Validation", testEventsValidation},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1147,4 +1160,368 @@ func testPruneDisabled(t *testing.T, s store.Store) {
 	st, err := s.Prune(ctx(t), now, store.Retention{})
 	check(t, err, "prune")
 	equal(t, st, store.PruneStats{}, "zero retention keeps everything but expired sessions")
+}
+
+func testPruneShared(t *testing.T, s store.Store) {
+	rl := s.RateLimits()
+	_, _, err := rl.Hit(ctx(t), "ended", time.Minute, 0, now.Add(-2*time.Minute))
+	check(t, err, "hit ended")
+	_, _, err = rl.Hit(ctx(t), "edge", time.Minute, 0, now.Add(-time.Minute)) // ends exactly now
+	check(t, err, "hit edge")
+	_, _, err = rl.Hit(ctx(t), "open", time.Minute, 0, now.Add(-time.Second))
+	check(t, err, "hit open")
+
+	as := s.AgentSessions()
+	stale := agentSession("prod", "hub-0", "agent-a", 1, now.Add(-time.Hour))
+	stale.HeartbeatAt = now.Add(-store.AgentSessionPruneAfter)
+	fresh := agentSession("prod", "hub-0", "agent-b", 1, now.Add(-time.Hour))
+	fresh.HeartbeatAt = now.Add(-store.AgentSessionPruneAfter + time.Second)
+	check(t, as.Upsert(ctx(t), stale), "upsert stale")
+	check(t, as.Upsert(ctx(t), fresh), "upsert fresh")
+
+	st, err := s.Prune(ctx(t), now, store.Retention{})
+	check(t, err, "prune")
+	equal(t, st, store.PruneStats{RateLimits: 2, AgentSessions: 1}, "stats")
+	n, _, err := rl.Get(ctx(t), "open", now)
+	check(t, err, "get open")
+	equal(t, n, 1, "open window kept")
+	list, err := as.List(ctx(t), "", time.Time{})
+	check(t, err, "list")
+	equal(t, list, []store.AgentSession{normAgent(fresh)}, "fresh agent session kept")
+}
+
+// ---- rate limits ----
+
+func testRateLimitWindow(t *testing.T, s store.Store) {
+	rl := s.RateLimits()
+	hit := func(key string, at time.Time) (int, bool) {
+		t.Helper()
+		n, ok, err := rl.Hit(ctx(t), key, time.Minute, 3, at)
+		check(t, err, "hit")
+		return n, ok
+	}
+	type res struct {
+		n  int
+		ok bool
+	}
+	var got []res
+	for _, at := range []time.Duration{0, time.Second, 2 * time.Second, 59 * time.Second} {
+		n, ok := hit("login:ip:10.0.0.1", t0.Add(at))
+		got = append(got, res{n, ok})
+	}
+	equal(t, got, []res{{1, true}, {2, true}, {3, true}, {4, false}}, "hits in the first window")
+
+	n, ok := hit("login:ip:10.0.0.2", t0.Add(30*time.Second))
+	equal(t, res{n, ok}, res{1, true}, "other key is independent")
+
+	// The window is anchored at the first hit (t0) and ends at t0+1m.
+	n, ok = hit("login:ip:10.0.0.1", t0.Add(time.Minute))
+	equal(t, res{n, ok}, res{1, true}, "first hit of the next window")
+	n, ok = hit("login:ip:10.0.0.1", t0.Add(time.Minute+time.Second))
+	equal(t, res{n, ok}, res{2, true}, "second hit of the next window")
+
+	cnt, reset, err := rl.Get(ctx(t), "login:ip:10.0.0.1", t0.Add(90*time.Second))
+	check(t, err, "get")
+	equal(t, cnt, 2, "count")
+	equal(t, reset, ms(t0.Add(2*time.Minute)), "window end")
+
+	n, ok, err = rl.Hit(ctx(t), "unlimited", time.Minute, 0, t0)
+	check(t, err, "hit unlimited")
+	equal(t, res{n, ok}, res{1, true}, "limit 0 is unlimited")
+}
+
+func testRateLimitGetReset(t *testing.T, s store.Store) {
+	rl := s.RateLimits()
+	n, reset, err := rl.Get(ctx(t), "missing", t0)
+	check(t, err, "get missing")
+	equal(t, n, 0, "missing count")
+	equal(t, reset, time.Time{}, "missing reset")
+
+	// A single hit with a long window works as a lockout of exact length.
+	_, _, err = rl.Hit(ctx(t), "login:lock:alice", 15*time.Minute, 1, t0)
+	check(t, err, "lock")
+	n, reset, err = rl.Get(ctx(t), "login:lock:alice", t0.Add(14*time.Minute))
+	check(t, err, "get locked")
+	equal(t, n, 1, "locked count")
+	equal(t, reset, ms(t0.Add(15*time.Minute)), "locked until")
+	n, _, err = rl.Get(ctx(t), "login:lock:alice", t0.Add(15*time.Minute))
+	check(t, err, "get after lock")
+	equal(t, n, 0, "lock ended")
+
+	for range 3 {
+		_, _, err = rl.Hit(ctx(t), "login:user:bob", 15*time.Minute, 5, t0)
+		check(t, err, "hit")
+	}
+	check(t, rl.Reset(ctx(t), "login:user:bob"), "reset")
+	check(t, rl.Reset(ctx(t), "login:user:bob"), "reset is idempotent")
+	n, _, err = rl.Get(ctx(t), "login:user:bob", t0)
+	check(t, err, "get after reset")
+	equal(t, n, 0, "count after reset")
+	n, _, err = rl.Hit(ctx(t), "login:user:bob", 15*time.Minute, 5, t0)
+	check(t, err, "hit after reset")
+	equal(t, n, 1, "new window after reset")
+}
+
+func testRateLimitValidation(t *testing.T, s store.Store) {
+	_, _, err := s.RateLimits().Hit(ctx(t), "", time.Minute, 1, t0)
+	wantErr(t, err, store.ErrInvalid, "empty key")
+	_, _, err = s.RateLimits().Hit(ctx(t), "k", 0, 1, t0)
+	wantErr(t, err, store.ErrInvalid, "zero window")
+}
+
+func testRateLimitConcurrent(t *testing.T, s store.Store) {
+	const workers, perWorker, limit = 25, 40, 600 // 1000 hits against a limit of 600
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		allowed int
+		counts  = map[int]bool{}
+		errs    []error
+	)
+	for w := range workers {
+		wg.Go(func() {
+			for i := range perWorker {
+				// Spread the hits over the window; none reaches its end.
+				at := t0.Add(time.Duration(w*perWorker+i) * time.Millisecond)
+				n, ok, err := s.RateLimits().Hit(context.Background(), "mcp:calls:tok", time.Hour, limit, at)
+				mu.Lock()
+				if err != nil {
+					errs = append(errs, err)
+				} else {
+					if counts[n] {
+						errs = append(errs, fmt.Errorf("count %d returned twice", n))
+					}
+					counts[n] = true
+					if ok {
+						allowed++
+					}
+				}
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+	if len(errs) > 0 {
+		t.Fatalf("unexpected errors: %v", errs[0])
+	}
+	equal(t, allowed, limit, "allowed hits")
+	equal(t, len(counts), workers*perWorker, "distinct counts")
+	n, _, err := s.RateLimits().Get(ctx(t), "mcp:calls:tok", t0.Add(time.Minute))
+	check(t, err, "get")
+	equal(t, n, workers*perWorker, "final count")
+}
+
+// ---- agent sessions ----
+
+func agentSession(cluster, hub, instance string, seq int64, at time.Time) store.AgentSession {
+	return store.AgentSession{
+		Cluster: cluster, HubPod: hub, HubAddr: hub + ".peers:8444", AgentInstance: instance,
+		Seq: seq, ConnectedAt: at, HeartbeatAt: at,
+	}
+}
+
+func normAgent(v store.AgentSession) store.AgentSession {
+	v.ConnectedAt, v.HeartbeatAt = ms(v.ConnectedAt), ms(v.HeartbeatAt)
+	return v
+}
+
+func agentKeys(v []store.AgentSession) []string {
+	var out []string
+	for _, a := range v {
+		out = append(out, fmt.Sprintf("%s/%s@%s#%d", a.Cluster, a.AgentInstance, a.HubPod, a.Seq))
+	}
+	return out
+}
+
+func testAgentUpsertList(t *testing.T, s store.Store) {
+	as := s.AgentSessions()
+	b := agentSession("prod", "hub-1", "agent-b", 1, t0.Add(time.Second))
+	a := agentSession("prod", "hub-0", "agent-a", 3, t0)
+	c := agentSession("prod", "hub-0", "agent-c", 1, t0.Add(time.Second)) // same time as b: hub-0 sorts first
+	other := agentSession("dev", "hub-1", "agent-a", 1, t0.Add(-time.Second))
+	for _, v := range []store.AgentSession{b, a, c, other} {
+		check(t, as.Upsert(ctx(t), v), "upsert")
+	}
+	got, err := as.List(ctx(t), "prod", time.Time{})
+	check(t, err, "list prod")
+	equal(t, got, []store.AgentSession{normAgent(a), normAgent(c), normAgent(b)}, "prod sessions, oldest first")
+
+	got, err = as.List(ctx(t), "", time.Time{})
+	check(t, err, "list all")
+	equal(t, agentKeys(got), []string{"dev/agent-a@hub-1#1", "prod/agent-a@hub-0#3", "prod/agent-c@hub-0#1", "prod/agent-b@hub-1#1"}, "all sessions")
+
+	got, err = as.List(ctx(t), "prod", t0)
+	check(t, err, "list fresh")
+	equal(t, agentKeys(got), []string{"prod/agent-c@hub-0#1", "prod/agent-b@hub-1#1"}, "heartbeat after freshAfter only")
+
+	got, err = as.List(ctx(t), "missing", time.Time{})
+	check(t, err, "list missing")
+	equal(t, len(got), 0, "no sessions")
+
+	// Defaults: ConnectedAt = now, HeartbeatAt = ConnectedAt.
+	before := time.Now().Add(-time.Second)
+	check(t, as.Upsert(ctx(t), store.AgentSession{Cluster: "qa", HubPod: "hub-0", AgentInstance: "x"}), "upsert defaults")
+	got, err = as.List(ctx(t), "qa", before)
+	check(t, err, "list qa")
+	if len(got) != 1 || got[0].ConnectedAt.IsZero() || !got[0].HeartbeatAt.Equal(got[0].ConnectedAt) {
+		t.Fatalf("defaults not applied: %+v", got)
+	}
+}
+
+func testAgentTakeover(t *testing.T, s store.Store) {
+	as := s.AgentSessions()
+	check(t, as.Upsert(ctx(t), agentSession("prod", "hub-0", "agent-a", 7, t0)), "upsert on hub-0")
+
+	// A refresh from the same replica with the same seq is accepted.
+	refresh := agentSession("prod", "hub-0", "agent-a", 7, t0)
+	refresh.HeartbeatAt = t0.Add(time.Second)
+	check(t, as.Upsert(ctx(t), refresh), "same seq, same hub")
+
+	// Same seq on another replica, or an older seq, loses.
+	wantErr(t, as.Upsert(ctx(t), agentSession("prod", "hub-1", "agent-a", 7, t0.Add(time.Second))), store.ErrConflict, "same seq, other hub")
+	wantErr(t, as.Upsert(ctx(t), agentSession("prod", "hub-1", "agent-a", 6, t0.Add(time.Second))), store.ErrConflict, "older seq")
+
+	// The same instance reconnecting to hub-1 with a higher seq takes over.
+	newer := agentSession("prod", "hub-1", "agent-a", 8, t0.Add(2*time.Second))
+	check(t, as.Upsert(ctx(t), newer), "newer seq")
+	got, err := as.List(ctx(t), "prod", time.Time{})
+	check(t, err, "list")
+	equal(t, got, []store.AgentSession{normAgent(newer)}, "one session per instance")
+
+	// The old replica can no longer heartbeat or delete it.
+	wantErr(t, as.Heartbeat(ctx(t), "prod", "hub-0", "agent-a", t0.Add(3*time.Second)), store.ErrNotFound, "old hub heartbeat")
+	check(t, as.Delete(ctx(t), "prod", "hub-0", "agent-a"), "old hub delete is a no-op")
+	got, err = as.List(ctx(t), "prod", time.Time{})
+	check(t, err, "list")
+	equal(t, len(got), 1, "session survives old hub delete")
+}
+
+func testAgentHeartbeat(t *testing.T, s store.Store) {
+	as := s.AgentSessions()
+	v := agentSession("prod", "hub-0", "agent-a", 1, t0)
+	check(t, as.Upsert(ctx(t), v), "upsert")
+	got, err := as.List(ctx(t), "prod", t0.Add(20*time.Second))
+	check(t, err, "list")
+	equal(t, len(got), 0, "stale before heartbeat")
+
+	check(t, as.Heartbeat(ctx(t), "prod", "hub-0", "agent-a", t0.Add(30*time.Second)), "heartbeat")
+	got, err = as.List(ctx(t), "prod", t0.Add(20*time.Second))
+	check(t, err, "list")
+	v.HeartbeatAt = t0.Add(30 * time.Second)
+	equal(t, got, []store.AgentSession{normAgent(v)}, "fresh after heartbeat, connectedAt unchanged")
+
+	wantErr(t, as.Heartbeat(ctx(t), "prod", "hub-0", "agent-z", t0), store.ErrNotFound, "unknown instance")
+	wantErr(t, as.Heartbeat(ctx(t), "dev", "hub-0", "agent-a", t0), store.ErrNotFound, "other cluster")
+}
+
+func testAgentDelete(t *testing.T, s store.Store) {
+	as := s.AgentSessions()
+	for _, v := range []store.AgentSession{
+		agentSession("prod", "hub-0", "agent-a", 1, t0),
+		agentSession("prod", "hub-0", "agent-b", 1, t0),
+		agentSession("dev", "hub-0", "agent-c", 1, t0),
+		agentSession("prod", "hub-1", "agent-d", 1, t0),
+	} {
+		check(t, as.Upsert(ctx(t), v), "upsert")
+	}
+	check(t, as.Delete(ctx(t), "prod", "hub-0", "agent-a"), "delete")
+	check(t, as.Delete(ctx(t), "prod", "hub-0", "agent-a"), "delete is idempotent")
+	got, err := as.List(ctx(t), "", time.Time{})
+	check(t, err, "list")
+	equal(t, agentKeys(got), []string{"prod/agent-b@hub-0#1", "dev/agent-c@hub-0#1", "prod/agent-d@hub-1#1"}, "after delete")
+
+	check(t, as.DeleteByHub(ctx(t), "hub-0"), "delete by hub")
+	check(t, as.DeleteByHub(ctx(t), "hub-0"), "delete by hub is idempotent")
+	got, err = as.List(ctx(t), "", time.Time{})
+	check(t, err, "list")
+	equal(t, agentKeys(got), []string{"prod/agent-d@hub-1#1"}, "after delete by hub")
+}
+
+func testAgentValidation(t *testing.T, s store.Store) {
+	as := s.AgentSessions()
+	for name, v := range map[string]store.AgentSession{
+		"no cluster":   {HubPod: "h", AgentInstance: "a"},
+		"no hub":       {Cluster: "c", AgentInstance: "a"},
+		"no instance":  {Cluster: "c", HubPod: "h"},
+		"negative seq": {Cluster: "c", HubPod: "h", AgentInstance: "a", Seq: -1},
+	} {
+		wantErr(t, as.Upsert(ctx(t), v), store.ErrInvalid, name)
+	}
+}
+
+// ---- events ----
+
+// EventTimeout bounds how long the events tests wait for a delivery.
+const EventTimeout = 10 * time.Second
+
+func receive(t *testing.T, ch <-chan store.Event, what string) store.Event {
+	t.Helper()
+	for {
+		select {
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatalf("%s: channel closed", what)
+			}
+			if e.Kind == store.EventResync {
+				continue
+			}
+			return e
+		case <-time.After(EventTimeout):
+			t.Fatalf("%s: no event after %s", what, EventTimeout)
+		}
+	}
+}
+
+func testEventsPublishSubscribe(t *testing.T, s store.Store) {
+	a, err := s.Events().Subscribe(ctx(t))
+	check(t, err, "subscribe a")
+	b, err := s.Events().Subscribe(ctx(t))
+	check(t, err, "subscribe b")
+
+	sent := []store.Event{
+		{Kind: store.EventThread, ID: "0199-thread", Cluster: "prod"},
+		{Kind: store.EventRevoke, ID: "alice"},
+		{Kind: store.EventAgent, Cluster: "prod"},
+	}
+	for _, e := range sent {
+		check(t, s.Events().Publish(ctx(t), e), "publish")
+	}
+	for name, ch := range map[string]<-chan store.Event{"a": a, "b": b} {
+		for i, want := range sent {
+			equal(t, receive(t, ch, fmt.Sprintf("subscriber %s event %d", name, i)), want, "event")
+		}
+	}
+}
+
+func testEventsUnsubscribe(t *testing.T, s store.Store) {
+	sub, cancel := context.WithCancel(ctx(t))
+	ch, err := s.Events().Subscribe(sub)
+	check(t, err, "subscribe")
+	other, err := s.Events().Subscribe(ctx(t))
+	check(t, err, "subscribe other")
+	cancel()
+	deadline := time.After(EventTimeout)
+	for open := true; open; {
+		select {
+		case _, open = <-ch:
+		case <-deadline:
+			t.Fatal("channel not closed after its context was cancelled")
+		}
+	}
+	check(t, s.Events().Publish(ctx(t), store.Event{Kind: store.EventThread, ID: "x"}), "publish")
+	equal(t, receive(t, other, "other subscriber"), store.Event{Kind: store.EventThread, ID: "x"}, "other still receives")
+
+	done, stop := context.WithCancel(ctx(t))
+	stop()
+	if _, err := s.Events().Subscribe(done); err == nil {
+		t.Fatal("subscribe with a done context succeeded")
+	}
+}
+
+func testEventsValidation(t *testing.T, s store.Store) {
+	wantErr(t, s.Events().Publish(ctx(t), store.Event{}), store.ErrInvalid, "empty kind")
+	wantErr(t, s.Events().Publish(ctx(t), store.Event{Kind: store.EventResync}), store.ErrInvalid, "resync is store-only")
+	wantErr(t, s.Events().Publish(ctx(t), store.Event{Kind: "bogus"}), store.ErrInvalid, "unknown kind")
+	wantErr(t, s.Events().Publish(ctx(t), store.Event{Kind: store.EventThread, ID: strings.Repeat("x", store.MaxEventBytes)}),
+		store.ErrLimit, "oversized event")
 }
