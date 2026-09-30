@@ -140,7 +140,12 @@ func (s *Service) Authenticate(next http.Handler) http.Handler {
 		ctx := r.Context()
 		now := s.now()
 		ident, perr := s.proxyAuth(r)
-		raw, sess, hasSess := s.readSession(ctx, r, now)
+		raw, sess, hasSess, serr := s.readSession(ctx, r, now)
+		if serr != nil {
+			// Fail closed: the store cannot confirm the session right now.
+			writeError(w, http.StatusServiceUnavailable, "unavailable", "sign-in is temporarily unavailable, try again")
+			return
+		}
 		if perr != nil {
 			if hasSess {
 				s.deleteSession(ctx, raw)
@@ -223,6 +228,7 @@ func (s *Service) proxyNewSession(ctx context.Context, w http.ResponseWriter, r 
 }
 
 func (s *Service) replaceSessionGroups(ctx context.Context, sess store.Session, groups []string, now time.Time) {
+	s.sessions.drop(sess.IDHash)
 	if err := s.st.Sessions().Delete(ctx, sess.IDHash); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.log.Error("replace session groups: delete failed", "err", err)
 		return

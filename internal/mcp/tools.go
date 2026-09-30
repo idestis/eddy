@@ -622,7 +622,7 @@ func (s *server) getLogs(ctx context.Context, c *call, in GetLogsIn) (LogLines, 
 	if in.Namespace == "" || in.Pod == "" {
 		return LogLines{}, badArgs("namespace and pod are required")
 	}
-	if !s.logCalls.allow(tokenKey(c.p)) {
+	if ok, _ := s.logCalls.allow(ctx, tokenKey(c.p)); !ok {
 		return LogLines{}, denied("get_logs is limited to %d calls per minute; wait and retry", LogCallsPerMinute)
 	}
 	tail := clamp(in.Tail, defaultLogTail, maxLogTail)
@@ -695,11 +695,13 @@ func toMessage(m store.Message) ThreadMessage {
 // ---- thread writes ----
 
 // threadWriter checks scope and rate for a thread write and returns the author.
-func (s *server) threadWriter(c *call) (store.Author, error) {
+func (s *server) threadWriter(ctx context.Context, c *call) (store.Author, error) {
 	if !c.p.Has(s.o.ThreadWriteScope) {
 		return store.Author{}, denied("this token lacks the %q scope needed for thread writes", s.o.ThreadWriteScope)
 	}
-	if !s.thWrites.allow(c.p.User) {
+	if ok, err := s.thWrites.allow(ctx, c.p.User); err != nil {
+		return store.Author{}, &userErr{msg: "thread writes are temporarily unavailable; retry shortly"}
+	} else if !ok {
 		return store.Author{}, denied("thread writes are limited to %d per minute; wait and retry", ThreadWritesPerMinute)
 	}
 	return authorFor(c.p), nil
@@ -738,7 +740,7 @@ func (s *server) createThread(ctx context.Context, c *call, in CreateThreadIn) (
 	if err := checkBody(in.Body); err != nil {
 		return ThreadWrite{}, err
 	}
-	author, err := s.threadWriter(c)
+	author, err := s.threadWriter(ctx, c)
 	if err != nil {
 		return ThreadWrite{}, err
 	}
@@ -760,7 +762,7 @@ func (s *server) replyThread(ctx context.Context, c *call, in ReplyThreadIn) (Th
 	if err := checkBody(in.Body); err != nil {
 		return ThreadWrite{}, err
 	}
-	author, err := s.threadWriter(c)
+	author, err := s.threadWriter(ctx, c)
 	if err != nil {
 		return ThreadWrite{}, err
 	}
@@ -782,7 +784,7 @@ func (s *server) resolveThread(ctx context.Context, c *call, in ResolveThreadIn)
 	if in.ID == "" {
 		return ThreadWrite{}, badArgs("id is required")
 	}
-	if _, err := s.threadWriter(c); err != nil {
+	if _, err := s.threadWriter(ctx, c); err != nil {
 		return ThreadWrite{}, err
 	}
 	t, err := s.o.Threads.Resolve(ctx, c.p, in.ID)
@@ -836,7 +838,9 @@ func (s *server) doAction(ctx context.Context, c *call, verb string, in ActionIn
 			return ActionResult{}, denied("cluster %q is protected: ask the human to confirm this %s, then call again with confirm_cluster=%q", in.Cluster, verb, in.Cluster)
 		}
 	}
-	if !s.writes.allow(c.p.User) {
+	if ok, err := s.writes.allow(ctx, c.p.User); err != nil {
+		return ActionResult{}, &userErr{msg: "writes are temporarily unavailable; retry shortly"}
+	} else if !ok {
 		return ActionResult{}, denied("MCP writes are limited to %d per minute; wait and retry", s.o.Config.WritesPerMinute)
 	}
 	opts := fleet.ActionOptions{WithSource: withSource, Confirm: in.ConfirmCluster}

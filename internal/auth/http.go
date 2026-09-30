@@ -106,7 +106,11 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden", "missing or invalid CSRF token or origin")
 		return
 	}
-	if !s.limiter.allowIP(peerIP(r)) {
+	if ok, err := s.limiter.allowIP(ctx, peerIP(r)); err != nil {
+		s.log.Error("login rate limit unavailable", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "login unavailable, try again")
+		return
+	} else if !ok {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts, try again later")
 		return
 	}
@@ -125,7 +129,11 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 			store.AuditDenied, map[string]string{"provider": ProviderLocal, "username": logName, "reason": reason})
 		writeError(w, http.StatusUnauthorized, "unauthorized", genericLogin)
 	}
-	if s.limiter.locked(req.Username) {
+	if locked, err := s.limiter.locked(ctx, req.Username); err != nil {
+		s.log.Error("login lockout check unavailable", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "login unavailable, try again")
+		return
+	} else if locked {
 		deny("locked out")
 		return
 	}
@@ -151,13 +159,19 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		if s.limiter.fail(req.Username) {
+		locked, err := s.limiter.fail(ctx, req.Username)
+		switch {
+		case err != nil:
+			s.log.Error("recording a failed login failed", "err", err)
+		case locked:
 			s.log.Warn("login lockout", "username", logName, "peer", peerIP(r))
 		}
 		deny("bad credentials")
 		return
 	}
-	s.limiter.success(req.Username)
+	if err := s.limiter.success(ctx, req.Username); err != nil {
+		s.log.Error("resetting login failures failed", "err", err)
+	}
 
 	// Rotate: any session the browser already had is discarded.
 	if c, err := r.Cookie(s.cookieName); err == nil {

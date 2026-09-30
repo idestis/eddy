@@ -531,3 +531,50 @@ func TestRequireCSRFLoginUsesPreSession(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionCache checks the 30 s session cache: a store blip inside it is
+// invisible, a longer outage fails closed with 503, and Invalidate (a
+// revoke event from any replica) forces a re-read.
+func TestSessionCache(t *testing.T) {
+	e := newEnv(t, nil)
+	h := e.handler()
+	me := func(jar map[string]string) int {
+		return do(h, httptest.NewRequest("GET", "/api/v1/me", nil), jar).Code
+	}
+	jar, _ := e.localSession(t)
+	if me(jar) != 200 {
+		t.Fatal("fresh session rejected")
+	}
+	gets := e.st.sess.gets
+	e.clock.Add(10 * time.Second)
+	if me(jar) != 200 || e.st.sess.gets != gets {
+		t.Fatalf("cached session re-read from the store (%d → %d gets)", gets, e.st.sess.gets)
+	}
+	e.st.sess.mu.Lock()
+	e.st.sess.down = true
+	e.st.sess.mu.Unlock()
+	if me(jar) != 200 {
+		t.Fatal("a store blip inside the cache TTL signed the user out")
+	}
+	e.clock.Add(sessionCacheTTL)
+	if code := me(jar); code != http.StatusServiceUnavailable {
+		t.Fatalf("store down past the cache TTL: status %d, want 503", code)
+	}
+	e.st.sess.mu.Lock()
+	e.st.sess.down = false
+	e.st.sess.mu.Unlock()
+	if me(jar) != 200 {
+		t.Fatal("session rejected after the store recovered")
+	}
+	// Another replica deleted every session of alice and published a revoke.
+	e.st.sess.mu.Lock()
+	clear(e.st.sess.m)
+	e.st.sess.mu.Unlock()
+	if me(jar) != 200 {
+		t.Fatal("cached session should still be served before the revoke event")
+	}
+	e.svc.Invalidate("local:alice")
+	if me(jar) != 401 {
+		t.Fatal("revoked session accepted after Invalidate")
+	}
+}

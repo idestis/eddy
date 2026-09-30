@@ -34,6 +34,7 @@ import (
 	"github.com/idestis/eddy/internal/fleet"
 	"github.com/idestis/eddy/internal/identity"
 	"github.com/idestis/eddy/internal/runtimeflags"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // Fixed limits from ADR-0003 §5.
@@ -71,6 +72,9 @@ type Options struct {
 	Log              *slog.Logger
 	// Now is the clock for rate limits; nil means time.Now.
 	Now func() time.Time
+	// RateLimits holds the rate-limit counters shared by every hub replica.
+	// Nil keeps them in this process (tests).
+	RateLimits store.RateLimits
 }
 
 // server holds the shared state of the endpoint.
@@ -79,11 +83,11 @@ type server struct {
 	host     string
 	origins  map[string]bool
 	log      *slog.Logger
-	calls    *limiter // per token, tools/call rate
-	inflight *limiter // per token, concurrency
-	logCalls *limiter // per token, get_logs rate
-	writes   *limiter // per user, action rate
-	thWrites *limiter // per user, thread write rate
+	calls    *rate    // per token, tools/call rate (global)
+	inflight *limiter // per token, concurrency (per replica)
+	logCalls *rate    // per token, get_logs rate (global)
+	writes   *rate    // per user, action rate (global, fails closed)
+	thWrites *rate    // per user, thread write rate (global, fails closed)
 }
 
 // NewHandler returns the /mcp handler.
@@ -117,16 +121,18 @@ func NewHandler(o Options) (http.Handler, error) {
 	if c.ProtectedClusters == "" {
 		c.ProtectedClusters = "confirm"
 	}
+	log := o.Log.With("component", "mcp")
+	rl := o.RateLimits
 	s := &server{
 		o:        o,
 		host:     canonicalHost(u.Scheme, u.Host),
 		origins:  map[string]bool{},
-		log:      o.Log.With("component", "mcp"),
-		calls:    newLimiter(c.CallsPerMinute, 0, time.Minute, o.Now),
+		log:      log,
+		calls:    newRate("mcp:calls:", c.CallsPerMinute, time.Minute, rl, false, o.Now, log),
 		inflight: newLimiter(0, ConcurrentPerToken, time.Minute, o.Now),
-		logCalls: newLimiter(LogCallsPerMinute, 0, time.Minute, o.Now),
-		writes:   newLimiter(c.WritesPerMinute, 0, time.Minute, o.Now),
-		thWrites: newLimiter(ThreadWritesPerMinute, 0, time.Minute, o.Now),
+		logCalls: newRate("mcp:logs:", LogCallsPerMinute, time.Minute, rl, false, o.Now, log),
+		writes:   newRate("mcp:writes:", c.WritesPerMinute, time.Minute, rl, true, o.Now, log),
+		thWrites: newRate("mcp:thread-writes:", ThreadWritesPerMinute, time.Minute, rl, true, o.Now, log),
 	}
 	for _, origin := range c.AllowedOrigins {
 		s.origins[strings.TrimRight(strings.ToLower(origin), "/")] = true

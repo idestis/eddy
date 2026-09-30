@@ -66,7 +66,7 @@ func (s *server) toolMiddleware(next sdk.MethodHandler) sdk.MethodHandler {
 
 		var res sdk.Result
 		var err error
-		if !s.calls.allow(tokenKey(p)) {
+		if ok, _ := s.calls.allow(ctx, tokenKey(p)); !ok {
 			c.result, c.reason = store.AuditDenied, "rate_limited"
 			res = toolError("rate limit exceeded: at most " + itoa(s.o.Config.CallsPerMinute) + " tool calls per minute for this token; wait and retry")
 		} else {

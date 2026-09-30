@@ -67,7 +67,8 @@ type Service struct {
 	recentMu    sync.Mutex
 	recent      map[string]recentProxySession
 
-	limiter *loginLimiter
+	limiter  *loginLimiter
+	sessions *sessionCache
 
 	devActive bool
 
@@ -103,7 +104,11 @@ func New(cfg *config.Hub, st store.Store, rec *audit.Recorder, log *slog.Logger)
 		recent:        map[string]recentProxySession{},
 		secureCookies: cfg.SecureCookies(),
 	}
-	s.limiter = newLoginLimiter(cfg.Auth.LoginRateLimit, func() time.Time { return s.now() })
+	if st.RateLimits() == nil {
+		return nil, errors.New("auth: the store has no rate limits")
+	}
+	s.limiter = newLoginLimiter(st.RateLimits(), cfg.Auth.LoginRateLimit, func() time.Time { return s.now() })
+	s.sessions = newSessionCache()
 	if s.secureCookies {
 		s.cookieName, s.preCookieName = "__Host-eddy_session", "__Host-eddy_pre"
 	} else {
@@ -170,7 +175,7 @@ func New(cfg *config.Hub, st store.Store, rec *audit.Recorder, log *slog.Logger)
 }
 
 // Run performs background work until ctx is done: users-file hot reload
-// (every 10s), limiter garbage collection and the dev-mode warning.
+// (every 10s), cache garbage collection and the dev-mode warning.
 func (s *Service) Run(ctx context.Context) {
 	reload := time.NewTicker(10 * time.Second)
 	defer reload.Stop()
@@ -187,7 +192,7 @@ func (s *Service) Run(ctx context.Context) {
 				}
 			}
 		case <-gc.C:
-			s.limiter.gc()
+			s.sessions.gc(s.now())
 			s.gcRecent()
 			if s.devActive {
 				s.log.Warn("DEV FAKE LOGIN IS ENABLED: never run this build in production")
@@ -219,6 +224,7 @@ func (s *Service) RevokeUser(ctx context.Context, subject string) error {
 		errs = append(errs, fmt.Errorf("auth: revoke tokens of %s: %w", subject, err))
 	}
 	s.forgetRecent(subject)
+	s.revoked(ctx, subject)
 	res := store.AuditOK
 	if len(errs) > 0 {
 		res = store.AuditError

@@ -20,6 +20,8 @@ type keys struct {
 	csrf       []byte
 	patPepper  []byte
 	preSession []byte
+	// peer authenticates hub replicas to each other (ADR-0004).
+	peer []byte
 }
 
 func loadKeys(path string) (keys, error) {
@@ -47,6 +49,7 @@ func deriveKeys(master []byte) (keys, error) {
 		{"csrf", &k.csrf},
 		{"pat-pepper", &k.patPepper},
 		{"pre-session", &k.preSession},
+		{"peer", &k.peer},
 	} {
 		out := make([]byte, 32)
 		if _, err := io.ReadFull(hkdf.New(sha256.New, master, []byte("eddy-auth-v1"), []byte(d.info)), out); err != nil {
@@ -64,3 +67,8 @@ func hmacSHA256(key []byte, parts ...string) []byte {
 	}
 	return m.Sum(nil)
 }
+
+// PeerKey returns the key hub replicas authenticate each other with:
+// HKDF(auth.keyFile, info "peer"). Every replica mounts the same key file,
+// so they derive the same key.
+func (s *Service) PeerKey() []byte { return bytes.Clone(s.keys.peer) }

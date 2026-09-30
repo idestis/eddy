@@ -1,8 +1,13 @@
 package mcp
 
 import (
+	"context"
+	"errors"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/idestis/eddy/internal/store"
 )
 
 // limiter enforces a sliding-window rate and an optional concurrency cap
@@ -89,4 +94,47 @@ func (l *limiter) sweepLocked(now time.Time) {
 			delete(l.keys, k)
 		}
 	}
+}
+
+// errLimitUnavailable means a fail-closed limit could not be checked because
+// the store is unreachable.
+var errLimitUnavailable = errors.New("mcp: rate limit unavailable")
+
+// rate is a per-key rate limit shared by every hub replica through
+// store.RateLimits (fixed windows keyed "<prefix><key>"). Without a store
+// (tests) it uses the local limiter. When the store fails, a fail-open
+// limit falls back to the local limiter, so reads keep working, and a
+// fail-closed one (writes) refuses with errLimitUnavailable.
+type rate struct {
+	prefix     string
+	max        int
+	window     time.Duration
+	rl         store.RateLimits
+	local      *limiter
+	failClosed bool
+	now        func() time.Time
+	log        *slog.Logger
+}
+
+func newRate(prefix string, max int, window time.Duration, rl store.RateLimits, failClosed bool, now func() time.Time, log *slog.Logger) *rate {
+	return &rate{prefix: prefix, max: max, window: window, rl: rl, local: newLimiter(max, 0, window, now),
+		failClosed: failClosed, now: now, log: log}
+}
+
+// allow counts one event for key. It returns false when the limit is used
+// up, and errLimitUnavailable when a fail-closed limit cannot be checked.
+func (r *rate) allow(ctx context.Context, key string) (bool, error) {
+	if r.rl == nil {
+		return r.local.allow(key), nil
+	}
+	_, ok, err := r.rl.Hit(ctx, r.prefix+key, r.window, r.max, r.now())
+	if err == nil {
+		return ok, nil
+	}
+	if r.failClosed {
+		r.log.Error("rate limit unavailable; refusing", "limit", r.prefix, "err", err)
+		return false, errLimitUnavailable
+	}
+	r.log.Warn("rate limit unavailable; using this replica's limiter", "limit", r.prefix, "err", err)
+	return r.local.allow(key), nil
 }

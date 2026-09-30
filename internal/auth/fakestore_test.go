@@ -3,22 +3,28 @@ package auth
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/memory"
 )
 
 // fakeStore implements store.Store with in-memory sessions and tokens only.
 type fakeStore struct {
-	sess *fakeSessions
-	tok  *fakeTokens
+	sess   *fakeSessions
+	tok    *fakeTokens
+	limits store.RateLimits
+	events store.Events
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sess: &fakeSessions{m: map[string]store.Session{}}, tok: &fakeTokens{m: map[string]store.Token{}}}
+	m := memory.New()
+	return &fakeStore{sess: &fakeSessions{m: map[string]store.Session{}}, tok: &fakeTokens{m: map[string]store.Token{}},
+		limits: m.RateLimits(), events: m.Events()}
 }
 
 func (f *fakeStore) Sessions() store.Sessions           { return f.sess }
@@ -26,9 +32,9 @@ func (f *fakeStore) Tokens() store.Tokens               { return f.tok }
 func (f *fakeStore) Threads() store.Threads             { return nil }
 func (f *fakeStore) Audit() store.Audit                 { return nil }
 func (f *fakeStore) Prefs() store.Prefs                 { return nil }
-func (f *fakeStore) RateLimits() store.RateLimits       { return nil }
+func (f *fakeStore) RateLimits() store.RateLimits       { return f.limits }
 func (f *fakeStore) AgentSessions() store.AgentSessions { return nil }
-func (f *fakeStore) Events() store.Events               { return nil }
+func (f *fakeStore) Events() store.Events               { return f.events }
 func (f *fakeStore) Prune(context.Context, time.Time, store.Retention) (store.PruneStats, error) {
 	return store.PruneStats{}, nil
 }
@@ -39,6 +45,8 @@ type fakeSessions struct {
 	mu      sync.Mutex
 	m       map[string]store.Session
 	touches int
+	gets    int
+	down    bool // Get fails as if the database were unreachable
 }
 
 func (f *fakeSessions) Create(_ context.Context, s store.Session) error {
@@ -56,6 +64,10 @@ func (f *fakeSessions) Create(_ context.Context, s store.Session) error {
 func (f *fakeSessions) Get(_ context.Context, h []byte, now time.Time) (store.Session, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.gets++
+	if f.down {
+		return store.Session{}, errors.New("fake store: connection refused")
+	}
 	s, ok := f.m[hex.EncodeToString(h)]
 	if !ok || !now.Before(s.ExpiresAt) {
 		return store.Session{}, store.ErrNotFound
@@ -149,11 +161,22 @@ type fakeTokens struct {
 	marks int
 }
 
-func (f *fakeTokens) Create(_ context.Context, t store.Token) error {
+func (f *fakeTokens) Create(_ context.Context, t store.Token, maxActive int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.m[t.ID]; ok {
 		return store.ErrConflict
+	}
+	if maxActive > 0 {
+		n := 0
+		for _, o := range f.m {
+			if o.Subject == t.Subject && o.RevokedAt == nil && t.CreatedAt.Before(o.ExpiresAt) {
+				n++
+			}
+		}
+		if n >= maxActive {
+			return store.ErrLimit
+		}
 	}
 	f.m[t.ID] = t
 	return nil

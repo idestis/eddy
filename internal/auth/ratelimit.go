@@ -1,60 +1,51 @@
 package auth
 
 import (
+	"context"
+	"fmt"
 	"net/netip"
 	"strings"
-	"sync"
 	"time"
 
-	"golang.org/x/time/rate"
-
 	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/store"
 )
 
 const (
 	// maxLockout caps the exponential per-username lockout.
 	maxLockout = 4 * time.Hour
-	// maxLimiterEntries bounds each limiter map; the oldest entry is evicted.
-	maxLimiterEntries = 10000
+	// lockoutLevelWindow is how long earlier lockouts of a username count
+	// towards doubling the next one, measured from the first of them.
+	lockoutLevelWindow = 24 * time.Hour
 )
 
-// loginLimiter tracks failed logins per username and requests per IP.
-// Both maps are bounded so a spray of usernames or addresses cannot grow
-// memory without limit.
+// loginLimiter tracks failed logins per username and requests per IP in
+// store.RateLimits, so the limits hold across every hub replica:
+//
+//	login:ip:<ip or /64>     requests per minute from one address
+//	login:fail:<username>    failures in the current window
+//	login:lock:<username>    an open window here is an active lockout
+//	login:level:<username>   lockouts so far (doubles the next one)
+//
+// Counters are throwaway state: losing them (a PostgreSQL crash truncates
+// the UNLOGGED table) only resets the limits.
 type loginLimiter struct {
-	mu       sync.Mutex
+	rl       store.RateLimits
 	now      func() time.Time
 	failures int
 	window   time.Duration
 	lockout  time.Duration
 	perIP    int
-	max      int
-	users    map[string]*userLimit
-	ips      map[string]*ipLimit
 }
 
-type userLimit struct {
-	fails       []time.Time
-	lockedUntil time.Time
-	level       int // number of lockouts so far; doubles the next one
-	last        time.Time
-}
-
-type ipLimit struct {
-	lim  *rate.Limiter
-	last time.Time
-}
-
-func newLoginLimiter(c config.RateLimit, now func() time.Time) *loginLimiter {
+func newLoginLimiter(rl store.RateLimits, c config.RateLimit, now func() time.Time) *loginLimiter {
 	l := &loginLimiter{
+		rl:       rl,
 		now:      now,
 		failures: c.PerUsernameFailures,
 		window:   c.Window.Duration,
 		lockout:  c.Lockout.Duration,
 		perIP:    c.PerIPPerMinute,
-		max:      maxLimiterEntries,
-		users:    map[string]*userLimit{},
-		ips:      map[string]*ipLimit{},
 	}
 	if l.failures <= 0 {
 		l.failures = 5
@@ -90,124 +81,68 @@ func ipKey(ip string) string {
 }
 
 // allowIP consumes one request of the per-IP budget.
-func (l *loginLimiter) allowIP(ip string) bool {
-	now := l.now()
-	k := ipKey(ip)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	e := l.ips[k]
-	if e == nil {
-		if len(l.ips) >= l.max {
-			l.gcLocked(now)
-		}
-		if len(l.ips) >= l.max {
-			evictOldest(l.ips, func(e *ipLimit) (time.Time, bool) { return e.last, false })
-		}
-		e = &ipLimit{lim: rate.NewLimiter(rate.Limit(float64(l.perIP)/60), l.perIP)}
-		l.ips[k] = e
+func (l *loginLimiter) allowIP(ctx context.Context, ip string) (bool, error) {
+	_, ok, err := l.rl.Hit(ctx, "login:ip:"+ipKey(ip), time.Minute, l.perIP, l.now())
+	if err != nil {
+		return false, fmt.Errorf("auth: login rate limit: %w", err)
 	}
-	e.last = now
-	return e.lim.AllowN(now, 1)
+	return ok, nil
 }
 
 // locked reports whether username is currently locked out.
-func (l *loginLimiter) locked(username string) bool {
-	now := l.now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	e := l.users[userKey(username)]
-	return e != nil && now.Before(e.lockedUntil)
+func (l *loginLimiter) locked(ctx context.Context, username string) (bool, error) {
+	n, _, err := l.rl.Get(ctx, "login:lock:"+userKey(username), l.now())
+	if err != nil {
+		return false, fmt.Errorf("auth: login lockout: %w", err)
+	}
+	return n > 0, nil
 }
 
 // fail records a failed login and returns whether it triggered a lockout.
-func (l *loginLimiter) fail(username string) bool {
-	now := l.now()
+// The lockout doubles with every earlier lockout of the username within
+// lockoutLevelWindow, up to maxLockout.
+func (l *loginLimiter) fail(ctx context.Context, username string) (bool, error) {
 	k := userKey(username)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	e := l.users[k]
-	if e == nil {
-		if len(l.users) >= l.max {
-			l.gcLocked(now)
-		}
-		if len(l.users) >= l.max {
-			// Prefer evicting entries that are not locked out, so a spray of
-			// usernames cannot lift an active lockout.
-			evictOldest(l.users, func(e *userLimit) (time.Time, bool) { return e.last, now.Before(e.lockedUntil) })
-		}
-		e = &userLimit{}
-		l.users[k] = e
-	}
-	// Forget earlier lockouts after a quiet period of maxLockout since the
-	// last lockout ended.
-	if e.level > 0 && now.Sub(e.lockedUntil) > maxLockout {
-		e.level = 0
-	}
-	e.last = now
-	kept := e.fails[:0]
-	for _, t := range e.fails {
-		if now.Sub(t) < l.window {
-			kept = append(kept, t)
-		}
-	}
-	e.fails = append(kept, now)
-	if len(e.fails) < l.failures {
-		return false
-	}
-	d := l.lockout << e.level
-	if d <= 0 || d > maxLockout {
-		d = maxLockout
-	}
-	e.level++
-	e.lockedUntil = now.Add(d)
-	e.fails = nil
-	return true
-}
-
-// success clears the username's failures.
-func (l *loginLimiter) success(username string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.users, userKey(username))
-}
-
-func (l *loginLimiter) gc() {
 	now := l.now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.gcLocked(now)
+	n, _, err := l.rl.Hit(ctx, "login:fail:"+k, l.window, 0, now)
+	if err != nil {
+		return false, fmt.Errorf("auth: record login failure: %w", err)
+	}
+	if n < l.failures {
+		return false, nil
+	}
+	level, _, err := l.rl.Get(ctx, "login:level:"+k, now)
+	if err != nil {
+		return false, fmt.Errorf("auth: login lockout level: %w", err)
+	}
+	d := maxLockout
+	if level < 16 {
+		if v := l.lockout << level; v > 0 && v < maxLockout {
+			d = v
+		}
+	}
+	// A lockout window starts with its first hit, so reset first: the
+	// lockout then lasts exactly d from now.
+	for _, step := range []func() error{
+		func() error { return l.rl.Reset(ctx, "login:lock:"+k) },
+		func() error { _, _, err := l.rl.Hit(ctx, "login:lock:"+k, d, 0, now); return err },
+		func() error { _, _, err := l.rl.Hit(ctx, "login:level:"+k, lockoutLevelWindow, 0, now); return err },
+		func() error { return l.rl.Reset(ctx, "login:fail:"+k) },
+	} {
+		if err := step(); err != nil {
+			return false, fmt.Errorf("auth: record login lockout: %w", err)
+		}
+	}
+	return true, nil
 }
 
-func (l *loginLimiter) gcLocked(now time.Time) {
-	for k, e := range l.users {
-		if now.Sub(e.last) > l.window && !now.Before(e.lockedUntil) && (e.level == 0 || now.Sub(e.lockedUntil) > maxLockout) {
-			delete(l.users, k)
+// success clears the username's failures and lockout history.
+func (l *loginLimiter) success(ctx context.Context, username string) error {
+	k := userKey(username)
+	for _, key := range []string{"login:fail:" + k, "login:level:" + k} {
+		if err := l.rl.Reset(ctx, key); err != nil {
+			return fmt.Errorf("auth: reset login failures: %w", err)
 		}
 	}
-	for k, e := range l.ips {
-		if now.Sub(e.last) > time.Minute {
-			delete(l.ips, k)
-		}
-	}
-}
-
-// evictOldest deletes the least recently used entry, preferring entries
-// that are not protected.
-func evictOldest[V any](m map[string]V, info func(V) (last time.Time, protected bool)) {
-	var (
-		oldK      string
-		oldT      time.Time
-		oldProt   bool
-		haveOldst bool
-	)
-	for k, v := range m {
-		t, prot := info(v)
-		better := !haveOldst || (oldProt && !prot) || (prot == oldProt && t.Before(oldT))
-		if better {
-			oldK, oldT, oldProt, haveOldst = k, t, prot, true
-		}
-	}
-	if haveOldst {
-		delete(m, oldK)
-	}
+	return nil
 }

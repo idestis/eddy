@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/idestis/eddy/internal/identity"
@@ -21,6 +22,10 @@ import (
 )
 
 const (
+	// sessionCacheTTL is how long a session read from the store is trusted
+	// without asking the store again (ADR-0004).
+	sessionCacheTTL   = 30 * time.Second
+	sessionCacheMax   = 10000
 	sessionIDBytes    = 32
 	touchEvery        = time.Minute
 	preSessionTTL     = 10 * time.Minute
@@ -86,42 +91,92 @@ func (s *Service) createSession(ctx context.Context, r *http.Request, subject, d
 	if s.cfg.Auth.Session.MaxPerUser > 0 {
 		if err := s.st.Sessions().DeleteOldestBySubject(ctx, subject, s.cfg.Auth.Session.MaxPerUser); err != nil {
 			s.log.Error("enforce session maxPerUser failed", "user", subject, "err", err)
+		} else {
+			// Replicas may cache a session that was just trimmed.
+			s.revoked(ctx, subject)
 		}
 	}
 	return raw, nil
 }
 
+// errSessionStore reports that the session could not be checked because the
+// store failed and no cached copy was fresh enough. Authenticate answers
+// 503 rather than treating the user as signed out.
+var errSessionStore = errors.New("auth: session store unavailable")
+
 // readSession returns the session named by the request cookie, if valid.
-func (s *Service) readSession(ctx context.Context, r *http.Request, now time.Time) (string, store.Session, bool) {
+// A session read from the store is cached for sessionCacheTTL, so a short
+// store outage does not sign everyone out; revocations reach the cache
+// through Invalidate (fed by store events on every replica).
+func (s *Service) readSession(ctx context.Context, r *http.Request, now time.Time) (string, store.Session, bool, error) {
 	c, err := r.Cookie(s.cookieName)
 	if err != nil {
-		return "", store.Session{}, false
+		return "", store.Session{}, false, nil
 	}
 	h, ok := sessionHash(c.Value)
 	if !ok {
-		return "", store.Session{}, false
+		return "", store.Session{}, false, nil
 	}
-	sess, err := s.st.Sessions().Get(ctx, h, now)
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
+	sess, ok := s.sessions.get(h, now)
+	if !ok {
+		sess, err = s.st.Sessions().Get(ctx, h, now)
+		if err != nil {
+			s.sessions.drop(h)
+			if errors.Is(err, store.ErrNotFound) {
+				return "", store.Session{}, false, nil
+			}
 			s.log.Error("session lookup failed", "err", err)
+			return "", store.Session{}, false, errSessionStore
 		}
-		return "", store.Session{}, false
+		s.sessions.put(h, sess, now)
 	}
 	// The store already filters expired sessions; check again so a lax
-	// backend cannot extend a session.
+	// backend (or a cached copy) cannot extend a session.
 	if !now.Before(sess.ExpiresAt) || !now.Before(s.sessionExpiry(sess.CreatedAt, sess.LastSeenAt)) {
-		return "", store.Session{}, false
+		s.sessions.drop(h)
+		return "", store.Session{}, false, nil
 	}
-	return c.Value, sess, true
+	return c.Value, sess, true, nil
 }
 
 func (s *Service) deleteSession(ctx context.Context, raw string) {
-	if h, ok := sessionHash(raw); ok {
-		if err := s.st.Sessions().Delete(ctx, h); err != nil && !errors.Is(err, store.ErrNotFound) {
-			s.log.Error("delete session failed", "err", err)
-		}
+	h, ok := sessionHash(raw)
+	if !ok {
+		return
 	}
+	subject := s.sessions.subject(h)
+	s.sessions.drop(h)
+	if err := s.st.Sessions().Delete(ctx, h); err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.log.Error("delete session failed", "err", err)
+	}
+	if subject != "" {
+		s.revoked(ctx, subject)
+	}
+}
+
+// revoked drops the subject's cached sessions here and tells the other
+// replicas to do the same (store.EventRevoke).
+func (s *Service) revoked(ctx context.Context, subject string) {
+	s.sessions.dropSubject(subject)
+	ev := s.st.Events()
+	if ev == nil {
+		return
+	}
+	if err := ev.Publish(ctx, store.Event{Kind: store.EventRevoke, ID: subject}); err != nil {
+		s.log.Warn("publishing a session revocation failed; other replicas may accept the session for up to 30s",
+			"user", subject, "err", err)
+	}
+}
+
+// Invalidate drops cached sessions after a store.EventRevoke: id is a
+// subject ("" drops everything, for store.EventResync). The hub calls it
+// for every revoke event, including this replica's own.
+func (s *Service) Invalidate(id string) {
+	if id == "" {
+		s.sessions.clear()
+		return
+	}
+	s.sessions.dropSubject(id)
 }
 
 // touch extends the idle timeout at most once a minute.
@@ -133,9 +188,12 @@ func (s *Service) touch(ctx context.Context, raw string, sess store.Session, now
 	if !ok {
 		return
 	}
-	if err := s.st.Sessions().Touch(ctx, h, now.UTC(), s.sessionExpiry(sess.CreatedAt, now).UTC()); err != nil {
+	exp := s.sessionExpiry(sess.CreatedAt, now).UTC()
+	if err := s.st.Sessions().Touch(ctx, h, now.UTC(), exp); err != nil {
 		s.log.Error("touch session failed", "err", err)
+		return
 	}
+	s.sessions.touched(h, now.UTC(), exp)
 }
 
 func (s *Service) setSessionCookie(w http.ResponseWriter, raw string) {
@@ -363,4 +421,94 @@ func equalGroups(a, b []string) bool {
 	slices.Sort(x)
 	slices.Sort(y)
 	return slices.Equal(x, y)
+}
+
+// --- session cache -----------------------------------------------------------
+
+// sessionCache holds sessions read from the store for sessionCacheTTL. It is
+// bounded; when full, stale entries go first, then everything.
+type sessionCache struct {
+	mu sync.Mutex
+	m  map[string]cachedSession // key: string(sha256 of the session id)
+}
+
+type cachedSession struct {
+	sess store.Session
+	at   time.Time
+}
+
+func newSessionCache() *sessionCache { return &sessionCache{m: map[string]cachedSession{}} }
+
+func (c *sessionCache) get(h []byte, now time.Time) (store.Session, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[string(h)]
+	if !ok || now.Sub(e.at) >= sessionCacheTTL || now.Before(e.at) {
+		return store.Session{}, false
+	}
+	return e.sess, true
+}
+
+func (c *sessionCache) put(h []byte, sess store.Session, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.m) >= sessionCacheMax {
+		c.gcLocked(now)
+		if len(c.m) >= sessionCacheMax {
+			clear(c.m)
+		}
+	}
+	sess.Groups = slices.Clone(sess.Groups)
+	c.m[string(h)] = cachedSession{sess: sess, at: now}
+}
+
+func (c *sessionCache) touched(h []byte, seen, expires time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.m[string(h)]; ok {
+		e.sess.LastSeenAt, e.sess.ExpiresAt = seen, expires
+		c.m[string(h)] = e
+	}
+}
+
+func (c *sessionCache) subject(h []byte) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.m[string(h)].sess.Subject
+}
+
+func (c *sessionCache) drop(h []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, string(h))
+}
+
+func (c *sessionCache) dropSubject(subject string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, e := range c.m {
+		if e.sess.Subject == subject {
+			delete(c.m, k)
+		}
+	}
+}
+
+func (c *sessionCache) clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clear(c.m)
+}
+
+func (c *sessionCache) gc(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gcLocked(now)
+}
+
+func (c *sessionCache) gcLocked(now time.Time) {
+	for k, e := range c.m {
+		if now.Sub(e.at) >= sessionCacheTTL || now.Before(e.at) {
+			delete(c.m, k)
+		}
+	}
 }

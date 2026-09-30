@@ -177,15 +177,6 @@ func (s *Service) Issue(ctx context.Context, p identity.Principal, name string, 
 		return "", store.Token{}, fmt.Errorf("%w: ttl must be at least 1m", ErrBadRequest)
 	}
 	now := s.now().UTC()
-	if limit := s.cfg.Auth.Tokens.MaxPerUser; limit > 0 {
-		n, err := s.st.Tokens().CountActive(ctx, p.User, now)
-		if err != nil {
-			return "", store.Token{}, fmt.Errorf("auth: count tokens: %w", err)
-		}
-		if n >= limit {
-			return "", store.Token{}, fmt.Errorf("%w: at most %d active tokens per user", ErrTokenLimit, limit)
-		}
-	}
 	tok, id, secret, err := newPAT()
 	if err != nil {
 		return "", store.Token{}, err
@@ -202,7 +193,9 @@ func (s *Service) Issue(ctx context.Context, p identity.Principal, name string, 
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),
 	}
-	if err := s.st.Tokens().Create(ctx, t); err != nil {
+	// The store checks the per-user cap and inserts atomically, so
+	// concurrent requests on several replicas cannot exceed it.
+	if err := s.st.Tokens().Create(ctx, t, s.cfg.Auth.Tokens.MaxPerUser); err != nil {
 		if errors.Is(err, store.ErrLimit) {
 			return "", store.Token{}, fmt.Errorf("%w: at most %d active tokens per user", ErrTokenLimit, s.cfg.Auth.Tokens.MaxPerUser)
 		}

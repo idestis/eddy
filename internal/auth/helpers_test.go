@@ -91,6 +91,7 @@ func baseConfig(t *testing.T, users string) *config.Hub {
 	uf := writeFile(t, dir, "users.yaml", users)
 	cfg, err := config.ParseHub([]byte(`
 publicURL: ` + testPublicURL + `
+store: {driver: memory}
 auth:
   keyFile: ` + key + `
   local:

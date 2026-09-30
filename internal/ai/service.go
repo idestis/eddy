@@ -25,6 +25,9 @@ var (
 	ErrRateLimited = errors.New("ai: rate limited")
 	// ErrInvalid means the request is malformed (400).
 	ErrInvalid = errors.New("ai: invalid request")
+	// ErrUnavailable means the quota could not be checked because the store
+	// is unreachable (503).
+	ErrUnavailable = errors.New("ai: temporarily unavailable")
 )
 
 // Request limits that are not configurable.
@@ -75,6 +78,11 @@ type Option func(*Service)
 // config. Tests and alternative providers use it.
 func WithProvider(p Provider) Option { return func(s *Service) { s.provider = p } }
 
+// WithRateLimits keeps the hourly per-user quota in rl, shared by every hub
+// replica. Without it the quota is counted in this process. The quota
+// fails closed: when rl cannot be reached, Ask returns ErrUnavailable.
+func WithRateLimits(rl store.RateLimits) Option { return func(s *Service) { s.rl = rl } }
+
 // Service answers questions about the fleet as the asking user.
 type Service struct {
 	cfg          config.AI
@@ -86,6 +94,7 @@ type Service struct {
 	groupForKind func(string) (string, bool)
 	log          *slog.Logger
 	limiter      *userLimiter
+	rl           store.RateLimits
 	asks         atomic.Uint64
 }
 
@@ -114,6 +123,10 @@ func New(cfg config.AI, fl fleet.Service, th ThreadStore, rec *audit.Recorder, f
 	}
 	for _, o := range opts {
 		o(s)
+	}
+	if s.rl != nil {
+		// The hourly quota is global; only the concurrency cap stays local.
+		s.limiter = newUserLimiter(0, 1, time.Hour, time.Now)
 	}
 	if s.provider == nil && cfg.Enabled {
 		var err error
@@ -205,6 +218,18 @@ func (s *Service) Ask(ctx context.Context, p identity.Principal, r AskRequest) (
 		return AskResponse{}, ErrRateLimited
 	}
 	defer release()
+	if s.rl != nil {
+		_, ok, err := s.rl.Hit(ctx, "ai:ask:"+p.User, time.Hour, s.cfg.Limits.PerUserPerHour, time.Now())
+		if err != nil {
+			s.log.Error("Ask AI quota unavailable; refusing", "err", err)
+			s.record(ctx, asAI, store.ResourceRef{Cluster: r.Cluster}, store.AuditError, map[string]any{"reason": "quota_unavailable"})
+			return AskResponse{}, ErrUnavailable
+		}
+		if !ok {
+			s.record(ctx, asAI, store.ResourceRef{Cluster: r.Cluster}, store.AuditDenied, map[string]any{"reason": "rate_limited"})
+			return AskResponse{}, ErrRateLimited
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Limits.Timeout.Duration)
 	defer cancel()
