@@ -1,0 +1,24 @@
+name: PR title
+
+# Squash merges use the PR title as the commit message, and git-cliff builds the changelog and
+# release notes from those, so the title must be a Conventional Commit. Required check: `title`.
+# Runs on pull_request (not _target) so it reports on the PR's head commit; it only reads the title.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  title:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Conventional Commit title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert)(\([a-z0-9-]+\))?!?: [^A-Z].+'
+          if [[ ! "$TITLE" =~ $pattern ]]; then
+            echo "::error::PR title must look like 'feat(agent): watch image automation kinds' (got: $TITLE)"
+            exit 1
+          fi

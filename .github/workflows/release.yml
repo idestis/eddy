@@ -13,8 +13,29 @@ env:
   CHART_REPO: oci://ghcr.io/eddy-gitops/charts
 
 jobs:
+  notes:
+    name: Release notes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Generate release notes with git-cliff
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+      - name: Create release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          body: ${{ steps.git-cliff.outputs.content }}
+
   images:
     name: Image ${{ matrix.target }}
+    needs: notes
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -81,7 +102,7 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
         run: echo "$TOKEN" | helm registry login "$REGISTRY" --username "$ACTOR" --password-stdin
-      - name: Package, push and sign
+      - name: Package, push and sign charts
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |

@@ -1,0 +1,41 @@
+name: Labels
+
+# Adds area labels (from changed paths, .github/labeler.yml) and a type label (from the title prefix).
+# pull_request_target so it can label PRs from forks; it never checks out or runs PR code.
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          sync-labels: true
+      - uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        with:
+          script: |
+            const types = { feat: 'feature', fix: 'bug', perf: 'performance', refactor: 'refactor',
+              docs: 'docs', test: 'test', build: 'build', ci: 'ci', chore: 'chore', style: 'chore', revert: 'revert' };
+            const m = /^(\w+)(\([^)]*\))?(!)?:/.exec(process.env.TITLE || '');
+            const wanted = new Set();
+            if (m && types[m[1]]) wanted.add(types[m[1]]);
+            if (m && m[3]) wanted.add('breaking');
+            const pr = context.payload.pull_request;
+            const current = pr.labels.map(l => l.name);
+            // Only type labels are managed here; area labels come from labeler.
+            const managed = new Set(['feature', 'bug', 'performance', 'refactor', 'docs', 'test', 'build', 'ci', 'chore', 'revert', 'breaking']);
+            for (const name of current) {
+              if (managed.has(name) && !wanted.has(name)) {
+                await github.rest.issues.removeLabel({ ...context.repo, issue_number: pr.number, name }).catch(() => {});
+              }
+            }
+            const add = [...wanted].filter(n => !current.includes(n));
+            if (add.length) await github.rest.issues.addLabels({ ...context.repo, issue_number: pr.number, labels: add });

@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(task --list)",
+      "Bash(task check)",
+      "Bash(task lint)",
+      "Bash(task test)",
+      "Bash(task build)",
+      "Bash(task ui)",
+      "Bash(task charts)",
+      "Bash(go build:*)",
+      "Bash(go vet:*)",
+      "Bash(go test:*)",
+      "Bash(go doc:*)",
+      "Bash(gofmt:*)",
+      "Bash(pnpm run:*)",
+      "Bash(pnpm install --frozen-lockfile)",
+      "Bash(helm lint:*)",
+      "Bash(helm template:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Read(./.env)",
+      "Read(./.env.local)"
+    ]
+  }
+}

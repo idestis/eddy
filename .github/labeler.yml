@@ -1,0 +1,47 @@
+# Area labels for PRs, by changed paths.
+# Used by the labels.yml workflow to apply labels based on which files change.
+# Mirrors amannn/action-semantic-pull-request for type labels derived from the PR title.
+
+area/agent:
+  - changed-files:
+      - any-glob-to-any-file: ["cmd/agent/**", "internal/agent/**"]
+
+area/hub:
+  - changed-files:
+      - any-glob-to-any-file: ["cmd/hub/**", "internal/hub/**"]
+
+area/auth:
+  - changed-files:
+      - any-glob-to-any-file: ["internal/auth/**"]
+
+area/store:
+  - changed-files:
+      - any-glob-to-any-file: ["internal/store/**"]
+
+area/mcp:
+  - changed-files:
+      - any-glob-to-any-file: ["internal/mcp/**"]
+
+area/ai:
+  - changed-files:
+      - any-glob-to-any-file: ["internal/ai/**"]
+
+area/web:
+  - changed-files:
+      - any-glob-to-any-file: ["web/**"]
+
+area/charts:
+  - changed-files:
+      - any-glob-to-any-file: ["deploy/charts/**"]
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file: ["docs/**", "**/*.md", "LICENSE"]
+
+area/landing:
+  - changed-files:
+      - any-glob-to-any-file: ["landing/**"]
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: [".github/workflows/**", ".github/*.yml", "Taskfile.yml"]
