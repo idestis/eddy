@@ -259,6 +259,9 @@ func TestSummarizePods(t *testing.T) {
 			if r.Group != "" || r.ID != "/Pod/apps/web-1" {
 				t.Fatalf("id %q", r.ID)
 			}
+			if len(r.Containers) != 1 || r.Containers[0] != "app" {
+				t.Fatalf("containers %v", r.Containers)
+			}
 		})
 	}
 }

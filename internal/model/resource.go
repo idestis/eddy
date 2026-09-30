@@ -76,6 +76,8 @@ type Resource struct {
 	Replicas string `json:"replicas,omitempty"`
 	// Images lists container images for workloads and pods.
 	Images []string `json:"images,omitempty"`
+	// Containers lists a Pod's container names (not init containers), for log selection.
+	Containers []string `json:"containers,omitempty"`
 	// Interval is the reconcile interval for Flux kinds.
 	Interval string `json:"interval,omitempty"`
 	// URL is the source URL for Git, OCI, Helm and Bucket sources.

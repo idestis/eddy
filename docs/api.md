@@ -20,13 +20,19 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
   - `conflict` 409
   - `confirm_required` 428
   - `rate_limited` 429
-  - `disconnected` 503
+  - `disconnected` 503: the cluster's agent is not connected. No stale data is served.
+  - `unavailable` 503: the agent timed out or is busy
   - `disabled` 503
   - `internal` 500
 - **Resource path:** `{kind}/{ns}/{name}` uses the Flux or workload Kind (for example
   `Kustomization`). Cluster-scoped objects use `_` as the namespace. The API group is
   inferred from the kind table in `internal/flux/kinds.go`.
 - **Pagination:** list endpoints accept `?cursor=&limit=` and return `{items, next}`.
+- **Body limits:**
+  - JSON bodies are capped at 64 KiB, thread bodies at 512 KiB and requests at 1 MiB.
+  - Anything larger gets 413 with code `bad_request`.
+  - A store limit, such as too many messages in a thread, gives 409 `conflict`.
+- **Unknown routes:** an unknown `/api` route returns a 404 JSON body, or 401 when the caller is not signed in.
 
 ## Session
 
@@ -46,7 +52,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 {
   "user": "local:alice", "display": "alice", "groups": ["eddy:platform","eddy:authenticated"],
   "provider": "local", "csrf": "…",
-  "features": {"ai": true, "aiProvider": "bedrock", "mcp": true, "mcpWrites": true,
+  "features": {"ai": true, "aiProvider": "bedrock" /* only when ai is on */, "mcp": true, "mcpWrites": true,
                "logs": true, "ephemeralStore": false, "devMode": false},
   "version": "v1.0.0"
 }
@@ -57,15 +63,15 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | Method and path | Response |
 |---|---|
 | `GET /api/v1/clusters` | `{items: ClusterInfo[]}`, counts filtered by RBAC |
-| `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot |
+| `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot. `kind` may repeat or be comma-separated. An unknown kind or status gives 400. `resourceVersion` is an opaque hub counter. |
 | `GET /api/v1/clusters/{c}/objects/{kind}/{ns}/{name}` | `Resource` |
-| `GET …/objects/{kind}/{ns}/{name}/children` | `{items: Resource[]}` |
+| `GET …/objects/{kind}/{ns}/{name}/children` | `{items: Resource[]}`. Mainly for MCP. The UI builds trees from each summary's `owner`, which is filled from ownerReferences, Flux labels and inventory when known. |
 | `GET …/objects/{kind}/{ns}/{name}/yaml` | `{yaml}`, redacted, with a kind allowlist |
 | `GET …/objects/{kind}/{ns}/{name}/events` | `{items: Event[]}` |
 | `POST …/objects/{kind}/{ns}/{name}/reconcile` | body `{withSource?: bool, confirm?: string}` → 202 |
 | `POST …/objects/{kind}/{ns}/{name}/suspend` | body `{confirm?: string}` → 202. Protected cluster without `confirm == cluster` gives 428. |
 | `POST …/objects/{kind}/{ns}/{name}/resume` | body `{confirm?: string}` → 202 |
-| `GET /api/v1/clusters/{c}/pods/{ns}/{name}/logs?container=&tail=&follow=` | SSE `log` events `{lines: string[]}`, then `end` |
+| `GET /api/v1/clusters/{c}/pods/{ns}/{name}/logs?container=&tail=&follow=` | SSE `log` events `{lines: string[]}`, then `end` with `{}` or `{error:{code,message}}` (including when a followed pod stops). `tail` defaults to 500 and must be 1–5000. `follow` is a boolean. At most 4 streams per user, beyond that 429. Works with the session cookie alone, since EventSource cannot send headers. Pod summaries list `containers` for the picker. |
 
 ## Live updates: `GET /api/v1/stream` (SSE)
 
@@ -77,7 +83,11 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | `resync` | `{cluster}`: the client refetches that cluster's resources |
 | `thread` | `{threadId, ref}`: a thread the user can see changed |
 
-The hub sends a comment line every 20 s as a keepalive. Clients reconnect with backoff.
+- **Keepalive:** the hub sends a comment line every 20 s. Clients treat 45 s without data as a dead stream and reconnect with backoff.
+- **On connect:** a `clusters` event follows `hello` straight away.
+- **Slow clients** get `resync` for every cluster instead of the missed deltas.
+- **Disconnects:** when an agent disconnects, clients get `resync {cluster}`.
+- **Limits:** at most 8 streams per user, beyond that 429.
 
 ## Threads
 
@@ -89,10 +99,10 @@ a whole cluster (`kind: ""`).
 
 | Method and path | Body / query | Response |
 |---|---|---|
-| `GET /api/v1/threads?cluster=&kind=&namespace=&name=&status=&type=&cursor=&limit=` | | `{items: Thread[], next}` |
-| `POST /api/v1/threads` | `{ref, title, body, type?: "discussion"}` | `{thread, message}` |
+| `GET /api/v1/threads?cluster=&kind=&namespace=&name=&status=&type=&cursor=&limit=` | | `{items: Thread[], next}`. An empty `kind` means no filter. |
+| `POST /api/v1/threads` | `{ref, title, body, type?: "discussion"}` | 201 `{thread, message}`. Any other `type` gives 400. |
 | `GET /api/v1/threads/{id}` | | `{thread, messages: Message[], next}` |
-| `POST /api/v1/threads/{id}/messages` | `{body}` | `Message` |
+| `POST /api/v1/threads/{id}/messages` | `{body}` | 201 `Message` |
 | `POST /api/v1/threads/{id}/resolve` | | `Thread` |
 | `POST /api/v1/threads/{id}/reopen` | | `Thread` |
 | `DELETE /api/v1/threads/{id}` | author only | 204 |
@@ -109,7 +119,7 @@ Bodies are plain text or Markdown. The UI renders them with no raw HTML and no i
 - **Body:** `{cluster, resourceId?, threadId?, question}`
 - **Response:** `{threadId, message: Message, steps: [{tool, args, bytes}]}`
 
-Each ask is stored in a private thread of type `ask`. If you are over the per-user limit you get 429 `rate_limited`, and invalid input gives 400. The reply comes back in one piece,
+Each ask is stored in a private thread of type `ask`. The AI message's `author.client` is the model id, and `meta.provider` names the provider. If you are over the per-user limit you get 429 `rate_limited`, and invalid input gives 400. The reply comes back in one piece,
 with no streaming in v1.0.
 
 ## Personal access tokens
@@ -124,7 +134,8 @@ with no streaming in v1.0.
 
 `GET /api/v1/audit?subject=&cluster=&cursor=&limit=`
 - **Response:** `{items: AuditEvent[], next}`
-- **Access:** you see only your own events. Users in any of `auth.auditViewerGroups`
+- **Paging:** `limit` defaults to 50, maximum 200.
+- **Access:** you see only your own events. A non-viewer passing another `subject` gets 403. Users in any of `auth.auditViewerGroups`
   (for example `eddy:platform`) can query everyone's events.
 
 ## Health

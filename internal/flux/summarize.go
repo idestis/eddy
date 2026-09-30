@@ -385,6 +385,11 @@ var failingWaitReasons = []string{
 // phase and container readiness.
 func summarizePod(obj map[string]any, r *model.Resource) {
 	r.Images = podSpecImages(mapping(obj, "spec"))
+	for _, c := range maps(obj, "spec", "containers") {
+		if n := str(c, "name"); n != "" {
+			r.Containers = append(r.Containers, n)
+		}
+	}
 	statuses := append(maps(obj, "status", "initContainerStatuses"), maps(obj, "status", "containerStatuses")...)
 	containers := len(maps(obj, "spec", "containers"))
 	var readyCount int
