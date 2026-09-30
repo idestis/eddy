@@ -1,6 +1,6 @@
 # ADR-0006: Progressive loading and efficient data transfer
 
-- **Status:** Proposed · **Date:** 2026-09-30 · **Target:** v1.1 (P1 can ship in a v1.0.x)
+- **Status:** Accepted, measurement-gated (see Owner decisions) · **Date:** 2026-09-30 · **Target:** v1.1 (P1 can ship in a v1.0.x)
 - **Amends:** ADR-0001 (the snapshot and delta flow), ADR-0004 (what a hub replica keeps in memory, and the peer relay payload), `internal/protocol` (additive), `internal/model` (a new `IndexRow`), `docs/api.md`
 - **Assumes:** the Job-noise change has landed. The agent hides finished Jobs except active ones, recent failures and the last N per group, adds a "Job buildup" finding row, and adds a `completed` status.
 
@@ -365,3 +365,15 @@ The assumptions are 100 clusters × 15k, 3 replicas, 50 users, 2 agent replicas 
   - `model.Resource` takes about 1,328 B of heap at 882 B of JSON. A compact row takes about 297 B.
   - gzip on 13 MB of full JSON: level 1 gave 19.6× at about 1.0 GB/s, level 5 gave 23.5× at about 630 MB/s.
   - gzip on the index JSON: level 1 gave 7.7× and level 5 gave 8.9×.
+
+## Owner decisions (2026-09-30)
+
+1. **Measure first; no overengineering.** Build the synthetic load generator and the
+   benchmark gates first, and record today's baseline at 100 clusters × 15k resources.
+   Then ship **P1**, the cheap wins with no protocol change. **P2 and P3 go ahead only if
+   the P1 measurements miss the latency and memory budgets.**
+2. **Disconnected clusters stay visible.** They are greyed out and marked stale rather
+   than cleared. The hub keeps the last view in memory after the 5 s grace, bounded by the
+   same memory budget and evicted oldest-first, and the browser keeps its cached copy.
+   When the agent reconnects, the view is refreshed in place.
+3. **Windowed mode threshold:** 25k rows per cluster.
