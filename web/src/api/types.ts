@@ -35,11 +35,25 @@ export interface Resource extends Ref {
   owner?: Ref;
   replicas?: string;
   images?: string[];
+  /** A Pod's container names (not init containers), for the log picker. */
+  containers?: string[];
   interval?: string;
   url?: string;
   chart?: string;
   inventory?: number;
   labels?: Record<string, string>;
+  /**
+   * Proposed (backend backlog #1): the object is known only from a Flux inventory or Helm
+   * labels and Eddy does not watch its kind (ConfigMap, Secret, ServiceAccount, CRDs…).
+   * It carries kind, namespace and name only, with status "unknown".
+   */
+  inventoryOnly?: boolean;
+  /** Proposed: Ingress hosts. */
+  hosts?: string[];
+  /** Proposed: Service ports, e.g. "80/TCP → 8080". */
+  ports?: string[];
+  /** Proposed: CronJob schedule. */
+  schedule?: string;
   createdAt?: string;
   lastChanged?: string;
   resourceVersion: string;

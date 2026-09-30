@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
@@ -40,6 +41,9 @@ export default defineConfig({
       semicolons: true,
     }),
     react(),
+    // Tailwind compiles to one static stylesheet at build time (no runtime <style>), so the
+    // strict CSP (style-src 'self') holds.
+    tailwindcss(),
     keepGitkeep(),
   ],
   server: {

@@ -2,7 +2,10 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { type FleetResource, useClusters, useFleetResources } from "../../api/queries";
 import type { ClusterInfo } from "../../api/types";
-import { Icon } from "../../components/Icon";
+import { FactList } from "../../components/ClusterCards";
+import { ClusterTile, LockBadge } from "../../components/ClusterSwitch";
+import { Empty } from "../../components/Empty";
+import { PageHead } from "../../components/PageHead";
 import { Screen } from "../../components/Screen";
 import { Health, StatusPill } from "../../components/Status";
 import { clusterStyle } from "../../lib/clusterColor";
@@ -20,38 +23,34 @@ function ClusterCard({ c, index }: { c: ClusterInfo; index: number }) {
     <Link
       to="/c/$cluster"
       params={{ cluster: c.name }}
-      className={`fcard${c.protected ? " protected" : ""}`}
+      // Protected clusters: a thicker solid top border in the cluster colour, plus the lock badge.
+      className={`relative flex min-w-0 flex-col gap-3 overflow-hidden rounded-card border border-line bg-surface p-4 no-underline hover:border-x-cc/45 hover:border-b-cc/45 ${c.protected ? "border-t-[5px] border-t-cc pt-3.5" : "border-t-[3px] border-t-cc pt-[15px]"}`}
       style={clusterStyle(c)}
       aria-label={`Open ${c.name}`}
     >
-      <div className="fh">
-        <span className="sw">{c.protected ? "" : (c.displayName || c.name).charAt(0).toUpperCase()}</span>
-        <span className="fn">
-          {c.displayName || c.name}
-          {c.protected && (
-            <span className="lockb">
-              <Icon name="lock" />
-              Protected
-            </span>
-          )}
+      <div className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-x-[11px]">
+        <span className="row-span-2">
+          <ClusterTile cluster={c} />
         </span>
-        <span className="fe">{[c.environment, c.region].filter(Boolean).join(", ")}</span>
-        <span className="fk">{index < 9 && <kbd>{index + 1}</kbd>}</span>
+        <span className="flex min-w-0 items-center gap-1.5 text-15 font-semibold">
+          <span className="truncate">{c.displayName || c.name}</span>
+          {c.protected && <LockBadge />}
+        </span>
+        <span className="col-start-3 row-span-2 row-start-1">{index < 9 && <kbd>{index + 1}</kbd>}</span>
+        <span className="col-start-2 truncate text-12 text-ink-3">
+          {[c.environment, c.region].filter(Boolean).join(", ")}
+        </span>
       </div>
-      <dl className="kv2">
-        <dt>Health</dt>
-        <dd>
-          <Health cluster={c} />
-        </dd>
-        <dt>Resources</dt>
-        <dd>{c.connected ? total : "–"}</dd>
-        <dt>Flux</dt>
-        <dd>{c.fluxVersion ?? "–"}</dd>
-        <dt>Kubernetes</dt>
-        <dd>{c.kubernetesVersion ?? "–"}</dd>
-      </dl>
-      <span className={`conn${c.connected ? "" : " off"}`}>
-        <span className="dot" />
+      <FactList
+        rows={[
+          ["Health", <Health key="h" cluster={c} />],
+          ["Resources", c.connected ? total : "–"],
+          ["Flux", c.fluxVersion ?? "–"],
+          ["Kubernetes", c.kubernetesVersion ?? "–"],
+        ]}
+      />
+      <span className={`inline-flex items-center gap-1.5 text-12 ${c.connected ? "text-ink-3" : "text-bad"}`}>
+        <span className={`size-2 rounded-full ${c.connected ? "bg-ok" : "bg-bad"}`} />
         {c.connected
           ? `Connected, agent ${c.agentVersion ?? ""}`
           : `Disconnected, last seen ${ago(c.lastSeen)}`}
@@ -60,51 +59,63 @@ function ClusterCard({ c, index }: { c: ClusterInfo; index: number }) {
   );
 }
 
+const TH =
+  "border-b border-line bg-surface-side px-3.5 py-[9px] text-left text-12 font-medium whitespace-nowrap text-ink-3";
+const TD = "border-b border-line px-3.5 py-2.5 align-middle group-last:border-b-0";
+
 function UnhealthyTable({ items, clusters }: { items: FleetResource[]; clusters: Map<string, ClusterInfo> }) {
   const navigate = useNavigate();
   if (!items.length) {
-    return (
-      <div className="empty">
-        <strong>Nothing needs attention</strong>
-        Every Flux object you can see is ready.
-      </div>
-    );
+    return <Empty title="Nothing needs attention">Every Flux object you can see is ready.</Empty>;
   }
   return (
-    <table className="dtable clickable">
-      <thead>
-        <tr>
-          <th>Cluster</th>
-          <th>Resource</th>
-          <th>Status</th>
-          <th>Message</th>
-          <th className="num">Changed</th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map(({ cluster, resource: r }) => (
-          <tr key={`${cluster}/${r.id}`} onClick={() => void navigate(detailLink(cluster, r))}>
-            <td>
-              <span className="ctag" style={clusterStyle(clusters.get(cluster))}>
-                {cluster}
-              </span>
-            </td>
-            <td>
-              <Link {...detailLink(cluster, r)} className="mono">
-                <span className="muted">{kindInfo(r.kind).abbr} </span>
-                {r.namespace ? `${r.namespace}/` : ""}
-                {r.name}
-              </Link>
-            </td>
-            <td>
-              <StatusPill status={r.status} />
-            </td>
-            <td className="msg">{r.message}</td>
-            <td className="num muted">{age(r.lastChanged ?? r.createdAt)}</td>
+    <div className="overflow-hidden rounded-card border border-line bg-surface">
+      <table className="w-full border-separate border-spacing-0 text-13">
+        <thead>
+          <tr>
+            <th className={`${TH} w-[140px]`}>Cluster</th>
+            <th className={`${TH} w-[32%]`}>Resource</th>
+            <th className={`${TH} w-[130px]`}>Status</th>
+            <th className={TH}>Message</th>
+            <th className={`${TH} w-[90px] text-right`}>Changed</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {items.map(({ cluster, resource: r }) => (
+            <tr
+              key={`${cluster}/${r.id}`}
+              className="group cursor-pointer hover:bg-surface-sunken"
+              onClick={() => void navigate(detailLink(cluster, r))}
+            >
+              <td className={TD}>
+                <span className="ctag" style={clusterStyle(clusters.get(cluster))}>
+                  {cluster}
+                </span>
+              </td>
+              <td className={TD}>
+                <Link
+                  {...detailLink(cluster, r)}
+                  className="font-mono text-12-5 no-underline hover:underline"
+                >
+                  <span className="text-ink-3">{kindInfo(r.kind).abbr} </span>
+                  {r.namespace ? <span className="text-ink-3">{r.namespace} / </span> : ""}
+                  {r.name}
+                </Link>
+              </td>
+              <td className={TD}>
+                <StatusPill status={r.status} />
+              </td>
+              <td className={`${TD} max-w-0 truncate text-ink-2`} title={r.message}>
+                {r.message}
+              </td>
+              <td className={`${TD} text-right text-ink-3 tabular-nums`}>
+                {age(r.lastChanged ?? r.createdAt)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -115,7 +126,7 @@ function FleetPage() {
   const unhealthy = useMemo(
     () =>
       items
-        .filter(({ resource: r }) => isFlux(r.kind) && r.status !== "ready")
+        .filter(({ resource: r }) => isFlux(r.kind) && r.status !== "ready" && !r.inventoryOnly)
         .sort(
           (a, b) =>
             STATUS_RANK[a.resource.status] - STATUS_RANK[b.resource.status] ||
@@ -126,20 +137,19 @@ function FleetPage() {
   const disconnected = clusters.filter((c) => !c.connected).length;
 
   return (
-    <Screen crumbs={["Fleet"]}>
-      <h1>Fleet</h1>
-      <p className="page-sub">
+    <Screen crumbs={["Fleet"]} title="fleet">
+      <PageHead title="Fleet">
         {clusters.length} clusters{disconnected ? `, ${disconnected} disconnected` : ""}. Press a number to
-        jump into one.
-      </p>
-      <div className="fleet-grid">
+        jump into one, or <kbd>⌘K</kbd> to search every cluster.
+      </PageHead>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3.5">
         {clusters.map((c, i) => (
           <ClusterCard key={c.name} c={c} index={i} />
         ))}
       </div>
-      <h3 className="section-title">
+      <h3 className="mt-2 flex items-center gap-2 text-14 font-semibold">
         Needs attention across the fleet{" "}
-        <span className="muted">{loading ? "loading…" : unhealthy.length}</span>
+        <span className="font-normal text-ink-3">{loading ? "loading…" : unhealthy.length}</span>
       </h3>
       <UnhealthyTable items={unhealthy} clusters={byName} />
     </Screen>

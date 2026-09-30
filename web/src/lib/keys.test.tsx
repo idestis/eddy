@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, render, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BINDINGS,
@@ -6,9 +6,11 @@ import {
   buildKeymap,
   displayKeys,
   installKeyboard,
+  isSequence,
   pushOverlay,
   shouldIgnore,
   useKeys,
+  usePendingSequence,
 } from "./keys";
 
 const all = Object.entries(BINDINGS) as [string, Binding][];
@@ -65,6 +67,20 @@ describe("key registry", () => {
     expect(displayKeys("Shift+R")).toEqual(["R"]);
     expect(displayKeys("[Shift]+?")).toEqual(["?"]);
     expect(displayKeys("ArrowDown")).toEqual(["↓"]);
+    expect(displayKeys("[Shift]+{")).toEqual(["{"]);
+  });
+
+  it("marks two-key sequences so hints render as one keycap", () => {
+    expect(isSequence("fleet")).toBe(true);
+    expect(isSequence("top")).toBe(true);
+    expect(isSequence("reconcile")).toBe(false);
+  });
+
+  it("keeps [ and ] for sibling pages and moves cluster cycling to { and }", () => {
+    expect(BINDINGS.prevSection.keys).toEqual(["["]);
+    expect(BINDINGS.nextSection.keys).toEqual(["]"]);
+    expect(BINDINGS.prevCluster.keys).toEqual(["[Shift]+{"]);
+    expect(BINDINGS.nextCluster.keys).toEqual(["[Shift]+}"]);
   });
 });
 
@@ -128,6 +144,62 @@ describe("dispatcher", () => {
     press(document.body, "g");
     press(document.body, "f");
     expect(onFleet).toHaveBeenCalledTimes(1);
+  });
+
+  it("recognises every g sequence", () => {
+    const fired: string[] = [];
+    function All() {
+      useKeys({
+        fleet: () => fired.push("fleet"),
+        threads: () => fired.push("threads"),
+        tokens: () => fired.push("tokens"),
+        audit: () => fired.push("audit"),
+        top: () => fired.push("top"),
+      });
+      return null;
+    }
+    render(<All />);
+    for (const second of ["f", "t", "k", "a", "g"]) {
+      press(document.body, "g");
+      press(document.body, second);
+    }
+    expect(fired).toEqual(["fleet", "threads", "tokens", "audit", "top"]);
+  });
+
+  it("does not let a finished sequence leave others half-typed (g g f is top only)", () => {
+    const onTop = vi.fn();
+    const onFleet = vi.fn();
+    function Both() {
+      useKeys({ top: onTop, fleet: onFleet });
+      return null;
+    }
+    render(<Both />);
+    press(document.body, "g");
+    press(document.body, "g");
+    press(document.body, "f");
+    expect(onTop).toHaveBeenCalledTimes(1);
+    expect(onFleet).not.toHaveBeenCalled();
+  });
+
+  it("exposes the pending first key of a sequence and clears it", () => {
+    const { result } = renderHook(() => usePendingSequence());
+    expect(result.current).toBeNull();
+    act(() => press(document.body, "g"));
+    expect(result.current).toBe("g");
+    act(() => press(document.body, "x"));
+    expect(result.current).toBeNull();
+    act(() => press(document.body, "g"));
+    act(() => press(document.body, "f"));
+    expect(result.current).toBeNull();
+  });
+
+  it("does not show a pending sequence while typing in an input", () => {
+    const input = document.createElement("input");
+    document.body.append(input);
+    const { result } = renderHook(() => usePendingSequence());
+    act(() => press(input, "g"));
+    expect(result.current).toBeNull();
+    input.remove();
   });
 
   it("does not fire shifted bindings for the unshifted key", () => {

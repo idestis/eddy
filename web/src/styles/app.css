@@ -1,0 +1,437 @@
+/*
+ * The web app's stylesheet. Components style themselves with Tailwind utilities; this
+ * file holds only the shared tokens, the app's own theme additions, base element styles
+ * and the few components that read better as CSS (buttons, keycaps, Markdown, cmdk).
+ * Tailwind compiles it to one static file, so it is safe under the strict CSP.
+ */
+@import "tailwindcss";
+@import "../../../design/tokens.css";
+
+/* Font sizes the design uses, in px. Names are the size, so text-12-5 is 12.5px. */
+@theme {
+  --text-*: initial;
+  --text-10: 10px;
+  --text-10-5: 10.5px;
+  --text-11: 11px;
+  --text-11-5: 11.5px;
+  --text-12: 12px;
+  --text-12-5: 12.5px;
+  --text-13: 13px;
+  --text-13-5: 13.5px;
+  --text-14: 14px;
+  --text-15: 15px;
+  --text-16: 16px;
+  --text-17: 17px;
+  --text-18: 18px;
+  --text-20: 20px;
+  --text-22: 22px;
+
+  --animate-live: live-pulse 2.4s ease-in-out infinite;
+  --animate-blink: live-blink 1.6s steps(2, jump-none) infinite;
+  --animate-toast: toast-in 0.22s ease-out;
+
+  @keyframes live-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-ok) 45%, transparent);
+    }
+    60% {
+      box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-ok) 0%, transparent);
+    }
+  }
+  @keyframes live-blink {
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+}
+
+/*
+ * Runtime cluster identity. applyClusterIdentity() sets --cluster and --cluster-2 on
+ * <html>; clusterStyle() sets --cc and --cc2 on chips and tiles of other clusters.
+ * `inline` makes utilities such as bg-cc read the variable where it is used.
+ */
+@theme inline {
+  --color-c: var(--c);
+  --color-c2: var(--c2);
+  --color-c-ink: var(--c-ink);
+  --color-c-soft: var(--c-soft);
+  --color-cc: var(--cc);
+  --color-cc2: var(--cc2);
+}
+
+@property --c {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #475569;
+}
+@property --c2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #64748b;
+}
+
+@layer base {
+  :root {
+    --cluster: var(--color-cluster-none);
+    --cluster-2: var(--color-cluster-none);
+    /* Dark mode lifts cluster colours towards white so they keep contrast. */
+    --c: light-dark(var(--cluster), color-mix(in oklab, var(--cluster), white 32%));
+    --c2: light-dark(var(--cluster-2), color-mix(in oklab, var(--cluster-2), white 32%));
+    --c-ink: light-dark(#ffffff, #14161b);
+    --c-soft: color-mix(in oklab, var(--c) 10%, var(--color-surface));
+    --cc: var(--c);
+    --cc2: var(--c2);
+    transition:
+      --c 0.7s ease,
+      --c2 0.7s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      transition: none;
+    }
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-14);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label:has(> input[type="radio"]:not(:disabled)) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--c);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+  kbd {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: var(--text-10-5);
+    line-height: 1;
+    padding: 3px 5px;
+    border: 1px solid var(--color-line-strong);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: var(--color-surface);
+    color: var(--color-ink-3);
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  code {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 12px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-surface);
+    font-weight: 560;
+    font-size: var(--text-13);
+    white-space: nowrap;
+    &:hover:not(:disabled) {
+      border-color: var(--color-ink-3);
+    }
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+  .btn-primary {
+    background: var(--c);
+    border-color: var(--c);
+    color: var(--c-ink);
+    &:hover:not(:disabled) {
+      border-color: var(--c);
+      filter: brightness(1.06);
+    }
+    & kbd {
+      background: transparent;
+      color: var(--c-ink);
+      border-color: color-mix(in oklab, var(--c-ink) 45%, transparent);
+    }
+  }
+  .btn-soft {
+    border-color: color-mix(in oklab, var(--c) 40%, var(--color-line));
+    background: linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--c) 10%, var(--color-surface)),
+      color-mix(in oklab, var(--c2) 10%, var(--color-surface))
+    );
+    & svg {
+      color: var(--c);
+    }
+  }
+  .btn-danger {
+    background: var(--color-bad);
+    border-color: var(--color-bad);
+    color: #fff;
+  }
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+    &:hover:not(:disabled) {
+      border-color: transparent;
+      background: var(--color-surface-sunken);
+    }
+  }
+  .btn-sm {
+    height: 32px;
+    padding: 0 10px;
+    font-size: var(--text-12-5);
+  }
+
+  /* Square icon buttons */
+  .ib {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-ink-3);
+    flex: none;
+    &:hover {
+      background: var(--color-surface-sunken);
+      color: var(--color-ink);
+    }
+  }
+
+  .linkbtn {
+    color: var(--c);
+    font-family: var(--font-mono);
+    font-size: var(--text-12-5);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-align: left;
+    word-break: break-all;
+  }
+
+  /* Form fields */
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: var(--text-13);
+    color: var(--color-ink-2);
+  }
+  .input,
+  .field :is(input, select, textarea) {
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 12px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-surface-sunken);
+    color: var(--color-ink);
+    outline: none;
+    font-size: var(--text-14);
+    &:focus {
+      border-color: var(--c);
+    }
+  }
+  .field textarea {
+    resize: vertical;
+    min-height: 80px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--text-10-5);
+    font-weight: 650;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: var(--color-surface-sunken);
+    border: 1px solid var(--color-line);
+    color: var(--color-ink-2);
+    white-space: nowrap;
+    & svg {
+      width: 11px;
+      height: 11px;
+    }
+  }
+  .badge-accent {
+    color: var(--c);
+    background: color-mix(in oklab, var(--c) 12%, transparent);
+    border-color: transparent;
+  }
+  .badge-ai {
+    color: var(--c);
+    border-color: color-mix(in oklab, var(--c) 35%, var(--color-line));
+    background: linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--c) 12%, var(--color-surface)),
+      color-mix(in oklab, var(--c2) 12%, var(--color-surface))
+    );
+  }
+
+  /* A chip naming another cluster, tinted with its colour. */
+  .ctag {
+    --shown: light-dark(var(--cc), color-mix(in oklab, var(--cc), white 32%));
+    font-size: var(--text-11-5);
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--shown) 55%, var(--color-line));
+    color: var(--color-ink);
+    font-weight: 560;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    flex: none;
+    &::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--shown);
+    }
+  }
+
+  /* Safe Markdown output (components/Markdown.tsx) */
+  .md {
+    font-size: var(--text-13-5);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    & p,
+    & ul,
+    & ol,
+    & pre {
+      margin: 0 0 8px;
+    }
+    & > :last-child {
+      margin-bottom: 0;
+    }
+    & ul {
+      list-style: disc;
+      padding-left: 20px;
+    }
+    & ol {
+      list-style: decimal;
+      padding-left: 20px;
+    }
+    & li {
+      margin: 2px 0;
+    }
+    & code {
+      font-size: var(--text-12);
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: var(--color-surface-sunken);
+      border: 1px solid var(--color-line);
+    }
+    & pre {
+      padding: 10px 12px;
+      border-radius: var(--radius-control);
+      background: var(--color-code-bg);
+      color: var(--color-code-ink);
+      overflow: auto;
+    }
+    & pre code {
+      background: none;
+      border: 0;
+      padding: 0;
+      color: inherit;
+    }
+    & a {
+      color: var(--c);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    & strong {
+      font-weight: 620;
+    }
+    & em {
+      font-style: italic;
+    }
+  }
+
+  /* cmdk renders these parts; they have no className hooks of their own. */
+  .palette [cmdk-root] {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .palette [cmdk-list] {
+    overflow: auto;
+    padding: 6px;
+    max-height: calc(74vh - 120px);
+    overscroll-behavior: contain;
+  }
+  .palette [cmdk-group-heading] {
+    font-size: var(--text-12);
+    color: var(--color-ink-3);
+    padding: 10px 10px 4px;
+    font-weight: 550;
+  }
+  .palette [cmdk-empty] {
+    padding: 28px 16px;
+    text-align: center;
+    color: var(--color-ink-3);
+  }
+  .palette [cmdk-item][data-selected="true"] {
+    background: var(--c-soft);
+  }
+  .palette mark {
+    background: color-mix(in oklab, var(--c) 18%, transparent);
+    color: inherit;
+    border-radius: 3px;
+    box-shadow: 0 1px 0 var(--c);
+  }
+
+  /* ARIA tree (components/ChildrenTree.tsx): focus shows on the row, not the <li>. */
+  [role="treeitem"]:focus-visible {
+    outline: none;
+    & > .tnode {
+      outline: 2px solid var(--c);
+      outline-offset: -2px;
+    }
+  }
+  [role="treeitem"][aria-expanded="true"] > .tnode .tog svg {
+    transform: rotate(90deg);
+  }
+
+  /* Pod log lines */
+  .lg-error {
+    color: var(--color-code-error);
+  }
+  .lg-warn {
+    color: var(--color-code-warn);
+  }
+  .lg-meta {
+    color: var(--color-code-dim);
+    font-style: italic;
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+}

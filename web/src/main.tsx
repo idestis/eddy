@@ -1,13 +1,6 @@
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
-import "./styles/tokens.css";
-import "./styles/base.css";
-import "./styles/shell.css";
-import "./styles/list.css";
-import "./styles/detail.css";
-import "./styles/ai.css";
-import "./styles/overlays.css";
-import "./styles/pages.css";
+import "./styles/app.css";
 
 import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";

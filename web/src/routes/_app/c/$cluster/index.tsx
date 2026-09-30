@@ -5,6 +5,7 @@ import { z } from "zod";
 import { resourcesQuery, useCluster, useMe } from "../../../../api/queries";
 import { type Resource, STATUSES } from "../../../../api/types";
 import { ClusterCards } from "../../../../components/ClusterCards";
+import { Empty } from "../../../../components/Empty";
 import { Icon } from "../../../../components/Icon";
 import { ResourceList, type ResourceListHandle } from "../../../../components/ResourceList";
 import {
@@ -12,17 +13,19 @@ import {
   ResourceActions,
   ResourceFacts,
   ResourceHeader,
+  SectionTitle,
 } from "../../../../components/ResourceParts";
 import { Screen } from "../../../../components/Screen";
-import { SidePanel } from "../../../../components/SidePanel";
+import { SEG, SEG_BTN, SidePanel } from "../../../../components/SidePanel";
+import { AttentionIcon, StatusIcon } from "../../../../components/Status";
 import { useToast } from "../../../../components/Toasts";
 import { useAppState } from "../../../../lib/appState";
 import { STATUS_LABEL } from "../../../../lib/format";
 import { useKeys } from "../../../../lib/keys";
-import { kindInfo, NAV_GROUPS } from "../../../../lib/kinds";
+import { filterLabel, NAV_TREE, navNode } from "../../../../lib/kinds";
 import { type DetailView, detailLink } from "../../../../lib/links";
 import { recallList, rememberList } from "../../../../lib/listMemory";
-import { buildRows, filterResources, type StatusFilter } from "../../../../lib/resourceRows";
+import { buildRows, filterResources, type StatusFilter, statusCounts } from "../../../../lib/resourceRows";
 import { useResourceActions } from "../../../../lib/useResourceActions";
 
 const searchSchema = z.object({
@@ -40,11 +43,46 @@ export const Route = createFileRoute("/_app/c/$cluster/")({
   component: ClusterPage,
 });
 
-function filterLabel(kind?: string, status?: StatusFilter): string {
-  const k = kind ? (NAV_GROUPS.find((g) => g.id === kind)?.label ?? kindInfo(kind).plural) : "All resources";
+function listLabel(kind?: string, status?: StatusFilter): string {
+  const k = filterLabel(kind);
   if (status === "attention") return kind ? `${k} needing attention` : "Needs attention";
   if (status) return `${STATUS_LABEL[status]} ${k.toLowerCase()}`;
   return k;
+}
+
+type ChipStatus = "attention" | "failed" | "reconciling" | "suspended";
+
+/** Chip colours come from the status tokens; the active chip is tinted with its colour. */
+const CHIP_TONE: Record<ChipStatus, string> = {
+  attention: "aria-pressed:border-attn/60 aria-pressed:bg-attn/12 [&_.n]:text-attn",
+  failed: "aria-pressed:border-bad/60 aria-pressed:bg-bad/12 [&_.n]:text-bad",
+  reconciling: "aria-pressed:border-run/60 aria-pressed:bg-run/12 [&_.n]:text-run",
+  suspended: "aria-pressed:border-off/60 aria-pressed:bg-off/12 [&_.n]:text-off",
+};
+
+function StatusChip({
+  status,
+  count,
+  active,
+  onClick,
+}: {
+  status: ChipStatus;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 whitespace-nowrap text-ink-2 hover:border-line-strong aria-pressed:text-ink ${CHIP_TONE[status]} ${count === 0 && !active ? "opacity-45" : ""}`}
+    >
+      {status === "attention" ? <AttentionIcon /> : <StatusIcon status={status} />}
+      {status === "attention" ? "Not ready" : STATUS_LABEL[status]}
+      <span className="n font-semibold tabular-nums">{count}</span>
+    </button>
+  );
 }
 
 function ClusterPage() {
@@ -73,14 +111,9 @@ function ClusterPage() {
     [items, text, search.kind, search.status],
   );
   const rows = useMemo(() => buildRows(filtered, grouped), [filtered, grouped]);
-  const statusCounts = useMemo(() => {
-    const counts = { attention: 0, failed: 0, reconciling: 0, suspended: 0 };
-    for (const r of items) {
-      if (r.status !== "ready") counts.attention++;
-      if (r.status === "failed" || r.status === "reconciling" || r.status === "suspended") counts[r.status]++;
-    }
-    return counts;
-  }, [items]);
+  // Counts follow the kind filter, so "Failed 3" on Workloads means three failing workloads.
+  const inKind = useMemo(() => filterResources(items, { kind: search.kind }), [items, search.kind]);
+  const counts = useMemo(() => statusCounts(inKind), [inKind]);
   const resourceRows = useMemo(
     () => rows.flatMap((r) => (r.type === "resource" ? [r.resource] : [])),
     [rows],
@@ -111,6 +144,15 @@ function ClusterPage() {
     [name, search, navigate],
   );
 
+  // [ and ] step through the sibling pages of the current nav entry (Deployments → StatefulSets…).
+  const cycleSection = (delta: number) => {
+    const at = navNode(search.kind);
+    const siblings = at ? at.siblings : NAV_TREE;
+    const i = at ? siblings.indexOf(at.node) : -1;
+    const next = siblings[(i + delta + siblings.length) % siblings.length];
+    if (next) void navigate({ search: (prev) => ({ ...prev, kind: next.id }), replace: true });
+  };
+
   const move = (delta: number) => {
     if (!resourceRows.length) return;
     const i = selected ? resourceRows.indexOf(selected) : -1;
@@ -130,6 +172,8 @@ function ClusterPage() {
         setSearch({ filter: undefined, kind: undefined, status: undefined });
     },
     filter: () => filterInput.current?.focus(),
+    prevSection: () => cycleSection(-1),
+    nextSection: () => cycleSection(1),
     reconcile: () => actions.reconcile(selected),
     reconcileSource: () => actions.reconcile(selected, true),
     suspend: () => actions.toggleSuspend(selected),
@@ -158,7 +202,7 @@ function ClusterPage() {
   if (!cluster) return null;
 
   const showCards = !search.filter && !search.kind && !search.status && Boolean(data);
-  const title = filterLabel(search.kind, search.status);
+  const title = listLabel(search.kind, search.status);
 
   const preview = selected ? (
     <>
@@ -172,19 +216,17 @@ function ClusterPage() {
         onAsk={() => ask()}
       />
       <ResourceFacts cluster={name} r={selected} />
-      <h3 className="section-title">Recent events</h3>
+      <SectionTitle>Recent events</SectionTitle>
       <EventsList cluster={name} r={selected} limit={4} />
     </>
   ) : (
-    <div className="empty">
-      <strong>Nothing selected</strong>
-      Move with j and k.
-    </div>
+    <Empty title="Nothing selected">Move with j and k.</Empty>
   );
 
   return (
     <Screen
       cluster={name}
+      title={search.kind || search.status ? title.toLowerCase() : undefined}
       fill
       crumbs={[
         <Link key="c" to="/c/$cluster" params={{ cluster: name }}>
@@ -195,8 +237,8 @@ function ClusterPage() {
       aside={<SidePanel cluster={cluster} resource={selected} details={preview} />}
     >
       {showCards && <ClusterCards cluster={cluster} items={items} aiEnabled={Boolean(me?.features.ai)} />}
-      <div className="tools">
-        <label className="filter">
+      <div className="flex shrink-0 flex-wrap items-center gap-2.5">
+        <label className="flex h-9 min-w-40 flex-[0_1_300px] items-center gap-[7px] rounded-control border border-line bg-surface pr-2 pl-2.5 text-ink-3 focus-within:border-c">
           <Icon name="filter" />
           <input
             ref={filterInput}
@@ -205,6 +247,7 @@ function ClusterPage() {
             autoComplete="off"
             spellCheck={false}
             aria-label="Filter this list"
+            className="min-w-0 flex-1 border-0 bg-transparent text-14 text-ink outline-none placeholder:text-ink-3"
             value={search.filter ?? ""}
             onChange={(e) => setSearch({ filter: e.target.value || undefined })}
             onKeyDown={(e) => {
@@ -219,58 +262,63 @@ function ClusterPage() {
           />
           <kbd>/</kbd>
         </label>
-        <fieldset className="chips">
+        <fieldset className="no-scrollbar flex min-w-0 gap-1.5 overflow-x-auto">
           <legend className="sr-only">Status</legend>
           {(["attention", "failed", "reconciling", "suspended"] as const).map((s) => (
-            <button
-              type="button"
+            <StatusChip
               key={s}
-              className="chip"
-              aria-pressed={search.status === s}
+              status={s}
+              count={counts[s]}
+              active={search.status === s}
               onClick={() => setSearch({ status: search.status === s ? undefined : s })}
-            >
-              {s === "attention" ? "Not ready" : STATUS_LABEL[s]}
-              <span className="n">{statusCounts[s]}</span>
-            </button>
+            />
           ))}
-          <button
-            type="button"
-            className="chip"
-            aria-pressed={!grouped}
-            onClick={() => setSearch({ view: grouped ? "flat" : undefined })}
-            title="Group rows by kind"
-          >
-            {grouped ? "Grouped by kind" : "Flat list"}
-          </button>
         </fieldset>
-        <span className="cnt" aria-live="polite">
+        <span className="ml-auto text-12-5 whitespace-nowrap text-ink-3" aria-live="polite">
           {filtered.length === items.length
             ? `${items.length} resources`
             : `${filtered.length} of ${items.length}`}
         </span>
+        <fieldset className={`${SEG} m-0 shrink-0`}>
+          <legend className="sr-only">View</legend>
+          {(
+            [
+              ["grouped", "Grouped by kind", "layers"],
+              ["flat", "Flat list", "list"],
+            ] as const
+          ).map(([v, label, icon]) => (
+            <button
+              type="button"
+              key={v}
+              aria-pressed={(v === "grouped") === grouped}
+              className={`${SEG_BTN} flex-none`}
+              title={label}
+              onClick={() => setSearch({ view: v === "grouped" ? undefined : "flat" })}
+            >
+              <Icon name={icon} className="size-3.5" />
+              <span className="max-[1600px]:sr-only">{v === "grouped" ? "Grouped" : "Flat"}</span>
+            </button>
+          ))}
+        </fieldset>
       </div>
       {!cluster.connected ? (
-        <div className="empty">
-          <strong>{name} is disconnected</strong>
-          Resources appear when its agent reconnects.
-        </div>
+        <Empty title={`${name} is disconnected`}>Resources appear when its agent reconnects.</Empty>
       ) : isPending ? (
-        <div className="empty">Loading resources…</div>
+        <Empty>Loading resources…</Empty>
       ) : error ? (
-        <div className="empty" role="alert">
-          <strong>Couldn't load resources</strong>
+        <Empty title="Couldn't load resources" alert>
           {error.message}
-        </div>
+        </Empty>
       ) : rows.length === 0 ? (
-        <div className="empty">
-          <strong>{search.filter ? `Nothing matches “${search.filter}”` : "Nothing here"}</strong>
+        <Empty title={search.filter ? `Nothing matches “${search.filter}”` : "Nothing here"}>
           {search.filter || search.kind || search.status
             ? "Press Esc to clear the filter."
             : `${name} has no resources you can see.`}
-        </div>
+        </Empty>
       ) : (
         <ResourceList
           ref={list}
+          grouped={grouped}
           rows={rows}
           selectedId={selected?.id}
           onSelect={(r) => setSelectedId(r.id)}

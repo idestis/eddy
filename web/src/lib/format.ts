@@ -54,13 +54,35 @@ export function shortRevision(rev: string | undefined): string {
   return ref ? `${ref}@${hash.slice(0, 7)}` : hash.slice(0, 7);
 }
 
-/** The "revision" column: chart for releases, revision for sources, image tag for workloads. */
+/** "ghcr.io/stefanprodan/podinfo:6.7.2" → "podinfo:6.7.2"; digests are shortened. */
+export function shortImage(image: string | undefined): string {
+  if (!image) return "";
+  const at = image.indexOf("@sha256:");
+  const ref = at >= 0 ? `${image.slice(0, at)}@${image.slice(at + 8, at + 15)}` : image;
+  return ref.slice(ref.lastIndexOf("/") + 1);
+}
+
+/** The version column: chart for releases, revision for sources, image for workloads. */
 export function revisionOf(r: Resource): string {
   if (r.chart) return r.chart;
   if (r.revision) return shortRevision(r.revision);
   const image = r.images?.[0];
-  if (image) return image.slice(image.lastIndexOf(":") + 1);
-  return "";
+  if (image) return shortImage(image) + (r.images && r.images.length > 1 ? ` +${r.images.length - 1}` : "");
+  return r.schedule ?? r.hosts?.[0] ?? r.ports?.[0] ?? "";
+}
+
+/** The full value behind revisionOf, for its tooltip. */
+export function revisionTitle(r: Resource): string | undefined {
+  if (r.chart || r.revision) return r.revision ?? r.chart;
+  if (r.images?.length) return r.images.join("\n");
+  return r.schedule ?? (r.hosts ?? r.ports)?.join(", ");
+}
+
+/** Workload messages that only repeat the replicas column ("2/2 replicas ready"). */
+export function listMessage(r: Resource): string | undefined {
+  if (r.replicas && r.message && /^\d+\/\d+ replicas ready$/.test(r.message)) return undefined;
+  if (r.status === "ready" && r.message === "Running") return undefined;
+  return r.message;
 }
 
 export function bytes(n: number): string {

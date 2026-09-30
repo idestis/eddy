@@ -6,6 +6,8 @@ import { STATUS_RANK } from "../lib/format";
 import { kindInfo } from "../lib/kinds";
 import { detailLink } from "../lib/links";
 import { Icon } from "./Icon";
+import { INVENTORY_ONLY_HINT } from "./ResourceList";
+import { KindChip } from "./ResourceParts";
 import { StatusIcon } from "./Status";
 
 /** Index of resources by their owner's id, built from Resource.owner. */
@@ -56,7 +58,7 @@ function TreeNode({ cluster, r, index, depth, seen, first }: NodeProps) {
       if (hasKids && open) setOpen(false);
       else item.parentElement?.closest<HTMLElement>("[role='treeitem']")?.focus();
     } else if (e.key === "Enter") {
-      item.querySelector<HTMLAnchorElement>(".tnode a")?.click();
+      item.querySelector<HTMLAnchorElement>(":scope > .tnode a")?.click();
     } else return;
     e.preventDefault();
     e.stopPropagation();
@@ -72,27 +74,41 @@ function TreeNode({ cluster, r, index, depth, seen, first }: NodeProps) {
       aria-label={`${r.kind} ${r.name}, ${r.status}`}
       onKeyDown={onKeyDown}
     >
-      <div className="tnode">
+      <div
+        className={`tnode flex min-h-[34px] items-center gap-2 rounded-[9px] px-2 py-[3px] text-12-5 hover:bg-surface-sunken ${r.inventoryOnly ? "opacity-55" : ""}`}
+        title={r.inventoryOnly ? INVENTORY_ONLY_HINT : undefined}
+      >
         <button
           type="button"
-          className={`tog${hasKids ? "" : " leaf"}`}
+          className={`tog inline-flex size-[18px] shrink-0 items-center justify-center rounded-[5px] text-ink-3 ${hasKids ? "" : "invisible"}`}
           aria-hidden="true"
           tabIndex={-1}
           onClick={() => setOpen(!open)}
         >
-          <Icon name="chev" />
+          <Icon name="chev" className="size-3 transition-transform duration-100" />
         </button>
-        <StatusIcon status={r.status} />
-        <span className="kind">{kindInfo(r.kind).abbr}</span>
-        <Link {...detailLink(cluster, r)} tabIndex={-1}>
+        {r.inventoryOnly ? (
+          <Icon name={kindInfo(r.kind).icon} className="size-4 shrink-0 text-ink-3" />
+        ) : (
+          <StatusIcon status={r.status} />
+        )}
+        <KindChip kind={r.kind} />
+        <Link
+          {...detailLink(cluster, r)}
+          tabIndex={-1}
+          className="font-mono font-medium whitespace-nowrap no-underline hover:underline"
+        >
           {r.name}
         </Link>
-        {hasKids && <span className="muted">{kids.length}</span>}
-        {r.status !== "ready" && r.message && <span className="ms">{r.message}</span>}
+        {r.inventoryOnly && <span className="text-11-5 whitespace-nowrap text-ink-3">{r.kind}</span>}
+        {hasKids && <span className="text-ink-3">{kids.length}</span>}
+        {!r.inventoryOnly && r.status !== "ready" && r.message && (
+          <span className="min-w-0 truncate text-ink-3">{r.message}</span>
+        )}
       </div>
       {open && hasKids && (
         // biome-ignore lint/a11y/useSemanticElements: role="group" is the ARIA tree pattern's container for child items
-        <ul role="group">
+        <ul role="group" className="ml-[11px] border-l border-dashed border-line-strong pl-[18px]">
           {kids.map((k) => (
             <TreeNode key={k.id} cluster={cluster} r={k} index={index} depth={depth + 1} seen={nextSeen} />
           ))}
@@ -133,10 +149,11 @@ export function ChildrenTree({
   const index = useMemo(() => childrenIndex(items), [items]);
   const kids = index.get(root.id) ?? [];
   const seen = useMemo(() => new Set([root.id]), [root.id]);
-  if (!kids.length) return <p className="muted">{root.name} manages no resources that Eddy watches.</p>;
+  if (!kids.length)
+    return <p className="text-ink-3">{root.name} manages no resources that Eddy knows about.</p>;
   return (
     <ul
-      className="tree"
+      className="m-0 p-0"
       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: an ARIA tree built from nested lists, with keyboard support
       role="tree"
       aria-label={`Resources managed by ${root.name}`}

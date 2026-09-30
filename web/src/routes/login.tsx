@@ -5,14 +5,25 @@ import { z } from "zod";
 import { isApiError } from "../api/client";
 import { getCsrf, login } from "../api/endpoints";
 import { providersQuery } from "../api/queries";
+import { EddyMark } from "../components/Sidebar";
 import { safeReturnTo } from "../lib/links";
+import { useTitle } from "../lib/title";
 
 export const Route = createFileRoute("/login")({
   validateSearch: z.object({ returnTo: z.string().optional().catch(undefined) }),
   component: LoginPage,
 });
 
+function Divider({ children }: { children: string }) {
+  return (
+    <div className="flex items-center gap-2.5 text-12 text-ink-3 before:h-px before:flex-1 before:bg-line after:h-px after:flex-1 after:bg-line">
+      {children}
+    </div>
+  );
+}
+
 function LoginPage() {
+  useTitle("sign in");
   const { returnTo } = Route.useSearch();
   const target = safeReturnTo(returnTo);
   const providers = useQuery(providersQuery);
@@ -42,27 +53,20 @@ function LoginPage() {
   const p = providers.data;
 
   return (
-    <main className="login">
-      <div className="login-card">
-        <div className="logo">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2" />
-          </svg>
+    <main className="flex h-full items-center justify-center p-4 bg-page">
+      <div className="flex w-[min(400px,100%)] flex-col gap-4 rounded-window border border-line bg-surface p-7 shadow-window [&_form]:flex [&_form]:flex-col [&_form]:gap-3 [&_.btn]:justify-center [&>p]:text-13 [&>p]:text-ink-3">
+        <div className="flex items-center gap-[9px] text-17 font-semibold tracking-tight [&_svg]:text-c">
+          <EddyMark />
           eddy
         </div>
         <div>
-          <h1>Sign in</h1>
-          <p>Your Kubernetes RBAC decides what you can see and do in each cluster.</p>
+          <h1 className="text-20 font-semibold tracking-tight">Sign in</h1>
+          <p className="text-13 text-ink-3">
+            Your Kubernetes RBAC decides what you can see and do in each cluster.
+          </p>
         </div>
         {providers.isPending && <p>Loading sign-in options…</p>}
-        {providers.error && <p className="error-text">The hub could not be reached.</p>}
+        {providers.error && <p className="text-12-5 text-bad">The hub could not be reached.</p>}
         {p?.local && (
           <form
             onSubmit={(e) => {
@@ -94,13 +98,13 @@ function LoginPage() {
               />
             </div>
             {errorText && (
-              <p className="error-text" role="alert">
+              <p className="text-12-5 text-bad" role="alert">
                 {errorText}
               </p>
             )}
             <button
               type="submit"
-              className="btn primary"
+              className="btn btn-primary"
               disabled={signIn.isPending || !username || !password}
             >
               {signIn.isPending ? "Signing in…" : "Sign in"}
@@ -109,7 +113,7 @@ function LoginPage() {
         )}
         {p?.proxy && (
           <>
-            {p.local && <div className="divider">or</div>}
+            {p.local && <Divider>or</Divider>}
             <p>
               This hub trusts your organisation's sign-in proxy. If you got here, the proxy did not identify
               you.
@@ -121,7 +125,7 @@ function LoginPage() {
         )}
         {p?.dev && (
           <>
-            <div className="divider">development only</div>
+            <Divider>development only</Divider>
             <form method="get" action="/auth/dev/login">
               <div className="field">
                 <label htmlFor={`${userId}-dev`}>Fake user</label>
@@ -133,7 +137,7 @@ function LoginPage() {
                 />
               </div>
               <input type="hidden" name="groups" value="eddy:dev" />
-              <button type="submit" className="btn danger">
+              <button type="submit" className="btn btn-danger">
                 Dev login (never in production)
               </button>
             </form>

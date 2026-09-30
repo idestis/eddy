@@ -2,7 +2,10 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 import { threadsInfiniteQuery } from "../../api/queries";
+import { Empty } from "../../components/Empty";
+import { PageHead } from "../../components/PageHead";
 import { Screen } from "../../components/Screen";
+import { SEG, SEG_BTN } from "../../components/SidePanel";
 import { ThreadList } from "../../components/Threads";
 
 export const Route = createFileRoute("/_app/threads")({
@@ -17,18 +20,17 @@ function ThreadsPage() {
   const threads = query.data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
-    <Screen crumbs={["Threads"]}>
-      <h1>Threads</h1>
-      <p className="page-sub">
+    <Screen crumbs={["Threads"]} title="threads" width="narrow">
+      <PageHead title="Threads">
         Discussions on resources and clusters across the fleet, including notes left from Claude Code.
-      </p>
-      <fieldset className="chips">
+      </PageHead>
+      <fieldset className={`${SEG} self-start`}>
         <legend className="sr-only">Status</legend>
         {(["open", "resolved"] as const).map((s) => (
           <button
             type="button"
             key={s}
-            className="chip"
+            className={`${SEG_BTN} px-4`}
             aria-pressed={status === s}
             onClick={() => void navigate({ search: { status: s === "open" ? undefined : s } })}
           >
@@ -36,19 +38,16 @@ function ThreadsPage() {
           </button>
         ))}
       </fieldset>
-      {query.isPending && <p className="muted">Loading threads…</p>}
-      {query.error && <p className="error-text">Couldn't load threads: {query.error.message}</p>}
+      {query.isPending && <p className="text-ink-3">Loading threads…</p>}
+      {query.error && <p className="text-12-5 text-bad">Couldn't load threads: {query.error.message}</p>}
       {query.data && threads.length === 0 && (
-        <div className="empty">
-          <strong>No {status} threads</strong>
-          Press t on any resource to start one.
-        </div>
+        <Empty title={`No ${status} threads`}>Press t on any resource to start one.</Empty>
       )}
       <ThreadList threads={threads} showTarget />
       {query.hasNextPage && (
         <button
           type="button"
-          className="btn"
+          className="btn self-start"
           onClick={() => void query.fetchNextPage()}
           disabled={query.isFetchingNextPage}
         >

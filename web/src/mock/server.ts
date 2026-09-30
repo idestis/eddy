@@ -46,7 +46,7 @@ const me: Me = {
     ephemeralStore: true,
     devMode: false,
   },
-  version: "v0.1.0-mock",
+  version: "v1.0.0",
 };
 
 const human = (display: string, via = "web", client?: string): Author => ({
@@ -203,6 +203,8 @@ export class MockHub {
           name: r.name,
         };
         if (!f && method === "GET") return json(strip(r));
+        if (f === "yaml" && r.inventoryOnly)
+          return error(403, "forbidden", `Eddy does not read ${r.kind} objects; it knows only the name.`);
         if (f === "yaml") return json({ yaml: yamlOf(r) });
         if (f === "events") return json({ items: r.events });
         if (f === "children") {

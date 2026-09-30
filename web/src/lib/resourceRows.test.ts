@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resource } from "../test/fixtures";
-import { buildRows, filterResources } from "./resourceRows";
+import { buildRows, filterResources, statusCounts } from "./resourceRows";
 
 const items = [
   resource("apps", { status: "failed", message: "Health check failed" }),
@@ -47,5 +47,27 @@ describe("buildRows", () => {
       items[1]?.id,
       items[3]?.id,
     ]);
+  });
+});
+
+describe("inventory-only rows", () => {
+  const inv = resource("checkout-config", {
+    kind: "ConfigMap",
+    group: "",
+    namespace: "apps",
+    status: "unknown",
+    inventoryOnly: true,
+  });
+
+  it("never count as needing attention", () => {
+    expect(filterResources([...items, inv], { status: "attention" }).map((r) => r.name)).not.toContain(
+      "checkout-config",
+    );
+    expect(statusCounts([...items, inv]).attention).toBe(2);
+  });
+
+  it("sort after rows that have a status in the flat view", () => {
+    const rows = buildRows([inv, ...items], false);
+    expect(rows[rows.length - 1]?.key).toBe(inv.id);
   });
 });

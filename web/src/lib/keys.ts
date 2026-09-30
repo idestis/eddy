@@ -6,10 +6,10 @@
 // "$mod+k" (Cmd on macOS, Ctrl elsewhere), "[Shift]+?" (Shift optional,
 // because "?" needs it on most layouts).
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { createKeybindingsHandler, type KeybindingHandler } from "tinykeys";
 
-export type KeyGroup = "Move around" | "Find and ask" | "Clusters" | "Act on selection" | "In logs";
+export type KeyGroup = "Move around" | "Go to" | "Find and ask" | "Clusters" | "Act on selection" | "In logs";
 
 export interface Binding {
   keys: readonly string[];
@@ -29,10 +29,13 @@ export const BINDINGS = {
   top: { keys: ["g g"], label: "Jump to top", group: "Move around" },
   bottom: { keys: ["Shift+G"], label: "Jump to bottom", group: "Move around" },
   owner: { keys: ["u"], label: "Jump to owner", group: "Move around" },
-  fleet: { keys: ["g f"], label: "Fleet overview", group: "Move around" },
-  threads: { keys: ["g t"], label: "Open threads", group: "Move around" },
-  tokens: { keys: ["g k"], label: "Access tokens", group: "Move around" },
-  audit: { keys: ["g a"], label: "My audit log", group: "Move around" },
+  prevSection: { keys: ["["], label: "Previous page in this nav group", group: "Move around" },
+  nextSection: { keys: ["]"], label: "Next page in this nav group", group: "Move around" },
+
+  fleet: { keys: ["g f"], label: "Fleet overview", group: "Go to" },
+  threads: { keys: ["g t"], label: "Threads", group: "Go to" },
+  tokens: { keys: ["g k"], label: "Access tokens", group: "Go to" },
+  audit: { keys: ["g a"], label: "My audit log", group: "Go to" },
 
   palette: {
     // Cmd+K on macOS and Ctrl+K everywhere (Ctrl+K is what Linux and Windows users expect).
@@ -52,8 +55,8 @@ export const BINDINGS = {
     label: "Switch to cluster 1…9",
     group: "Clusters",
   },
-  prevCluster: { keys: ["["], label: "Previous cluster", group: "Clusters" },
-  nextCluster: { keys: ["]"], label: "Next cluster", group: "Clusters" },
+  prevCluster: { keys: ["[Shift]+{"], label: "Previous cluster", group: "Clusters" },
+  nextCluster: { keys: ["[Shift]+}"], label: "Next cluster", group: "Clusters" },
 
   reconcile: { keys: ["r"], label: "Reconcile", group: "Act on selection" },
   reconcileSource: { keys: ["Shift+R"], label: "Reconcile with source", group: "Act on selection" },
@@ -71,6 +74,7 @@ export type KeyId = keyof typeof BINDINGS;
 
 export const KEY_GROUPS: readonly KeyGroup[] = [
   "Move around",
+  "Go to",
   "Find and ask",
   "Clusters",
   "Act on selection",
@@ -106,6 +110,9 @@ export function displayKeys(key: string, mac = IS_MAC): string[] {
 
 /** The keycaps of a binding's first key, for hints next to buttons. */
 export const hint = (id: KeyId): string[] => displayKeys(BINDINGS[id].keys[0] ?? "");
+
+/** True when a binding's first key is a two-key sequence such as "g f". */
+export const isSequence = (id: KeyId): boolean => (BINDINGS[id].keys[0] ?? "").includes(" ");
 
 // Dispatcher: one tinykeys handler on window for the whole registry, so
 // sequences like "g f" and single keys never race. Components push handlers
@@ -157,14 +164,47 @@ function dispatch(id: KeyId, event: KeyboardEvent): void {
  * ends in a digit, so that is harmless.)
  */
 export function buildKeymap(
-  onKey: (id: KeyId, event: KeyboardEvent) => void,
+  onKey: (id: KeyId, event: KeyboardEvent, key: string) => void,
 ): Record<string, KeybindingHandler> {
   const entries = (Object.entries(BINDINGS) as [KeyId, Binding][]).flatMap(([id, b]) =>
-    b.keys.map((key) => [key, (e: KeyboardEvent) => onKey(id, e)] as const),
+    b.keys.map((key) => [key, (e: KeyboardEvent) => onKey(id, e, key)] as const),
   );
   entries.sort((a, b) => Number(b[0].includes(" ")) - Number(a[0].includes(" ")));
   return Object.fromEntries(entries);
 }
+
+// The first key of a pending sequence ("g" of "g f"), shown as a small "g …" hint.
+const SEQUENCE_TIMEOUT_MS = 1000;
+const SEQUENCE_STARTS = new Set(
+  Object.values(BINDINGS as Record<string, Binding>).flatMap((b) =>
+    b.keys.filter((k) => k.includes(" ")).map((k) => k.split(" ")[0] ?? ""),
+  ),
+);
+let pending: string | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+const pendingListeners = new Set<() => void>();
+
+function setPending(key: string | null): void {
+  clearTimeout(pendingTimer);
+  if (key) pendingTimer = setTimeout(() => setPending(null), SEQUENCE_TIMEOUT_MS);
+  if (pending === key) return;
+  pending = key;
+  for (const l of pendingListeners) l();
+}
+
+/** The first key of a sequence in progress, or null. */
+export function usePendingSequence(): string | null {
+  return useSyncExternalStore(
+    (l) => {
+      pendingListeners.add(l);
+      return () => pendingListeners.delete(l);
+    },
+    () => pending,
+    () => null,
+  );
+}
+
+const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "AltGraph"]);
 
 let installed = false;
 
@@ -172,14 +212,44 @@ let installed = false;
 export function installKeyboard(target: Window = window): () => void {
   if (installed) return () => {};
   installed = true;
-  // We filter inputs ourselves per binding, so tinykeys must not.
-  const handler = createKeybindingsHandler(buildKeymap(dispatch), {
-    ignore: (e) => e.repeat && !["j", "k", "ArrowDown", "ArrowUp"].includes(e.key),
+  let sequenceFired = false;
+  const keymap = buildKeymap((id, event, key) => {
+    if (key.includes(" ")) sequenceFired = true;
+    dispatch(id, event);
   });
-  target.addEventListener("keydown", handler);
+  // We filter inputs ourselves per binding, so tinykeys must not.
+  const create = () =>
+    createKeybindingsHandler(keymap, {
+      timeout: SEQUENCE_TIMEOUT_MS,
+      ignore: (e) => e.repeat && !["j", "k", "ArrowDown", "ArrowUp"].includes(e.key),
+    });
+  let handler = create();
+  const onKeyDown = (e: KeyboardEvent) => {
+    sequenceFired = false;
+    handler(e);
+    if (MODIFIERS.has(e.key)) return;
+    if (sequenceFired) {
+      // tinykeys stops at the first complete match and keeps the other half-typed
+      // sequences pending, so "g g f" would still fire "g f". Start clean instead.
+      handler = create();
+      setPending(null);
+      return;
+    }
+    const starts =
+      !pending &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      SEQUENCE_STARTS.has(e.key) &&
+      overlays === 0 &&
+      !(e.target instanceof Element && e.target.closest(EDITABLE));
+    setPending(starts ? e.key : null);
+  };
+  target.addEventListener("keydown", onKeyDown);
   return () => {
     installed = false;
-    target.removeEventListener("keydown", handler);
+    setPending(null);
+    target.removeEventListener("keydown", onKeyDown);
   };
 }
 

@@ -1,12 +1,17 @@
 // Cluster identity colours. The API gives one colour per cluster
 // (ClusterInfo.color); the second gradient stop is derived by rotating the hue,
 // which reproduces the prototype pairs (orange→amber, violet→pink, teal→blue).
+// Clusters without a colour use the fallback palette in design/tokens.css
+// (--color-cluster-1…6), so there are no colour literals here.
 
 import type { CSSProperties } from "react";
 import type { ClusterInfo } from "../api/types";
 
-const FALLBACK = ["#6D28D9", "#0F766E", "#C2410C", "#2563EB", "#BE185D", "#4D7C0F"];
-const NEUTRAL = "#475569";
+const FALLBACK_COUNT = 6;
+const fallbackVar = (order: number) => `var(--color-cluster-${(Math.abs(order) % FALLBACK_COUNT) + 1})`;
+const NEUTRAL = "var(--color-cluster-none)";
+// The same hue rotation, in CSS, for colours that are token references rather than hex.
+const cssSecondary = (color: string) => `oklch(from ${color} calc(l + 0.06) c calc(h + 40))`;
 
 const HEX = /^#[0-9a-f]{6}$/i;
 
@@ -46,23 +51,29 @@ export function secondaryColor(hex: string): string {
   return hslToHex((h + 40) % 360, Math.min(1, s * 1.05), Math.min(0.6, l + 0.08));
 }
 
+/** A CSS colour for the cluster: its hex from the API, or a palette token. */
 export function clusterColor(c: Pick<ClusterInfo, "color" | "order"> | undefined): string {
   if (!c) return NEUTRAL;
   if (c.color && HEX.test(c.color)) return c.color;
-  return FALLBACK[Math.abs(c.order) % FALLBACK.length] ?? NEUTRAL;
+  return fallbackVar(c.order);
+}
+
+function pair(c: Pick<ClusterInfo, "color" | "order"> | undefined): [string, string] {
+  const color = clusterColor(c);
+  return [color, HEX.test(color) ? secondaryColor(color) : cssSecondary(color)];
 }
 
 /** Inline custom properties for chips and swatches of another cluster. */
 export function clusterStyle(c: Pick<ClusterInfo, "color" | "order"> | undefined): CSSProperties {
-  const color = clusterColor(c);
-  return { "--cc": color, "--cc2": secondaryColor(color) };
+  const [color, second] = pair(c);
+  return { "--cc": color, "--cc2": second };
 }
 
-/** Sets the app-wide identity (frame gradient, ribbon, accents) to a cluster. */
+/** Sets the app-wide identity (ribbon, accents, selection) to a cluster. */
 export function applyClusterIdentity(c: ClusterInfo | undefined): void {
   const root = document.documentElement;
-  const color = c ? clusterColor(c) : NEUTRAL;
+  const [color, second] = pair(c);
   root.style.setProperty("--cluster", color);
-  root.style.setProperty("--cluster-2", c ? secondaryColor(color) : "#64748B");
+  root.style.setProperty("--cluster-2", second);
   root.dataset.protected = String(Boolean(c?.protected));
 }

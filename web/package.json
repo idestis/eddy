@@ -1,7 +1,7 @@
 {
   "name": "eddy-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
@@ -31,6 +31,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
+    "@tailwindcss/vite": "^4.3.3",
     "@tanstack/router-plugin": "^1.168.41",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
@@ -41,6 +42,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "jsdom": "^29.1.1",
+    "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"

@@ -21,11 +21,14 @@ export const Route = createFileRoute("/_app")({
     </AppShell>
   ),
   errorComponent: ({ error }) => (
-    <div className="login">
-      <div className="login-card" role="alert">
-        <h1>Eddy could not load</h1>
-        <p>{error instanceof Error ? error.message : String(error)}</p>
-        <button type="button" className="btn" onClick={() => window.location.reload()}>
+    <div className="flex h-full items-center justify-center p-4 bg-page">
+      <div
+        className="flex w-[min(400px,100%)] flex-col gap-4 rounded-window border border-line bg-surface p-7 shadow-window"
+        role="alert"
+      >
+        <h1 className="text-20 font-semibold tracking-tight">Eddy could not load</h1>
+        <p className="text-13 text-ink-3">{error instanceof Error ? error.message : String(error)}</p>
+        <button type="button" className="btn self-start" onClick={() => window.location.reload()}>
           Try again
         </button>
       </div>

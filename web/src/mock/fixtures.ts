@@ -28,6 +28,7 @@ const VERSIONS: Record<string, string> = {
   HelmRepository: "v1",
   HelmChart: "v1",
   Bucket: "v1",
+  HorizontalPodAutoscaler: "v2",
 };
 
 export interface MockResource extends Resource {
@@ -58,7 +59,7 @@ function make(
   name: string,
   props: Partial<MockResource> = {},
 ): MockResource {
-  const group = kindInfo(kind).group;
+  const group = props.group ?? kindInfo(kind).group;
   const created = randomAge();
   return {
     group,
@@ -120,7 +121,7 @@ const SEEDS: ClusterSeed[] = [
       order: 1,
       connected: true,
       lastSeen: ago(0),
-      agentVersion: "v0.1.0",
+      agentVersion: "v1.0.0",
       kubernetesVersion: "v1.33.1",
       fluxVersion: "v2.7.0",
     },
@@ -137,7 +138,7 @@ const SEEDS: ClusterSeed[] = [
       order: 2,
       connected: true,
       lastSeen: ago(0),
-      agentVersion: "v0.1.0",
+      agentVersion: "v1.0.0",
       kubernetesVersion: "v1.33.1",
       fluxVersion: "v2.7.0",
     },
@@ -154,7 +155,7 @@ const SEEDS: ClusterSeed[] = [
       order: 3,
       connected: true,
       lastSeen: ago(0),
-      agentVersion: "v0.1.0",
+      agentVersion: "v1.0.0",
       kubernetesVersion: "v1.34.0",
       fluxVersion: "v2.7.1",
     },
@@ -171,13 +172,20 @@ const SEEDS: ClusterSeed[] = [
       order: 4,
       connected: false,
       lastSeen: ago(47),
-      agentVersion: "v0.1.0",
+      agentVersion: "v1.0.0",
       kubernetesVersion: "v1.32.4",
       fluxVersion: "v2.6.4",
     },
     branch: "main",
   },
 ];
+
+// Sidecars, so the log view's container picker has something to pick.
+const SIDECARS: Record<string, string[]> = {
+  podinfo: ["linkerd-proxy"],
+  checkout: ["otel-agent"],
+  redis: ["metrics"],
+};
 
 const CONTAINERS: Record<string, string> = {
   nginx: "controller",
@@ -291,6 +299,7 @@ function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockCluster {
         add(
           make("Pod", ns, podName, {
             images: [image],
+            containers: [CONTAINERS[app] ?? app, ...(SIDECARS[app] ?? [])],
             owner: refOf(w),
             message: "Running",
             labels: { "app.kubernetes.io/name": app },
@@ -408,6 +417,7 @@ function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockCluster {
       add(
         make("Pod", "load", `load-gen-${String(i).padStart(5, "0")}-${sfx(5)}`, {
           images: ["ghcr.io/acme/load-gen:1.0.0"],
+          containers: ["worker"],
           owner: refOf(gen.w),
           status: s,
           message:
@@ -417,6 +427,105 @@ function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockCluster {
       );
     }
   }
+
+  // Networking, batch, autoscaling and storage kinds (backend backlog #1).
+  const svc = (ns: string, name: string, ports: string[], owner: MockResource, type = "ClusterIP") =>
+    add(
+      make("Service", ns, name, {
+        owner: refOf(owner),
+        ports,
+        message:
+          type === "LoadBalancer"
+            ? `LoadBalancer ${ri(10, 99)}.${ri(10, 250)}.${ri(1, 250)}.${ri(2, 250)}`
+            : type,
+        spec: { type },
+      }),
+    );
+  svc("ingress-nginx", "ingress-nginx-controller", ["80/TCP", "443/TCP"], hNginx, "LoadBalancer");
+  svc("cert-manager", "cert-manager-webhook", ["443/TCP → 10250"], hCert);
+  svc("apps", "podinfo", ["9898/TCP"], hPod);
+  svc("apps", "checkout", ["8080/TCP"], kApps);
+  if (hRedis) svc("apps", "redis-master", ["6379/TCP"], hRedis);
+  const domain = `${c}.acme.dev`;
+  add(
+    make("Ingress", "apps", "podinfo", {
+      owner: refOf(hPod),
+      hosts: [`podinfo.${domain}`],
+      message: `nginx · podinfo.${domain} · TLS`,
+    }),
+  );
+  add(
+    make("Ingress", "apps", "checkout", {
+      owner: refOf(kApps),
+      hosts: [`shop.${domain}`, `api.shop.${domain}`],
+      message: `nginx · shop.${domain} · TLS`,
+    }),
+  );
+  add(
+    make("HorizontalPodAutoscaler", "apps", "podinfo", {
+      owner: refOf(hPod),
+      replicas: `${rep}/${rep}`,
+      message: `${rep} replicas (min ${rep}, max ${rep * 3}), CPU ${ri(18, 60)}% of 80%`,
+    }),
+  );
+  const cron = add(
+    make("CronJob", "apps", "nightly-backup", {
+      owner: refOf(kApps),
+      schedule: "0 2 * * *",
+      suspended: dev,
+      status: dev ? "suspended" : "ready",
+      message: dev ? "Suspended" : `Last scheduled ${ri(3, 20)}h ago`,
+      images: ["ghcr.io/acme/backup:3.2.0"],
+    }),
+  );
+  const job = (name: string, owner: MockResource, failed = false) => {
+    const j = add(
+      make("Job", "apps", name, {
+        owner: refOf(owner),
+        images: ["ghcr.io/acme/backup:3.2.0"],
+        status: failed ? "failed" : "ready",
+        replicas: failed ? "0/1" : "1/1",
+        message: failed
+          ? "BackoffLimitExceeded: Job has reached the specified backoff limit"
+          : "Complete, 1/1 succeeded",
+      }),
+    );
+    add(
+      make("Pod", "apps", `${name}-${sfx(5)}`, {
+        owner: refOf(j),
+        images: ["ghcr.io/acme/backup:3.2.0"],
+        containers: ["backup"],
+        status: failed ? "failed" : "ready",
+        message: failed ? "Error" : "Completed",
+        spec: { container: "backup", nodeName: `ip-10-0-${ri(10, 200)}-${ri(2, 250)}.internal` },
+      }),
+    );
+    return j;
+  };
+  job(`nightly-backup-${ri(29260000, 29269999)}`, cron);
+  if (stg) job("db-migrate-2-15-0", kApps, true);
+  if (hRedis) {
+    add(
+      make("PersistentVolumeClaim", "apps", "redis-data-redis-master-0", {
+        owner: refOf(hRedis),
+        message: "Bound · 8Gi · gp3",
+      }),
+    );
+  }
+
+  // Inventory-only entries: objects Flux applied whose kinds Eddy does not watch. Only kind,
+  // namespace and name are known (never any ConfigMap or Secret data).
+  const inv = (kind: string, group: string, ns: string, name: string, owner: MockResource) =>
+    add(make(kind, ns, name, { group, owner: refOf(owner), status: "unknown", inventoryOnly: true }));
+  inv("Namespace", "", "", "apps", kApps);
+  inv("ServiceAccount", "", "apps", "checkout", kApps);
+  inv("ConfigMap", "", "apps", "checkout-config", kApps);
+  inv("Secret", "", "apps", "checkout-db", kApps);
+  inv("ServiceAccount", "", "apps", "podinfo", hPod);
+  inv("Namespace", "", "", "cert-manager", kInfra);
+  inv("CustomResourceDefinition", "apiextensions.k8s.io", "", "certificates.cert-manager.io", hCert);
+  inv("ClusterRole", "rbac.authorization.k8s.io", "", "cert-manager-controller-certificates", hCert);
+  inv("ClusterIssuer", "cert-manager.io", "", "letsencrypt-prod", kConfigs);
 
   // Scenario tweaks from the prototype.
   if (prod) {
@@ -505,6 +614,7 @@ function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockCluster {
   // Default conditions and events for everything not customised above.
   for (const r of out.values()) {
     if ((r.lastChanged ?? "") < (r.createdAt ?? "")) r.lastChanged = r.createdAt;
+    if (r.inventoryOnly) continue;
     if (kindInfo(r.kind).flux && !r.conditions) {
       r.conditions = readyCondition(
         r.status,
@@ -550,7 +660,9 @@ function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockCluster {
 
 export function countsOf(resources: Map<string, Resource>): Partial<Record<Status, number>> {
   const counts: Partial<Record<Status, number>> = {};
-  for (const r of resources.values()) counts[r.status] = (counts[r.status] ?? 0) + 1;
+  for (const r of resources.values()) {
+    if (!r.inventoryOnly) counts[r.status] = (counts[r.status] ?? 0) + 1;
+  }
   return counts;
 }
 

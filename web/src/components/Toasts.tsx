@@ -30,10 +30,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={show}>
       {children}
-      <div className="toasts" role="status" aria-live="polite">
+      <div
+        className="pointer-events-none fixed right-6 bottom-7 z-[70] flex flex-col items-end gap-2"
+        role="status"
+        aria-live="polite"
+      >
         {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.kind}`}>
-            <Icon name={t.kind === "ok" ? "check" : t.kind === "bad" ? "alert" : "info"} />
+          <div
+            key={t.id}
+            className="flex max-w-[420px] animate-toast items-start gap-[9px] rounded-[13px] bg-ink px-3.5 py-[11px] text-13 text-surface shadow-toast motion-reduce:animate-none"
+          >
+            <Icon
+              name={t.kind === "ok" ? "check" : t.kind === "bad" ? "alert" : "info"}
+              className={`mt-px size-4 shrink-0 ${t.kind === "ok" ? "text-code-ok" : t.kind === "bad" ? "text-code-error" : ""}`}
+            />
             <span>{t.text}</span>
           </div>
         ))}

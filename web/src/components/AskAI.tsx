@@ -3,9 +3,10 @@ import { isApiError } from "../api/client";
 import { askAI } from "../api/endpoints";
 import { useMe } from "../api/queries";
 import type { AskStep, ClusterInfo, Message, Resource } from "../api/types";
-import { useAppState } from "../lib/appState";
+import { ASK_PANEL_ATTR, useAppState } from "../lib/appState";
 import { bytes } from "../lib/format";
 import { kindInfo } from "../lib/kinds";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { StatusIcon } from "./Status";
@@ -126,8 +127,8 @@ function stepLabel(s: AskStep): string {
 function AIMessage({ turn, provider }: { turn: Extract<Turn, { kind: "ai" }>; provider?: string }) {
   const model = turn.message.author.client;
   return (
-    <div className="ma">
-      <div className="who">
+    <div className="max-w-full">
+      <div className="mb-1.5 flex items-center gap-1.5 text-11-5 text-ink-3">
         <span className="badge badge-ai">
           <Icon name="spark" />
           AI
@@ -135,13 +136,13 @@ function AIMessage({ turn, provider }: { turn: Extract<Turn, { kind: "ai" }>; pr
         <span>{[model, provider && `via ${provider}`].filter(Boolean).join(" ")}</span>
       </div>
       {turn.steps.length > 0 && (
-        <ul className="steps" aria-label="Tools used">
+        <ul className="mb-2 flex flex-col gap-[3px]" aria-label="Tools used">
           {turn.steps.map((s, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: steps are an ordered log
-            <li key={i} className="step">
-              <Icon name="chev" />
-              <code>{stepLabel(s)}</code>
-              <span>· {bytes(s.bytes)}</span>
+            <li key={i} className="flex items-center gap-1.5 text-12 text-ink-3">
+              <Icon name="chev" className="size-3 shrink-0 text-c" />
+              <code className="min-w-0 truncate text-11-5">{stepLabel(s)}</code>
+              <span className="shrink-0">· {bytes(s.bytes)}</span>
             </li>
           ))}
         </ul>
@@ -159,7 +160,7 @@ interface AskAIPanelProps {
 export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
   const { data: me } = useMe();
   const store = useAskAI();
-  const { askFocus, pendingQuestion, clearPendingQuestion, setPane } = useAppState();
+  const { askFocus, takeAskFocus, pendingQuestion, clearPendingQuestion, setPane } = useAppState();
   const [wholeCluster, setWholeCluster] = useState(false);
   const [draft, setDraft] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
@@ -169,7 +170,8 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
   const key = `${cluster.name}:${target?.id ?? "*"}`;
   const convo = store.get(key);
   const turns = convo?.turns ?? [];
-  const enabled = Boolean(me?.features.ai) && cluster.connected;
+  const aiOn = Boolean(me?.features.ai);
+  const enabled = aiOn && cluster.connected;
 
   const send = useCallback(
     (question: string) => {
@@ -181,9 +183,12 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
     [enabled, store, key, cluster.name, target?.id],
   );
 
+  // Focus the question box when Ask AI was opened (tab, `a`, header button, palette), but
+  // not merely because the panel re-mounted on another page.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: askFocus is the trigger
   useEffect(() => {
-    if (askFocus) input.current?.focus();
-  }, [askFocus]);
+    if (takeAskFocus()) input.current?.focus();
+  }, [askFocus, takeAskFocus]);
 
   useEffect(() => {
     if (!pendingQuestion) return;
@@ -196,10 +201,10 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
     log.current?.scrollTo({ top: log.current.scrollHeight });
   }, [turns.length, convo?.busy]);
 
-  if (!me?.features.ai) {
+  if (!aiOn) {
     return (
-      <div className="ai-off">
-        <strong>Ask AI is turned off</strong>
+      <div className="m-4 rounded-[14px] border border-dashed border-line-strong p-4 text-13 text-ink-3">
+        <strong className="mb-1 block text-ink">Ask AI is turned off</strong>
         An administrator can enable it in the hub configuration (<code>ai.enabled</code>).
       </div>
     );
@@ -208,85 +213,102 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
   const subject = target ? target.name : `all of ${cluster.name}`;
 
   return (
-    <div className="ai">
-      <div className="aictx">
+    <div className="flex min-h-0 flex-1 flex-col" {...{ [ASK_PANEL_ATTR]: "" }}>
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3 text-12-5 text-ink-3">
         About
-        <span className="ctxchip">
-          <span className="dot" />
-          <span>{target ? `${kindInfo(target.kind).abbr} ${target.name}` : `all of ${cluster.name}`}</span>
+        <span className="inline-flex min-h-[30px] max-w-full items-center gap-[7px] rounded-full border border-line-strong bg-surface py-1 pr-1.5 pl-[9px] font-mono text-12 text-ink">
+          <span className="size-[7px] shrink-0 rounded-full bg-c" />
+          <span className="truncate">
+            {target ? `${kindInfo(target.kind).abbr} ${target.name}` : `all of ${cluster.name}`}
+          </span>
           {resource && (
             <button
               type="button"
+              className="inline-flex size-[22px] items-center justify-center rounded-full text-ink-3 hover:bg-surface-sunken"
               onClick={() => setWholeCluster(!wholeCluster)}
               aria-label={
                 wholeCluster ? `Ask about ${resource.name} instead` : "Ask about the whole cluster instead"
               }
               title={wholeCluster ? `Ask about ${resource.name}` : "Ask about the whole cluster"}
             >
-              <Icon name={wholeCluster ? "arrowUp" : "x"} />
+              <Icon name={wholeCluster ? "arrowUp" : "x"} className="size-3.5" />
             </button>
           )}
         </span>
         {turns.length > 0 && (
-          <button type="button" className="btn sm new" onClick={() => store.reset(key)}>
+          <button type="button" className="btn btn-sm ml-auto" onClick={() => store.reset(key)}>
             New chat
           </button>
         )}
       </div>
-      <div className="aimsgs" ref={log} aria-live="polite">
-        {turns.length === 0 && (
-          <div className="ahello">
-            <h4>Ask about {subject}</h4>
-            <p>Answers come from the statuses, events and YAML you are allowed to see. Nothing is changed.</p>
-            <div className="qs">
-              {suggestions(cluster, target).map((q) => (
-                <button type="button" key={q} className="qchip" onClick={() => send(q)} disabled={!enabled}>
-                  <Icon name="spark" />
-                  {q}
-                </button>
-              ))}
+      {/* The conversation sits at the bottom, like a chat, and grows upwards. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4" ref={log} aria-live="polite">
+        <div className="mt-auto flex flex-col gap-3.5">
+          {!cluster.connected ? (
+            <div className="flex flex-col items-center gap-2 rounded-card border border-dashed border-line-strong px-5 py-8 text-center">
+              <Icon name="alert" className="size-5 text-warn" />
+              <strong className="text-14 font-semibold">{cluster.name} is disconnected.</strong>
+              <span className="text-13 text-ink-3">
+                Ask AI needs a live agent. It reads statuses, events and YAML through the agent.
+              </span>
             </div>
-          </div>
-        )}
-        {turns.map((t, i) =>
-          t.kind === "user" ? (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the transcript only grows
-            <div key={i} className="mu">
-              {t.text}
-            </div>
-          ) : t.kind === "ai" ? (
-            <AIMessage key={t.message.id} turn={t} provider={me.features.aiProvider} />
           ) : (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the transcript only grows
-            <div key={i} className="ma">
-              <div className="err">{t.text}</div>
-            </div>
-          ),
-        )}
-        {convo?.busy && (
-          <div className="ma">
-            <div className="think">
+            turns.length === 0 && (
+              <div className="rounded-card border border-c/28 bg-surface bg-[radial-gradient(120%_140%_at_0%_0%,color-mix(in_oklab,var(--c)_14%,transparent),transparent_60%),radial-gradient(120%_140%_at_100%_100%,color-mix(in_oklab,var(--c2)_14%,transparent),transparent_60%)] p-4">
+                <h4 className="mb-1 text-15 font-semibold">Ask about {subject}</h4>
+                <p className="mb-3 text-12-5 text-ink-2">
+                  Answers come from the statuses, events and YAML you are allowed to see. Nothing is changed.
+                </p>
+                <div className="flex flex-col items-start gap-1.5">
+                  {suggestions(cluster, target).map((q) => (
+                    <QuestionChip key={q} question={q} onAsk={send} />
+                  ))}
+                </div>
+              </div>
+            )
+          )}
+          {turns.map((t, i) =>
+            t.kind === "user" ? (
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: the transcript only grows
+                key={i}
+                className="max-w-[88%] self-end rounded-[14px_14px_4px_14px] bg-ink px-[13px] py-[9px] text-13-5 break-words whitespace-pre-wrap text-surface"
+              >
+                {t.text}
+              </div>
+            ) : t.kind === "ai" ? (
+              <AIMessage key={t.message.id} turn={t} provider={me?.features.aiProvider} />
+            ) : (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the transcript only grows
+              <div key={i} className="text-12-5 text-bad">
+                {t.text}
+              </div>
+            ),
+          )}
+          {convo?.busy && (
+            <div className="flex items-center gap-2 text-13 text-ink-3">
               <StatusIcon status="reconciling" />
               Thinking…
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       <form
-        className="comp"
+        className="flex shrink-0 flex-col gap-2 border-t border-line px-3.5 pt-3 pb-3"
         onSubmit={(e) => {
           e.preventDefault();
           send(draft);
         }}
       >
-        <div className="cbox">
-          <textarea
+        <div className="flex items-end gap-2 rounded-[14px] border border-line-strong bg-surface py-1.5 pr-1.5 pl-3 focus-within:border-c focus-within:ring-3 focus-within:ring-c/15 has-disabled:opacity-60">
+          <AutoGrowTextarea
             ref={input}
-            rows={1}
             value={draft}
+            maxHeight={140}
             placeholder={enabled ? `Ask about ${subject}…` : `${cluster.name} is disconnected`}
             aria-label="Ask AI"
             disabled={!enabled}
+            className="min-h-6 flex-1 border-0 bg-transparent py-1.5 text-14 leading-[1.45] text-ink outline-none placeholder:text-ink-3 disabled:cursor-not-allowed"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -301,20 +323,48 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
           />
           <button
             type="submit"
-            className="send"
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-c text-c-ink disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Send"
             disabled={!draft.trim() || convo?.busy || !enabled}
           >
             <Icon name="arrowUp" />
           </button>
         </div>
-        <div className="fine">
-          <span>AI answers can be wrong. Check before acting on {cluster.name}.</span>
-          <span>
-            <kbd>↵</kbd> send · <kbd>esc</kbd> close
+        <div className="flex items-center gap-3 overflow-hidden text-11-5 whitespace-nowrap text-ink-3">
+          <span
+            className="min-w-0 truncate"
+            title={`AI answers can be wrong. Check before acting on ${cluster.name}.`}
+          >
+            AI can be wrong. Check before acting.
+          </span>
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1">
+            <kbd>↵</kbd> send <span aria-hidden="true">·</span> <kbd>esc</kbd> close
           </span>
         </div>
       </form>
     </div>
+  );
+}
+
+/** A suggested question. */
+export function QuestionChip({
+  question,
+  onAsk,
+  disabled,
+}: {
+  question: string;
+  onAsk: (q: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-line-strong bg-surface/80 px-[11px] py-1.5 text-left text-12-5 leading-[1.3] hover:border-c disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-line-strong [&_svg]:size-[13px] [&_svg]:text-c"
+      onClick={() => onAsk(question)}
+      disabled={disabled}
+    >
+      <Icon name="spark" />
+      {question}
+    </button>
   );
 }

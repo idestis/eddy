@@ -91,7 +91,9 @@ function startStream(hub: MockHub, url: URL, source: MockEventSource): () => voi
   if (logs) {
     const [, cluster = "", ns = "", pod = ""] = logs.map(decodeURIComponent);
     const r = hub.logsFor(cluster, ns, pod);
-    const app = r?.labels?.["app.kubernetes.io/name"];
+    const container = url.searchParams.get("container") ?? r?.containers?.[0];
+    const sidecar = container && r?.containers && container !== r.containers[0];
+    const app = sidecar ? undefined : r?.labels?.["app.kubernetes.io/name"];
     if (r?.status !== "ready") {
       const reason = r?.message ?? "not found";
       source.send("log", { lines: [`Container has not started (${reason}), so there are no logs yet.`] });

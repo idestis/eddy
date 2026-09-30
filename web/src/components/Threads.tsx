@@ -6,9 +6,12 @@ import { createThread, replyThread, setThreadStatus } from "../api/endpoints";
 import { keys, threadQuery, threadsQuery } from "../api/queries";
 import type { Author, Message, ResourceRef, Thread } from "../api/types";
 import { ago } from "../lib/format";
+import { displayKeys } from "../lib/keys";
 import { detailLink } from "../lib/links";
+import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
+import { Keys } from "./Status";
 import { useToast } from "./Toasts";
 
 const CLIENT_NAMES: Record<string, string> = {
@@ -26,13 +29,13 @@ export function AuthorBadges({ author }: { author: Author }) {
           <Icon name="spark" />
           AI
         </span>
-        {author.client && <span className="muted mono">{author.client}</span>}
+        {author.client && <span className="font-mono text-ink-3">{author.client}</span>}
       </>
     );
   }
   if (author.via === "mcp") {
     const client = author.client ? (CLIENT_NAMES[author.client] ?? author.client) : "MCP";
-    return <span className="badge accent">via {client}</span>;
+    return <span className="badge badge-accent">via {client}</span>;
   }
   if (author.type === "system") return <span className="badge">system</span>;
   return null;
@@ -41,13 +44,16 @@ export function AuthorBadges({ author }: { author: Author }) {
 function MessageItem({ m }: { m: Message }) {
   const ai = m.author.type === "ai";
   return (
-    <li className={`tmsg${ai ? " ai" : ""}`}>
-      <span className="av" aria-hidden="true">
-        {ai ? <Icon name="spark" /> : m.author.display.charAt(0)}
+    <li className="grid grid-cols-[28px_minmax(0,1fr)] gap-2.5">
+      <span
+        className={`flex size-7 items-center justify-center rounded-full text-12 font-semibold uppercase ${ai ? "bg-linear-135 from-c to-c2 text-c-ink" : "border border-line bg-surface-sunken"}`}
+        aria-hidden="true"
+      >
+        {ai ? <Icon name="spark" className="size-3.5" /> : m.author.display.charAt(0)}
       </span>
-      <div>
-        <div className="mh">
-          <b>{ai ? "Ask AI" : m.author.display}</b>
+      <div className="min-w-0">
+        <div className="mb-[3px] flex flex-wrap items-center gap-1.5 text-12 text-ink-3">
+          <b className="font-semibold text-ink">{ai ? "Ask AI" : m.author.display}</b>
           <AuthorBadges author={m.author} />
           <span title={m.createdAt}>{ago(m.createdAt)}</span>
         </div>
@@ -89,78 +95,97 @@ function ThreadItem({ thread, showTarget }: { thread: Thread; showTarget?: boole
       ),
   });
 
+  const submit = () => {
+    if (reply.trim() && !send.isPending) send.mutate();
+  };
+
   return (
-    <article className="thread">
+    <article className="overflow-hidden rounded-[14px] border border-line bg-surface">
       <button
         type="button"
-        className="thread-head"
+        className="flex w-full items-center gap-2.5 px-3.5 py-3 text-left hover:bg-surface-sunken"
         aria-expanded={open}
         aria-controls={bodyId}
         onClick={() => setOpen(!open)}
       >
         <Icon name={thread.status === "resolved" ? "check" : "chat"} />
-        <span className="tt">{thread.title}</span>
-        {thread.status === "resolved" && <span className="badge ok">Resolved</span>}
+        <span className="min-w-0 flex-1 truncate font-semibold">{thread.title}</span>
+        {thread.status === "resolved" && <span className="badge text-ok">Resolved</span>}
         <AuthorBadges author={thread.createdBy} />
-        <span className="tm">
+        <span className="text-12 whitespace-nowrap text-ink-3">
           {thread.createdBy.display} · {thread.messageCount} · {ago(thread.updatedAt)}
         </span>
       </button>
       {open && (
-        <div className="thread-body" id={bodyId}>
-          {showTarget && (
-            <div className="muted">
-              On{" "}
-              {thread.ref.kind ? (
-                <Link {...detailLink(thread.ref.cluster, thread.ref, "threads")} className="linkbtn">
-                  {targetLabel(thread.ref)}
-                </Link>
-              ) : (
-                <Link to="/c/$cluster" params={{ cluster: thread.ref.cluster }} className="linkbtn">
-                  {thread.ref.cluster}
-                </Link>
-              )}{" "}
-              in {thread.ref.cluster}
-            </div>
-          )}
-          {detail.isPending && <p className="muted">Loading…</p>}
-          {detail.error && <p className="error-text">{detail.error.message}</p>}
+        <div className="flex flex-col gap-3 border-t border-line px-3.5 py-3" id={bodyId}>
+          <div className="flex items-center gap-2 text-13 text-ink-3">
+            {showTarget && (
+              <span>
+                On{" "}
+                {thread.ref.kind ? (
+                  <Link {...detailLink(thread.ref.cluster, thread.ref, "threads")} className="linkbtn">
+                    {targetLabel(thread.ref)}
+                  </Link>
+                ) : (
+                  <Link to="/c/$cluster" params={{ cluster: thread.ref.cluster }} className="linkbtn">
+                    {thread.ref.cluster}
+                  </Link>
+                )}{" "}
+                in {thread.ref.cluster}
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost ml-auto"
+              onClick={() => status.mutate()}
+              disabled={status.isPending}
+            >
+              <Icon name={thread.status === "open" ? "check" : "chat"} />
+              {thread.status === "open" ? "Resolve" : "Reopen"}
+            </button>
+          </div>
+          {detail.isPending && <p className="text-ink-3">Loading…</p>}
+          {detail.error && <p className="text-12-5 text-bad">{detail.error.message}</p>}
           {detail.data && (
-            <ul className="msgs">
+            <ul className="flex flex-col gap-3">
               {detail.data.messages.map((m) => (
                 <MessageItem key={m.id} m={m} />
               ))}
             </ul>
           )}
           <form
-            className="reply"
+            className="ml-[38px] flex items-end gap-2 rounded-xl border border-line-strong bg-surface-sunken py-1 pr-1 pl-3 focus-within:border-c"
             onSubmit={(e) => {
               e.preventDefault();
-              if (reply.trim()) send.mutate();
+              submit();
             }}
           >
-            <textarea
+            <AutoGrowTextarea
               aria-label={`Reply to ${thread.title}`}
-              placeholder="Reply… (Markdown: `code`, **bold**, lists, links)"
+              placeholder="Reply…"
               value={reply}
+              maxHeight={200}
+              className="min-h-6 flex-1 border-0 bg-transparent py-1.5 text-13-5 leading-[1.45] text-ink outline-none placeholder:text-ink-3"
               onChange={(e) => setReply(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && reply.trim()) send.mutate();
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  submit();
+                }
               }}
             />
-            <div className="row-btns">
-              <button
-                type="button"
-                className="btn sm"
-                onClick={() => status.mutate()}
-                disabled={status.isPending}
-              >
-                {thread.status === "open" ? "Resolve" : "Reopen"}
-              </button>
-              <button type="submit" className="btn sm primary" disabled={!reply.trim() || send.isPending}>
-                Reply
-              </button>
-            </div>
+            <span className="hidden pb-2 text-11 whitespace-nowrap text-ink-3 sm:inline">
+              <Keys keys={displayKeys("$mod+Enter")} />
+            </span>
+            <button
+              type="submit"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-c text-c-ink disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Send reply"
+              title="Send (⌘/Ctrl+Enter)"
+              disabled={!reply.trim() || send.isPending}
+            >
+              <Icon name="arrowUp" />
+            </button>
           </form>
         </div>
       )}
@@ -170,7 +195,7 @@ function ThreadItem({ thread, showTarget }: { thread: Thread; showTarget?: boole
 
 export function ThreadList({ threads, showTarget }: { threads: Thread[]; showTarget?: boolean }) {
   return (
-    <div className="threads">
+    <div className="flex flex-col gap-2.5">
       {threads.map((t) => (
         <ThreadItem key={t.id} thread={t} showTarget={showTarget} />
       ))}
@@ -196,7 +221,7 @@ function NewThread({ target, onDone }: { target: ResourceRef; onDone: () => void
   });
   return (
     <form
-      className="panel"
+      className="flex flex-col gap-3.5 rounded-card border border-line bg-surface p-[18px]"
       onSubmit={(e) => {
         e.preventDefault();
         if (title.trim() && body.trim()) create.mutate();
@@ -211,16 +236,16 @@ function NewThread({ target, onDone }: { target: ResourceRef; onDone: () => void
         <textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="What should others know? Markdown is supported; HTML and images are not."
+          placeholder="What should others know?"
         />
       </label>
-      <div className="row-btns">
-        <button type="button" className="btn sm" onClick={onDone}>
+      <div className="flex flex-wrap justify-end gap-2">
+        <button type="button" className="btn btn-sm" onClick={onDone}>
           Cancel
         </button>
         <button
           type="submit"
-          className="btn sm primary"
+          className="btn btn-sm btn-primary"
           disabled={!title.trim() || !body.trim() || create.isPending}
         >
           Start thread
@@ -250,21 +275,21 @@ export function ResourceThreads({
     }),
   );
   return (
-    <div className="threads">
+    <div className="flex max-w-[900px] flex-col gap-2.5">
       {compose ? (
         <NewThread target={target} onDone={() => onCompose(false)} />
       ) : (
-        <div className="row-btns">
-          <button type="button" className="btn sm" onClick={() => onCompose(true)}>
+        <div className="flex gap-2">
+          <button type="button" className="btn btn-sm" onClick={() => onCompose(true)}>
             <Icon name="chat" />
             New thread <kbd>t</kbd>
           </button>
         </div>
       )}
-      {isPending && <p className="muted">Loading threads…</p>}
-      {error && <p className="error-text">Couldn't load threads: {error.message}</p>}
+      {isPending && <p className="text-ink-3">Loading threads…</p>}
+      {error && <p className="text-12-5 text-bad">Couldn't load threads: {error.message}</p>}
       {data && data.items.length === 0 && !compose && (
-        <p className="muted">No threads yet. Start one to leave context for the next person on call.</p>
+        <p className="text-ink-3">No threads yet. Start one to leave context for the next person on call.</p>
       )}
       {data && <ThreadList threads={data.items} />}
     </div>

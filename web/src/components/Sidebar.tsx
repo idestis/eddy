@@ -1,43 +1,124 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { logout } from "../api/endpoints";
 import { resourcesQuery, useMe } from "../api/queries";
-import { useStreamState } from "../api/stream";
+import { type StreamState, useStreamState } from "../api/stream";
 import type { ClusterInfo, Resource } from "../api/types";
 import { useAppState } from "../lib/appState";
-import { kindInfo, NAV_GROUPS } from "../lib/kinds";
-import type { StatusFilter } from "../lib/resourceRows";
+import { matchesKindFilter, NAV_TREE, type NavNode, navPath } from "../lib/kinds";
+import { needsAttention, type StatusFilter } from "../lib/resourceRows";
 import { toggleTheme } from "../lib/theme";
 import { ClusterSwitch } from "./ClusterSwitch";
 import { Icon, type IconName } from "./Icon";
 
-const LIVE_LABEL = { live: "Live", connecting: "Connecting…", reconnecting: "Reconnecting…" } as const;
+export function EddyMark({ className = "size-[22px]" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2" />
+    </svg>
+  );
+}
 
-function countBy(items: Resource[]) {
-  const nav = new Map<string, number>();
-  let attention = 0;
-  for (const r of items) {
-    const g = kindInfo(r.kind).nav;
-    nav.set(g, (nav.get(g) ?? 0) + 1);
-    if (r.status !== "ready") attention++;
+const LIVE: Record<StreamState, { label: string; dot: string; title: string }> = {
+  live: {
+    label: "Live",
+    dot: "bg-ok motion-safe:animate-live",
+    title: "Live updates are streaming",
+  },
+  reconnecting: {
+    label: "Reconnecting…",
+    dot: "bg-warn motion-safe:animate-blink",
+    title: "The live stream dropped; reconnecting",
+  },
+  connecting: { label: "Offline", dot: "bg-off", title: "Not connected to live updates yet" },
+};
+
+/** The live-updates indicator: pulses while live (not under reduced motion), amber while reconnecting. */
+export function LiveIndicator() {
+  const stream = useStreamState();
+  const s = LIVE[stream];
+  return (
+    <span
+      className="ml-auto inline-flex items-center gap-1.5 text-12 text-ink-3"
+      role="status"
+      title={s.title}
+      data-stream={stream}
+    >
+      <span className={`size-2 rounded-full ${s.dot}`} />
+      {s.label}
+    </span>
+  );
+}
+
+const NAV_LINK =
+  "flex h-[34px] min-w-0 shrink-0 items-center gap-2.5 rounded-control px-2.5 text-13-5 text-ink-2 no-underline hover:bg-surface-sunken hover:text-ink aria-[current=page]:bg-c-soft aria-[current=page]:font-semibold aria-[current=page]:text-ink aria-[current=page]:[&_svg]:text-c";
+
+function Count({ n, bad }: { n: number | undefined; bad?: boolean }) {
+  if (n === undefined) return null;
+  return (
+    <span
+      className={`ml-auto pl-2 text-12 tabular-nums ${bad && n > 0 ? "font-semibold text-attn" : n === 0 ? "text-ink-3/60" : "text-ink-3"}`}
+    >
+      {n}
+    </span>
+  );
+}
+
+const OPEN_KEY = "eddy.nav.open";
+
+function loadOpen(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(OPEN_KEY) ?? "{}") as Record<string, boolean>;
+  } catch {
+    return {};
   }
-  return { nav, attention };
 }
 
 function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
   const { data } = useQuery({ ...resourcesQuery(cluster.name), enabled: cluster.connected });
   const search = useSearch({ strict: false }) as { kind?: string; status?: StatusFilter };
   const onList = useLocation({ select: (l) => l.pathname === `/c/${encodeURIComponent(cluster.name)}` });
-  const counts = useMemo(() => countBy(data?.items ?? []), [data]);
+  const items = data?.items;
   const params = { cluster: cluster.name };
+  const activePath = useMemo(() => (onList ? navPath(search.kind) : []), [onList, search.kind]);
+  // Collapsed state the user chose; a group is open by default while it holds the active page.
+  const [open, setOpen] = useState<Record<string, boolean>>(loadOpen);
+  useEffect(() => {
+    try {
+      localStorage.setItem(OPEN_KEY, JSON.stringify(open));
+    } catch {
+      // Storage blocked: the tree still works, it just forgets.
+    }
+  }, [open]);
 
-  const item = (
+  const counts = useMemo(() => {
+    const byId = new Map<string, number>();
+    const walk = (nodes: readonly NavNode[]) => {
+      for (const n of nodes) {
+        byId.set(n.id, (items ?? []).filter((r: Resource) => matchesKindFilter(r.kind, n.id)).length);
+        if (n.children) walk(n.children);
+      }
+    };
+    walk(NAV_TREE);
+    return byId;
+  }, [items]);
+  const attention = useMemo(() => (items ?? []).filter(needsAttention).length, [items]);
+
+  const link = (
     key: string,
     label: string,
     icon: IconName,
     s: { kind?: string; status?: StatusFilter },
-    n?: number,
+    n: number | undefined,
     bad = false,
   ) => {
     const active = onList && search.kind === s.kind && search.status === s.status;
@@ -50,76 +131,111 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
         // Exact search matching keeps the router from marking "All" active for every filter.
         activeOptions={{ exact: true }}
         aria-current={active ? "page" : undefined}
+        className={NAV_LINK}
       >
         <Icon name={icon} />
-        {label}
-        {n !== undefined && <span className={`n${bad && n > 0 ? " bad" : ""}`}>{n}</span>}
+        <span className="truncate">{label}</span>
+        <Count n={items ? n : undefined} bad={bad} />
       </Link>
     );
   };
 
+  const node = (n: NavNode, depth: number): ReactNode => {
+    const count = counts.get(n.id) ?? 0;
+    if (n.id === "other" && count === 0) return null;
+    const kids = n.children;
+    const expanded = kids ? (open[n.id] ?? activePath.includes(n.id)) : false;
+    return (
+      <li key={n.id} className="flex flex-col">
+        <div className="flex items-center [&>a]:flex-1" style={{ paddingLeft: depth * 14 }}>
+          {link(n.id, n.label, n.icon, { kind: n.id }, count)}
+          {kids && (
+            <button
+              type="button"
+              className="ib size-7!"
+              aria-expanded={expanded}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${n.label}`}
+              onClick={() => setOpen((o) => ({ ...o, [n.id]: !expanded }))}
+            >
+              <Icon name="chev" className={`size-3.5 transition-transform ${expanded ? "rotate-90" : ""}`} />
+            </button>
+          )}
+        </div>
+        {kids && expanded && (
+          <ul className="flex flex-col gap-px border-l border-line" style={{ marginLeft: depth * 14 + 17 }}>
+            {kids.map((c) => node(c, 0))}
+          </ul>
+        )}
+      </li>
+    );
+  };
+
   return (
-    <nav className="nav" aria-label={`Browse ${cluster.name}`}>
-      <h3>Browse</h3>
-      {item("all", "All resources", "grid", {}, data?.items.length)}
-      {item("attention", "Needs attention", "alert", { status: "attention" }, counts.attention, true)}
-      {NAV_GROUPS.map((g) => item(g.id, g.label, g.icon, { kind: g.id }, counts.nav.get(g.id) ?? 0))}
+    <nav className="mt-4 flex flex-col gap-px" aria-label={`Browse ${cluster.name}`}>
+      <h3 className="mx-2.5 mb-1.5 text-12 font-medium text-ink-3">Browse</h3>
+      {link("all", "All resources", "list", {}, items?.length)}
+      {link("attention", "Needs attention", "alert", { status: "attention" }, attention, true)}
+      <ul className="mt-1 flex flex-col gap-px">{NAV_TREE.map((n) => node(n, 0))}</ul>
     </nav>
   );
 }
 
+const FLEET_LINK = NAV_LINK;
+
 export function Sidebar({ cluster }: { cluster: ClusterInfo | undefined }) {
   const { data: me } = useMe();
-  const stream = useStreamState();
   const { setHelp } = useAppState();
 
   return (
-    <aside className="side" aria-label="Navigation">
-      <Link to="/" className="logo" aria-label="Eddy home">
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          aria-hidden="true"
-        >
-          <path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2" />
-        </svg>
+    <aside
+      className="flex min-h-0 w-[260px] shrink-0 flex-col overflow-y-auto border-r border-line bg-surface-side px-3 pt-3.5 pb-3 max-[1180px]:hidden"
+      aria-label="Navigation"
+    >
+      <Link
+        to="/"
+        className="flex items-center gap-[9px] px-2 pt-1 pb-3.5 text-17 font-semibold tracking-tight no-underline [&_svg]:text-c"
+        aria-label="Eddy home"
+      >
+        <EddyMark />
         eddy
       </Link>
       <ClusterSwitch cluster={cluster} />
       {cluster && <ClusterNav cluster={cluster} />}
-      <nav className="nav" aria-label="Fleet">
-        <h3>Fleet</h3>
-        <Link to="/fleet" activeOptions={{ exact: true }}>
+      <nav className="mt-4 flex flex-col gap-px" aria-label="Fleet">
+        <h3 className="mx-2.5 mb-1.5 text-12 font-medium text-ink-3">Fleet</h3>
+        <Link to="/fleet" activeOptions={{ exact: true }} className={FLEET_LINK}>
           <Icon name="globe" />
           Overview
         </Link>
-        <Link to="/threads">
+        <Link to="/threads" className={FLEET_LINK}>
           <Icon name="chat" />
           Threads
         </Link>
-        <Link to="/audit">
+        <Link to="/audit" className={FLEET_LINK}>
           <Icon name="clock" />
           Audit log
         </Link>
-        <Link to="/settings/tokens">
+        <Link to="/settings/tokens" className={FLEET_LINK}>
           <Icon name="key" />
           Access tokens
         </Link>
       </nav>
-      <div className="side-foot">
-        <div className="me">
-          <span className="av" aria-hidden="true">
+      <div className="mt-auto flex flex-col gap-2.5 border-t border-line px-1 pt-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span
+            className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line bg-surface-sunken text-13 font-semibold uppercase"
+            aria-hidden="true"
+          >
             {(me?.display ?? "?").charAt(0)}
           </span>
-          <span className="mt">
-            <b>{me?.display}</b>
-            <span title={me?.groups.join(", ")}>{me?.user}</span>
+          <span className="flex min-w-0 flex-col text-12-5">
+            <b className="truncate font-semibold">{me?.display}</b>
+            <span className="truncate text-ink-3" title={me?.groups.join(", ")}>
+              {me?.user}
+            </span>
           </span>
         </div>
-        <div className="foot-row">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             className="ib"
@@ -150,14 +266,7 @@ export function Sidebar({ cluster }: { cluster: ClusterInfo | undefined }) {
           >
             <Icon name="logout" />
           </button>
-          <span
-            className={`live live-${stream === "live" ? "on" : stream}`}
-            role="status"
-            title="Live updates"
-          >
-            <span className="dot" />
-            {LIVE_LABEL[stream]}
-          </span>
+          <LiveIndicator />
         </div>
       </div>
     </aside>

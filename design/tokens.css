@@ -1,0 +1,112 @@
+/*
+ * Eddy design tokens: the single source of truth for the web app (web/) and the landing
+ * site (landing/). Both import this file right after `@import "tailwindcss"`.
+ *
+ * Every colour is light-dark(<light>, <dark>). `color-scheme` on <html> picks the half, so
+ * a theme toggle only flips `data-theme`; there is no second copy of the palette.
+ * Tailwind turns each token into utilities (bg-surface, text-ink-3, border-line,
+ * rounded-card, shadow-pop, font-mono, ...); plain CSS reads them as var(--color-*).
+ *
+ * To re-theme, edit the two values on a line. Keep names stable: both apps use them.
+ */
+@theme static {
+  /* fonts: self-hosted Geist. "Geist Variable" is the family name @fontsource uses (web). */
+  --font-sans:
+    "Geist", "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* surfaces */
+  --color-page: light-dark(#f4f6fa, #0b0d11);
+  --color-page-alt: light-dark(#ebeef4, #10131a);
+  --color-surface: light-dark(#ffffff, #14171c);
+  --color-surface-side: light-dark(#f8f9fb, #111419);
+  --color-surface-sunken: light-dark(#f3f5f8, #1b1f26);
+
+  /* text */
+  --color-ink: light-dark(#101217, #eceef2);
+  --color-ink-2: light-dark(#414856, #b9bfcb);
+  --color-ink-3: light-dark(#5c6473, #969eac);
+
+  /* borders */
+  --color-line: light-dark(#e5e8ee, #252a32);
+  --color-line-strong: light-dark(#d2d6de, #363c47);
+
+  /*
+   * status: used everywhere a status appears (rows, chips, cards, palette, trees).
+   * ok = Ready, bad = Failed, run = Reconciling, off = Suspended/Unknown,
+   * attn = "Not ready" (the union of failed and reconciling), warn = banners and warnings.
+   */
+  --color-ok: light-dark(#15803d, #4ade80);
+  --color-bad: light-dark(#c81e4b, #fb7185);
+  --color-run: light-dark(#1d4ed8, #7aa2ff);
+  --color-off: light-dark(#5c6473, #9ca3af);
+  --color-attn: light-dark(#c2690a, #fbbf24);
+  --color-warn: light-dark(#b45309, #fbbf24);
+
+  /* cluster identity: production, staging, dev (gradient pairs), then the fallback palette */
+  --color-prod: light-dark(#c2410c, #fb923c);
+  --color-prod-2: light-dark(#f59e0b, #f59e0b);
+  --color-stage: light-dark(#6d28d9, #a78bfa);
+  --color-stage-2: light-dark(#db2777, #ec4899);
+  --color-dev: light-dark(#0f766e, #2dd4bf);
+  --color-dev-2: light-dark(#2563eb, #3b82f6);
+  --color-cluster-1: #6d28d9;
+  --color-cluster-2: #0f766e;
+  --color-cluster-3: #c2410c;
+  --color-cluster-4: #2563eb;
+  --color-cluster-5: #be185d;
+  --color-cluster-6: #4d7c0f;
+  --color-cluster-none: #475569;
+  /* Landing mock only; the app signals protection with a solid colour and a lock badge. */
+  --color-stripe: #1c1e23;
+
+  /* brand accent */
+  --color-accent: light-dark(#6d28d9, #a78bfa);
+  --color-accent-2: light-dark(#db2777, #ec4899);
+  --color-on-accent: light-dark(#ffffff, #14161b);
+
+  /* code blocks and logs stay dark in both themes */
+  --color-code-bg: light-dark(#14161b, #0a0c10);
+  --color-code-ink: #d9dde5;
+  --color-code-dim: #8a92a1;
+  --color-code-line: rgb(255 255 255 / 0.1);
+  --color-code-warn: #fbbf24;
+  --color-code-error: #ffc2cd;
+  --color-code-ok: #4ade80;
+
+  /* architecture diagram (landing) */
+  --color-diagram-node: light-dark(#ffffff, #1b1f26);
+  --color-diagram-line: light-dark(#8a92a1, #6b7382);
+
+  /* glows, scrims and shadows */
+  --color-glow-1: light-dark(rgb(109 40 217 / 0.22), rgb(167 139 250 / 0.3));
+  --color-glow-2: light-dark(rgb(219 39 119 / 0.18), rgb(236 72 153 / 0.24));
+  --color-glow-3: light-dark(rgb(245 158 11 / 0.1), rgb(245 158 11 / 0.14));
+  --color-shadow: light-dark(rgb(16 18 23 / 0.4), rgb(0 0 0 / 0.75));
+  --color-shadow-soft: light-dark(rgb(16 18 23 / 0.05), rgb(0 0 0 / 0));
+  --color-pop-shadow: rgb(10 12 20 / 0.55);
+  --color-scrim: light-dark(rgb(10 12 16 / 0.36), rgb(0 0 0 / 0.55));
+
+  --shadow-window: 0 1px 2px var(--color-shadow-soft), 0 28px 60px -30px var(--color-shadow);
+  --shadow-pop: 0 30px 70px -20px var(--color-pop-shadow);
+  --shadow-dialog: 0 28px 70px -18px rgb(0 0 0 / 0.45);
+  --shadow-toast: 0 14px 34px -12px rgb(0 0 0 / 0.4);
+  --shadow-control: 0 1px 2px rgb(16 18 23 / 0.04);
+
+  /* radii (named so they never collide with Tailwind's rounded-sm…3xl) */
+  --radius-control: 10px;
+  --radius-tile: 11px;
+  --radius-card: 16px;
+  --radius-dialog: 18px;
+  --radius-window: 20px;
+}
+
+:root {
+  color-scheme: light dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}

@@ -115,7 +115,7 @@ Four places change together:
   - Use strict TypeScript.
   - Use TanStack Query for server state. Apply SSE deltas with `queryClient.setQueryData`.
   - Put every keybinding in `web/src/lib/keys.ts`.
-  - Style with CSS variables from `web/src/styles/tokens.css`, matching the prototype's palette.
+  - Style with Tailwind v4 utilities. Every colour, radius and shadow comes from the shared tokens in `design/tokens.css` (also used by `landing/`); base layers live in `web/src/styles/app.css`. No inline styles for colour.
 - Do not add a dependency without a reason in the PR. Prefer the standard library.
 - Commits follow Conventional Commits (`type(scope): subject`). Do not add trailers.
 

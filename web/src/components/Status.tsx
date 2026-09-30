@@ -1,20 +1,44 @@
 import type { ReactNode } from "react";
 import type { ClusterInfo, Status } from "../api/types";
 import { STATUS_LABEL } from "../lib/format";
+import { hint, isSequence, type KeyId } from "../lib/keys";
 import { Icon } from "./Icon";
 
-/** Filled status glyphs from the prototype; the colour comes from .st-<status>. */
-export function StatusIcon({ status, label }: { status: Status; label?: boolean }) {
+/**
+ * The status colour tokens (design/tokens.css). Rows, chips, cluster cards, the palette
+ * and trees all use these, so a status looks the same everywhere.
+ */
+export const STATUS_TEXT: Record<Status | "attention", string> = {
+  ready: "text-ok",
+  failed: "text-bad",
+  reconciling: "text-run",
+  suspended: "text-off",
+  unknown: "text-off",
+  attention: "text-attn",
+};
+
+const SVG = "size-4 shrink-0";
+
+/** Filled status glyphs from the prototype, coloured with the status tokens. */
+export function StatusIcon({
+  status,
+  label,
+  className = "",
+}: {
+  status: Status;
+  label?: boolean;
+  className?: string;
+}) {
   let glyph: ReactNode;
   switch (status) {
     case "ready":
       glyph = (
-        <svg className="i" viewBox="0 0 16 16" aria-hidden="true">
+        <svg className={SVG} viewBox="0 0 16 16" aria-hidden="true">
           <circle cx="8" cy="8" r="7" fill="currentColor" />
           <path
             d="M4.9 8.2l2.1 2.1 4.2-4.5"
             fill="none"
-            stroke="var(--win)"
+            stroke="var(--color-surface)"
             strokeWidth="1.8"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -24,12 +48,12 @@ export function StatusIcon({ status, label }: { status: Status; label?: boolean 
       break;
     case "failed":
       glyph = (
-        <svg className="i" viewBox="0 0 16 16" aria-hidden="true">
+        <svg className={SVG} viewBox="0 0 16 16" aria-hidden="true">
           <circle cx="8" cy="8" r="7" fill="currentColor" />
           <path
             d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8"
             fill="none"
-            stroke="var(--win)"
+            stroke="var(--color-surface)"
             strokeWidth="1.8"
             strokeLinecap="round"
           />
@@ -38,7 +62,11 @@ export function StatusIcon({ status, label }: { status: Status; label?: boolean 
       break;
     case "reconciling":
       glyph = (
-        <svg className="i spin" viewBox="0 0 16 16" aria-hidden="true">
+        <svg
+          className={`${SVG} animate-spin motion-reduce:animate-[spin_3s_linear_infinite]`}
+          viewBox="0 0 16 16"
+          aria-hidden="true"
+        >
           <circle
             cx="8"
             cy="8"
@@ -61,7 +89,7 @@ export function StatusIcon({ status, label }: { status: Status; label?: boolean 
     case "suspended":
       glyph = (
         <svg
-          className="i"
+          className={SVG}
           viewBox="0 0 16 16"
           fill="none"
           stroke="currentColor"
@@ -77,7 +105,7 @@ export function StatusIcon({ status, label }: { status: Status; label?: boolean 
     default:
       glyph = (
         <svg
-          className="i"
+          className={SVG}
           viewBox="0 0 16 16"
           fill="none"
           stroke="currentColor"
@@ -89,29 +117,51 @@ export function StatusIcon({ status, label }: { status: Status; label?: boolean 
         </svg>
       );
   }
+  const cls = `inline-flex ${STATUS_TEXT[status]} ${className}`;
   return label ? (
-    <span className={`st st-${status}`} role="img" aria-label={STATUS_LABEL[status]}>
+    <span className={cls} role="img" aria-label={STATUS_LABEL[status]}>
       {glyph}
     </span>
   ) : (
-    <span className={`st st-${status}`}>{glyph}</span>
+    <span className={cls}>{glyph}</span>
+  );
+}
+
+/** The "Not ready" glyph: an amber ring, the union of failed and reconciling. */
+export function AttentionIcon({ className = "" }: { className?: string }) {
+  return (
+    <span className={`inline-flex ${STATUS_TEXT.attention} ${className}`}>
+      <svg className={SVG} viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="7" fill="currentColor" />
+        <path
+          d="M8 4.6v4.2M8 11.2v.1"
+          stroke="var(--color-surface)"
+          strokeWidth="1.9"
+          strokeLinecap="round"
+        />
+      </svg>
+    </span>
   );
 }
 
 export function StatusPill({ status }: { status: Status }) {
   return (
-    <span className={`stp st-${status}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-12-5 font-medium ${STATUS_TEXT[status]}`}
+    >
       <StatusIcon status={status} />
-      <span className="lbl">{STATUS_LABEL[status]}</span>
+      <span>{STATUS_LABEL[status]}</span>
     </span>
   );
 }
+
+const HB = "inline-flex items-center gap-[3px] text-12 font-semibold tabular-nums [&_svg]:size-[13px]";
 
 /** Failing / reconciling / suspended counts of a cluster, or a single tick when all is well. */
 export function Health({ cluster }: { cluster: ClusterInfo }) {
   if (!cluster.connected) {
     return (
-      <span className="hb failed" title="Disconnected">
+      <span className={`${HB} text-bad`} title="Disconnected">
         <Icon name="alert" />
       </span>
     );
@@ -120,15 +170,19 @@ export function Health({ cluster }: { cluster: ClusterInfo }) {
   const shown = (["failed", "reconciling", "suspended"] as const).filter((s) => (counts[s] ?? 0) > 0);
   if (shown.length === 0) {
     return (
-      <span className="hb ready" title="All ready">
+      <span className={`${HB} text-ok`} title="All ready">
         <StatusIcon status="ready" />
       </span>
     );
   }
   return (
-    <span className="health">
+    <span className="inline-flex items-center gap-2">
       {shown.map((s) => (
-        <span key={s} className={`hb ${s}`} title={`${counts[s]} ${STATUS_LABEL[s].toLowerCase()}`}>
+        <span
+          key={s}
+          className={`${HB} ${STATUS_TEXT[s]}`}
+          title={`${counts[s]} ${STATUS_LABEL[s].toLowerCase()}`}
+        >
           <StatusIcon status={s} />
           {counts[s]}
         </span>
@@ -137,13 +191,37 @@ export function Health({ cluster }: { cluster: ClusterInfo }) {
   );
 }
 
-export function Keys({ keys }: { keys: string[] }) {
+/**
+ * Keycaps for a shortcut. A sequence such as "g f" renders as one keycap, read out as
+ * "g then f", instead of two loose boxes.
+ */
+export function Keys({
+  keys,
+  sequence,
+  className = "",
+}: {
+  keys: string[];
+  sequence?: boolean;
+  className?: string;
+}) {
+  if (sequence && keys.length > 1) {
+    return (
+      <kbd className={className} aria-label={keys.join(" then ")} title={`Press ${keys.join(", then ")}`}>
+        {keys.join(" ")}
+      </kbd>
+    );
+  }
   return (
-    <span className="kbds">
+    <span className={`inline-flex gap-[3px] ${className}`}>
       {keys.map((k, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: a sequence like "g g" repeats keys
+        // biome-ignore lint/suspicious/noArrayIndexKey: keycaps are positional
         <kbd key={i}>{k}</kbd>
       ))}
     </span>
   );
+}
+
+/** The hint for a registered binding (lib/keys.ts), next to buttons and commands. */
+export function KeyHint({ id, className }: { id: KeyId; className?: string }) {
+  return <Keys keys={hint(id)} sequence={isSequence(id)} className={className} />;
 }

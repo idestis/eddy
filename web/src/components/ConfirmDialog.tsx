@@ -13,30 +13,36 @@ export function ConfirmDialog({ request, onDone }: ConfirmDialogProps) {
   const ok = value.trim() === request.expected;
 
   return (
-    <Modal label={request.title} onClose={() => onDone(null)} className="modal" placement="center">
+    <Modal
+      label={request.title}
+      onClose={() => onDone(null)}
+      className="w-[min(480px,100%)]! p-[22px]"
+      placement="center"
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();
           if (ok) onDone(value.trim());
         }}
       >
-        <h3>{request.title}</h3>
-        <p>{request.body}</p>
-        <label htmlFor={inputId}>
-          Type <b className="mono">{request.expected}</b> to confirm
+        <h3 className="mb-1.5 text-18 font-semibold tracking-tight">{request.title}</h3>
+        <p className="mb-3.5 text-ink-2">{request.body}</p>
+        <label htmlFor={inputId} className="mb-1.5 block text-13 text-ink-2">
+          Type <b className="font-mono">{request.expected}</b> to confirm
         </label>
         <input
+          className="input h-11 font-mono text-15"
           id={inputId}
           autoComplete="off"
           spellCheck={false}
           value={value}
           onChange={(e) => setValue(e.target.value)}
         />
-        <div className="mact">
+        <div className="mt-4 flex justify-end gap-2">
           <button type="button" className="btn" onClick={() => onDone(null)}>
             Cancel
           </button>
-          <button type="submit" className="btn danger" disabled={!ok}>
+          <button type="submit" className="btn btn-danger" disabled={!ok}>
             {request.action}
           </button>
         </div>
