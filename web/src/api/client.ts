@@ -55,7 +55,7 @@ export function setCsrfToken(token: string): void {
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export interface RequestOptions {
-  method?: "GET" | "POST" | "DELETE";
+  method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined>;
   signal?: AbortSignal;

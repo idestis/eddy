@@ -48,6 +48,12 @@ export function attachStreamHandlers(source: EventSource, qc: QueryClient): void
     const sorted = [...data.items].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
     qc.setQueryData(keys.clusters, sorted);
   });
+  source.addEventListener("connection", (ev) => {
+    const data = parse<{ cluster: string }>(ev);
+    if (!data) return;
+    void qc.invalidateQueries({ queryKey: keys.connection(data.cluster) });
+    void qc.invalidateQueries({ queryKey: keys.clusters });
+  });
   source.addEventListener("thread", () => {
     void qc.invalidateQueries({ queryKey: keys.threadsAll });
   });

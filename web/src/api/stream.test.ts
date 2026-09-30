@@ -51,6 +51,14 @@ describe("stream handlers", () => {
     expect(qc.getQueryData<ClusterInfo[]>(keys.clusters)?.map((x) => x.name)).toEqual(["a", "b"]);
   });
 
+  it("refetches the connection checklist and the clusters on `connection`", () => {
+    const { qc, source } = setup();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    source.emit("connection", { cluster: "prod" });
+    expect(spy).toHaveBeenCalledWith({ queryKey: keys.connection("prod") });
+    expect(spy).toHaveBeenCalledWith({ queryKey: keys.clusters });
+  });
+
   it("invalidates thread queries on `thread`", () => {
     const { qc, source } = setup();
     const spy = vi.spyOn(qc, "invalidateQueries");

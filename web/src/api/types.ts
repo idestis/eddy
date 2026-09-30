@@ -99,6 +99,8 @@ export interface Features {
   logs: boolean;
   ephemeralStore: boolean;
   devMode: boolean;
+  /** The hub may add clusters and issue join tokens (ADR-0005, `onboarding.enabled`). */
+  onboarding: boolean;
 }
 
 export interface Me {
@@ -227,4 +229,128 @@ export interface ChangeEvent {
   cluster: string;
   upserts: Resource[];
   deletes: string[];
+}
+
+// Cluster onboarding (ADR-0005).
+
+export type ClusterPhase = "Pending" | "Connected" | "Disconnected";
+
+/** A Cluster CR as the onboarding endpoints return it. */
+export interface OnboardedCluster {
+  name: string;
+  displayName: string;
+  environment?: string;
+  region?: string;
+  color?: string;
+  protected: boolean;
+  order: number;
+  phase: ClusterPhase;
+  /** Declared in the eddy-hub chart values: edit it there, not in the UI. */
+  managedBy?: "helm";
+}
+
+/** What GET /clusters/permissions says the signed-in user may do in the management cluster. */
+export interface ClusterPermissions {
+  onboarding: boolean;
+  create: boolean;
+}
+
+/** The body of POST /clusters and PATCH /clusters/{c}. */
+export interface ClusterInput {
+  name: string;
+  displayName?: string;
+  environment?: string;
+  region?: string;
+  /** "#RRGGBB" */
+  color?: string;
+  protected?: boolean;
+  order?: number;
+  /** Join token lifetime, e.g. "1h". */
+  ttl?: string;
+}
+
+export interface JoinToken {
+  token: string;
+  expiresAt: string;
+}
+
+/** The install guide in every form the connect screen offers. */
+export interface InstallGuide {
+  hubURL: string;
+  namespace: string;
+  helm: string;
+  values: string;
+  manifests: string;
+  clusterResource: string;
+  networkDocs: string;
+  warnings?: string[];
+}
+
+export interface CreatedCluster {
+  cluster: OnboardedCluster;
+  joinToken: JoinToken;
+  guide: InstallGuide;
+}
+
+export interface IssuedJoinToken {
+  joinToken: JoinToken;
+  guide: InstallGuide;
+}
+
+export type CheckId =
+  | "connected"
+  | "protocol"
+  | "flux"
+  | "informers"
+  | "sar"
+  | "impersonation"
+  | "namespaces"
+  | "credentials";
+
+export type CheckState = "ok" | "warn" | "fail" | "pending" | "info";
+
+export interface ConnectionCheck {
+  id: CheckId;
+  label: string;
+  state: CheckState;
+  detail?: string;
+  docs?: string;
+}
+
+export interface JoinTokenInfo {
+  id: string;
+  state: "active" | "used" | "expired" | "revoked";
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string;
+}
+
+export type AttemptReason =
+  | "bad_token"
+  | "join_expired"
+  | "join_used"
+  | "wrong_cluster"
+  | "protocol_mismatch"
+  | "hello_rejected"
+  | "credentials_failed";
+
+/** A rejected agent connection for this cluster name. The hub keeps the last 20. */
+export interface ConnectionAttempt {
+  at: string;
+  reason: AttemptReason;
+  detail?: string;
+  peer?: string;
+  hubPod?: string;
+}
+
+export interface ConnectionInfo {
+  cluster: OnboardedCluster;
+  checks: ConnectionCheck[];
+  agents: number;
+  joinToken?: JoinTokenInfo;
+  attempts: ConnectionAttempt[];
+  permissions: { update: boolean; edit: boolean; delete: boolean };
+  /** The guide with a "<join token>" placeholder. */
+  guide: InstallGuide;
 }

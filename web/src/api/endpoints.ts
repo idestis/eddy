@@ -6,11 +6,17 @@ import type {
   AskResponse,
   AuditEvent,
   ClusterInfo,
+  ClusterInput,
+  ClusterPermissions,
+  ConnectionInfo,
+  CreatedCluster,
   CreatedToken,
+  IssuedJoinToken,
   KubeEvent,
   List,
   Me,
   Message,
+  OnboardedCluster,
   Page,
   Providers,
   Ref,
@@ -53,6 +59,20 @@ export const getYaml = (cluster: string, r: Ref) =>
   request<{ yaml: string }>(`${objectPath(cluster, r)}/yaml`);
 export const getEvents = (cluster: string, r: Ref) =>
   request<List<KubeEvent>>(`${objectPath(cluster, r)}/events`);
+
+// Cluster onboarding (ADR-0005)
+
+export const getClusterPermissions = () => request<ClusterPermissions>(`${V1}/clusters/permissions`);
+export const createCluster = (body: ClusterInput) =>
+  request<CreatedCluster>(`${V1}/clusters`, { method: "POST", body });
+export const updateCluster = (name: string, body: Partial<ClusterInput> & { confirm?: string }) =>
+  request<{ cluster: OnboardedCluster }>(`${V1}/clusters/${seg(name)}`, { method: "PATCH", body });
+export const createJoinToken = (name: string, ttl?: string) =>
+  request<IssuedJoinToken>(`${V1}/clusters/${seg(name)}/join-token`, { method: "POST", body: { ttl } });
+export const deleteCluster = (name: string, confirm?: string) =>
+  request<void>(`${V1}/clusters/${seg(name)}`, { method: "DELETE", body: confirm ? { confirm } : {} });
+export const getConnection = (name: string) =>
+  request<ConnectionInfo>(`${V1}/clusters/${seg(name)}/connection`);
 
 export type Action = "reconcile" | "suspend" | "resume";
 

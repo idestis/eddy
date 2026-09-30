@@ -57,6 +57,7 @@ export const BINDINGS = {
   },
   prevCluster: { keys: ["[Shift]+{"], label: "Previous cluster", group: "Clusters" },
   nextCluster: { keys: ["[Shift]+}"], label: "Next cluster", group: "Clusters" },
+  addCluster: { keys: ["n"], label: "Add a cluster (fleet page)", group: "Clusters" },
 
   reconcile: { keys: ["r"], label: "Reconcile", group: "Act on selection" },
   reconcileSource: { keys: ["Shift+R"], label: "Reconcile with source", group: "Act on selection" },

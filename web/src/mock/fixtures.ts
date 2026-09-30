@@ -104,7 +104,7 @@ const readyCondition = (status: Status, reason: string, message: string) => [
   },
 ];
 
-interface ClusterSeed {
+export interface ClusterSeed {
   info: Omit<ClusterInfo, "counts">;
   branch: string;
 }
@@ -196,7 +196,7 @@ const CONTAINERS: Record<string, string> = {
   loadgen: "worker",
 };
 
-function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockCluster {
+export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockCluster {
   const { info, branch } = seedInfo;
   const c = info.name;
   const prod = c === "prod-eu";

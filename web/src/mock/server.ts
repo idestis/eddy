@@ -8,8 +8,15 @@ import type {
   Author,
   ChangeEvent,
   ClusterInfo,
+  ClusterInput,
+  ClusterPhase,
+  ConnectionAttempt,
+  ConnectionCheck,
+  ConnectionInfo,
+  JoinTokenInfo,
   Me,
   Message,
+  OnboardedCluster,
   ResourceRef,
   Thread,
   TokenItem,
@@ -17,6 +24,7 @@ import type {
 } from "../api/types";
 import { kindInfo } from "../lib/kinds";
 import {
+  buildCluster,
   buildFleet,
   countsOf,
   type MockCluster,
@@ -24,6 +32,7 @@ import {
   nextResourceVersion,
   yamlOf,
 } from "./fixtures";
+import { greenChecks, installGuide, joinToken, pendingChecks, TOKEN_PLACEHOLDER } from "./onboarding";
 
 export type StreamListener = (event: string, data: unknown) => void;
 
@@ -45,6 +54,7 @@ const me: Me = {
     logs: true,
     ephemeralStore: true,
     devMode: false,
+    onboarding: true,
   },
   version: "v1.0.0",
 };
@@ -64,6 +74,35 @@ const aiAuthor: Author = {
   client: AI_MODEL,
 };
 
+/** Mock-only onboarding state of one cluster (the Cluster CR status and the hub's memory). */
+interface Onboarding {
+  phase: ClusterPhase;
+  managedBy?: "helm";
+  checks: ConnectionCheck[];
+  attempts: ConnectionAttempt[];
+  token?: JoinTokenInfo;
+  timers: Array<ReturnType<typeof setTimeout>>;
+}
+
+// Timings of the simulated agent after a join token is issued.
+const STALE_AGENT_MS = 2_000;
+const AGENT_JOIN_MS = 5_000;
+const INFORMERS_SYNC_MS = 7_500;
+
+const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the hub rejects control characters
+const PRINTABLE = /^[^\u0000-\u001f\u007f]{0,63}$/u;
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/** "1h", "30m", "24h" → milliseconds; undefined when it is not a duration the hub accepts. */
+function parseTtl(ttl: string | undefined): number | undefined {
+  if (!ttl) return 3_600_000;
+  const m = ttl.match(/^(\d+)(m|h)$/);
+  if (!m) return undefined;
+  const ms = Number(m[1]) * (m[2] === "h" ? 3_600_000 : 60_000);
+  return ms > 0 && ms <= 24 * 3_600_000 ? ms : undefined;
+}
+
 const iso = (minutesAgo = 0) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
 export class MockHub {
@@ -75,9 +114,11 @@ export class MockHub {
   private tokens: TokenItem[] = [];
   private audit: AuditEvent[] = [];
   private ids = 100;
+  private onboarding = new Map<string, Onboarding>();
 
   constructor(extraPods = 0) {
     this.clusters = buildFleet(extraPods);
+    this.seedOnboarding();
     this.seedThreads();
     this.seedAudit();
     this.tokens.push({
@@ -183,7 +224,12 @@ export class MockHub {
     const [root, a, b, c, d, e, f] = p;
 
     if (root === "me") return json(me);
-    if (root === "clusters" && p.length === 1) return json({ items: this.clusterInfos() });
+    if (root === "clusters" && p.length === 1 && method === "GET")
+      return json({ items: this.clusterInfos() });
+    if (root === "clusters") {
+      const res = this.onboardingRoute(method, a, b, body);
+      if (res) return res;
+    }
 
     if (root === "clusters" && a) {
       const cl = this.cluster(a);
@@ -236,6 +282,277 @@ export class MockHub {
       return json({ items: this.audit.filter((x) => x.subject === me.user).slice(0, 50) });
 
     return error(404, "not_found", "No such route.");
+  }
+
+  // Cluster onboarding (ADR-0005)
+
+  private seedOnboarding(): void {
+    for (const c of this.clusters) {
+      const connected = c.info.connected;
+      const created = 60 * 24 * 40;
+      this.onboarding.set(c.info.name, {
+        phase: connected ? "Connected" : "Disconnected",
+        managedBy: c.info.name === "prod-eu" ? "helm" : undefined,
+        checks: connected
+          ? greenChecks({ flux: c.info.fluxVersion, resources: c.resources.size })
+          : pendingChecks(`47m ago`),
+        attempts: connected
+          ? []
+          : [
+              {
+                at: iso(12),
+                reason: "join_used",
+                detail: "The join token was already used. Issue a new one to reinstall the agent.",
+                peer: "198.51.100.7:40522",
+                hubPod: "eddy-hub-6f7d9c7b5-x2k4p",
+              },
+            ],
+        token: {
+          id: joinToken().id,
+          state: "used",
+          createdBy: "local:sam",
+          createdAt: iso(created),
+          expiresAt: iso(created - 60),
+          usedAt: iso(created - 4),
+        },
+        timers: [],
+      });
+    }
+  }
+
+  private onboarded(c: MockCluster): OnboardedCluster {
+    const o = this.onboarding.get(c.info.name);
+    const { name, displayName, environment, region, color, order } = c.info;
+    return {
+      name,
+      displayName,
+      environment,
+      region,
+      color,
+      protected: c.info.protected,
+      order,
+      phase: o?.phase ?? (c.info.connected ? "Connected" : "Disconnected"),
+      managedBy: o?.managedBy,
+    };
+  }
+
+  private connectionOf(c: MockCluster): ConnectionInfo {
+    const o = this.onboarding.get(c.info.name);
+    return {
+      cluster: this.onboarded(c),
+      checks: o?.checks ?? [],
+      agents: c.info.connected ? 1 : 0,
+      joinToken: o?.token,
+      attempts: o?.attempts ?? [],
+      permissions: { update: true, edit: true, delete: true },
+      guide: installGuide(this.onboarded(c), TOKEN_PLACEHOLDER),
+    };
+  }
+
+  private validateInput(input: Partial<ClusterInput>, creating: boolean): string | undefined {
+    if (creating && (!input.name || input.name.length > 63 || !DNS_LABEL.test(input.name)))
+      return "name must be a DNS-1123 label (lower-case letters, digits and hyphens, at most 63).";
+    for (const f of ["displayName", "environment", "region"] as const) {
+      const v = input[f];
+      if (v !== undefined && (typeof v !== "string" || !PRINTABLE.test(v)))
+        return `${f} must be at most 63 printable characters.`;
+    }
+    if (input.color !== undefined && input.color !== "" && !HEX_COLOR.test(input.color))
+      return 'color must look like "#RRGGBB".';
+    if (input.order !== undefined && !Number.isInteger(input.order)) return "order must be an integer.";
+    if (parseTtl(input.ttl) === undefined) return "ttl must be a duration between 1m and 24h, such as 1h.";
+    return undefined;
+  }
+
+  /** Issues a join token (revoking an unused predecessor) and, for a cluster not yet connected, simulates the agent. */
+  private issueToken(c: MockCluster, ttl: string | undefined) {
+    const o = this.onboarding.get(c.info.name);
+    if (!o) throw new Error(`mock: no onboarding state for ${c.info.name}`);
+    if (o.token?.state === "active") o.token.state = "revoked";
+    const { id, token } = joinToken();
+    const expiresAt = new Date(Date.now() + (parseTtl(ttl) ?? 3_600_000)).toISOString();
+    o.token = { id, state: "active", createdBy: me.user, createdAt: iso(), expiresAt };
+    if (!c.info.connected) this.simulateJoin(c, id);
+    return { token, expiresAt };
+  }
+
+  /**
+   * A fake agent install: a stale agent is rejected after 2 s, the new one joins at 5 s
+   * with informers still syncing, and they finish at 7.5 s.
+   */
+  private simulateJoin(c: MockCluster, tokenId: string): void {
+    const name = c.info.name;
+    const o = this.onboarding.get(name);
+    if (!o) return;
+    for (const t of o.timers) clearTimeout(t);
+    const current = () => this.cluster(name) === c && o.token?.id === tokenId;
+    const emit = () => this.emit("connection", { cluster: name });
+    o.timers = [
+      setTimeout(() => {
+        if (!current()) return;
+        o.attempts.unshift({
+          at: iso(),
+          reason: "bad_token",
+          detail:
+            "The agent sent a token this hub does not know. Is an agent from an earlier install still running?",
+          peer: "203.0.113.24:51734",
+          hubPod: "eddy-hub-6f7d9c7b5-x2k4p",
+        });
+        o.attempts.splice(20);
+        emit();
+      }, STALE_AGENT_MS),
+      setTimeout(() => {
+        if (!current() || !o.token) return;
+        o.token.state = "used";
+        o.token.usedAt = iso();
+        o.phase = "Connected";
+        const built = buildCluster(
+          {
+            info: {
+              ...c.info,
+              connected: true,
+              lastSeen: iso(),
+              agentVersion: "v1.0.0",
+              kubernetesVersion: "v1.33.2",
+              fluxVersion: "v2.7.0",
+            },
+            branch: "main",
+          },
+          0,
+        );
+        c.info = { ...built.info, counts: undefined };
+        c.resources = built.resources;
+        o.checks = greenChecks({ flux: "v2.7.0", resources: c.resources.size, impersonation: "warn" }).map(
+          (check) =>
+            check.id === "informers"
+              ? { ...check, state: "pending", detail: "Syncing: 7 of 12 kinds" }
+              : check,
+        );
+        this.record("cluster.joined", { cluster: name, group: "", kind: "", namespace: "", name: "" }, "ok");
+        emit();
+        this.emit("clusters", { items: this.clusterInfos() });
+      }, AGENT_JOIN_MS),
+      setTimeout(() => {
+        if (!current()) return;
+        o.checks = o.checks.map((check) =>
+          check.id === "informers"
+            ? { ...check, state: "ok", detail: `${c.resources.size} resources` }
+            : check,
+        );
+        emit();
+      }, INFORMERS_SYNC_MS),
+    ];
+  }
+
+  private onboardingRoute(
+    method: string,
+    a: string | undefined,
+    b: string | undefined,
+    body: unknown,
+  ): Response | undefined {
+    const target = (name: string): ResourceRef => ({
+      cluster: name,
+      group: "",
+      kind: "",
+      namespace: "",
+      name: "",
+    });
+    if (a === "permissions" && !b && method === "GET") return json({ onboarding: true, create: true });
+
+    if (!a && method === "POST") {
+      const input = (body ?? {}) as ClusterInput;
+      const invalid = this.validateInput(input, true);
+      if (invalid) return error(400, "bad_request", invalid);
+      if (this.cluster(input.name)) return error(409, "conflict", `Cluster ${input.name} already exists.`);
+      const c: MockCluster = {
+        info: {
+          name: input.name,
+          displayName: input.displayName?.trim() || input.name,
+          environment: input.environment || undefined,
+          region: input.region || undefined,
+          color: input.color || undefined,
+          protected: Boolean(input.protected),
+          order: input.order ?? Math.max(0, ...this.clusters.map((x) => x.info.order)) + 1,
+          connected: false,
+        },
+        resources: new Map(),
+      };
+      this.clusters.push(c);
+      this.onboarding.set(c.info.name, {
+        phase: "Pending",
+        checks: pendingChecks(),
+        attempts: [],
+        timers: [],
+      });
+      const token = this.issueToken(c, input.ttl);
+      this.record("cluster.create", target(c.info.name), "ok");
+      this.emit("clusters", { items: this.clusterInfos() });
+      return json(
+        { cluster: this.onboarded(c), joinToken: token, guide: installGuide(this.onboarded(c), token.token) },
+        201,
+      );
+    }
+
+    if (!a) return undefined;
+    const c = this.cluster(a);
+    const o = this.onboarding.get(a);
+    const isRoute =
+      (!b && (method === "PATCH" || method === "DELETE")) ||
+      (b === "join-token" && method === "POST") ||
+      (b === "connection" && method === "GET");
+    if (!isRoute) return undefined;
+    if (!c || !o) return error(404, "not_found", `Cluster ${a} not found.`);
+
+    if (b === "connection") return json(this.connectionOf(c));
+
+    if (b === "join-token") {
+      const { ttl } = (body ?? {}) as { ttl?: string };
+      if (parseTtl(ttl) === undefined) return error(400, "bad_request", "ttl must be between 1m and 24h.");
+      const token = this.issueToken(c, ttl);
+      this.record("cluster.join_token", target(a), "ok");
+      this.emit("connection", { cluster: a });
+      const warnings = c.info.connected
+        ? [
+            "An agent is connected. Installing with this token gives the new agent fresh credentials; the running one keeps its session until it restarts.",
+          ]
+        : undefined;
+      return json({ joinToken: token, guide: installGuide(this.onboarded(c), token.token, warnings) }, 201);
+    }
+
+    if (o.managedBy === "helm") {
+      return error(409, "conflict", `${a} is declared in the eddy-hub chart values. Change it there.`);
+    }
+    const { confirm, ...patch } = (body ?? {}) as Partial<ClusterInput> & { confirm?: string };
+
+    if (method === "DELETE") {
+      if (c.info.protected && confirm !== a) {
+        this.record("cluster.delete", target(a), "denied", { reason: "confirm_required" });
+        return error(428, "confirm_required", `Type ${a} to confirm.`);
+      }
+      for (const t of o.timers) clearTimeout(t);
+      this.clusters.splice(this.clusters.indexOf(c), 1);
+      this.onboarding.delete(a);
+      this.record("cluster.delete", target(a), "ok");
+      this.emit("clusters", { items: this.clusterInfos() });
+      return new Response(null, { status: 204 });
+    }
+
+    // PATCH
+    const invalid = this.validateInput({ ...patch, ttl: undefined }, false);
+    if (invalid) return error(400, "bad_request", invalid);
+    if (c.info.protected && patch.protected === false && confirm !== a) {
+      return error(428, "confirm_required", `Type ${a} to turn protection off.`);
+    }
+    if (patch.displayName !== undefined) c.info.displayName = patch.displayName.trim() || a;
+    if (patch.environment !== undefined) c.info.environment = patch.environment || undefined;
+    if (patch.region !== undefined) c.info.region = patch.region || undefined;
+    if (patch.color !== undefined) c.info.color = patch.color || undefined;
+    if (patch.protected !== undefined) c.info.protected = patch.protected;
+    if (patch.order !== undefined) c.info.order = patch.order;
+    this.record("cluster.update", target(a), "ok");
+    this.emit("clusters", { items: this.clusterInfos() });
+    this.emit("connection", { cluster: a });
+    return json({ cluster: this.onboarded(c) });
   }
 
   private act(cl: MockCluster, r: MockResource, action: "reconcile" | "suspend" | "resume"): void {

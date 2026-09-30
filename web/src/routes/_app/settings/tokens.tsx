@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createToken, revokeToken } from "../../../api/endpoints";
 import { keys, tokensQuery, useMe } from "../../../api/queries";
 import type { CreatedToken, TokenScope } from "../../../api/types";
+import { CopyButton } from "../../../components/CopyButton";
 import { DataTable } from "../../../components/DataTable";
 import { Icon } from "../../../components/Icon";
 import { PageHead } from "../../../components/PageHead";
@@ -22,26 +23,6 @@ const TTLS = [
   { value: "720h", label: "30 days" },
   { value: "2160h", label: "90 days" },
 ];
-
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const toast = useToast();
-  return (
-    <button
-      type="button"
-      className="btn shrink-0"
-      aria-label={label}
-      onClick={() =>
-        navigator.clipboard.writeText(text).then(
-          () => toast("Copied to the clipboard", "ok"),
-          () => toast("Couldn't copy. Select the text and copy it by hand.", "bad"),
-        )
-      }
-    >
-      <Icon name="copy" />
-      Copy
-    </button>
-  );
-}
 
 const PANEL = "flex flex-col gap-3.5 rounded-card border border-line bg-surface p-[18px]";
 const H2 = "text-15 font-semibold";

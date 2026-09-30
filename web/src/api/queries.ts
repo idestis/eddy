@@ -9,14 +9,16 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
-import { setCsrfToken } from "./client";
+import { isApiError, setCsrfToken } from "./client";
 import * as api from "./endpoints";
-import type { ClusterInfo, Ref, Resource, ResourceSnapshot } from "./types";
+import type { ClusterInfo, ConnectionInfo, Ref, Resource, ResourceSnapshot } from "./types";
 
 export const keys = {
   me: ["me"] as const,
   providers: ["providers"] as const,
   clusters: ["clusters"] as const,
+  clusterPermissions: ["clusterPermissions"] as const,
+  connection: (cluster: string) => ["connection", cluster] as const,
   resourcesAll: ["resources"] as const,
   resources: (cluster: string) => ["resources", cluster] as const,
   yaml: (cluster: string, id: string) => ["yaml", cluster, id] as const,
@@ -52,6 +54,24 @@ export const clustersQuery = queryOptions({
   // Kept fresh by the `clusters` SSE event.
   staleTime: Number.POSITIVE_INFINITY,
 });
+
+export const clusterPermissionsQuery = queryOptions({
+  queryKey: keys.clusterPermissions,
+  queryFn: api.getClusterPermissions,
+  staleTime: 5 * 60_000,
+});
+
+/** The management cluster's RBAC decides; a 403 is an answer, not an error to retry. */
+const retryUnlessForbidden = (count: number, err: Error) => !isApiError(err, "forbidden") && count < 2;
+
+/** A cluster's connection checklist. Kept fresh by the `connection` SSE event. */
+export const connectionQuery = (cluster: string) =>
+  queryOptions<ConnectionInfo>({
+    queryKey: keys.connection(cluster),
+    queryFn: () => api.getConnection(cluster),
+    staleTime: 30_000,
+    retry: retryUnlessForbidden,
+  });
 
 export const resourcesQuery = (cluster: string) =>
   queryOptions({
@@ -110,6 +130,14 @@ export const auditQuery = infiniteQueryOptions({
 
 export function useMe() {
   return useQuery(meQuery);
+}
+
+/** Whether the signed-in user may add clusters: the hub feature and management-cluster RBAC. */
+export function useCanAddCluster(): boolean {
+  const { data: me } = useMe();
+  const enabled = Boolean(me?.features.onboarding);
+  const { data } = useQuery({ ...clusterPermissionsQuery, enabled });
+  return enabled && Boolean(data?.onboarding && data.create);
 }
 
 export function useClusters() {
