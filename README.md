@@ -4,9 +4,8 @@
 
 Eddy shows every Flux cluster you run in one place. You can jump anywhere with a command
 palette, reconcile or suspend with a single key, and read logs, events and YAML without
-leaving the keyboard. It is built as a modern open-source successor to
-[weave-gitops](https://github.com/weaveworks/weave-gitops), whose open-source edition has had
-no feature work since Weaveworks shut down and is limited to one cluster.
+leaving the keyboard. We built it for our own platform work and share it in case it helps
+yours.
 
 > **Status: v0.1 MVP, pre-release.** APIs, Helm values and the CRD group
 > (`gitops.eddy.dev`) may change before v1.
@@ -15,7 +14,7 @@ no feature work since Weaveworks shut down and is limited to one cluster.
 
 ## Why Eddy
 
-- **Multi-cluster in the open-source edition.** A hub runs in a management cluster and a
+- **Multi-cluster.** A hub runs in a management cluster and a
   light agent runs in every workload cluster. The agents dial out, so no workload API
   server is ever exposed and the hub holds no cluster credentials.
 - **Fast.**
