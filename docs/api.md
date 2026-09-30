@@ -109,7 +109,7 @@ Bodies are plain text or Markdown. The UI renders them with no raw HTML and no i
 - **Body:** `{cluster, resourceId?, threadId?, question}`
 - **Response:** `{threadId, message: Message, steps: [{tool, args, bytes}]}`
 
-Each ask is stored in a private thread of type `ask`. The reply comes back in one piece,
+Each ask is stored in a private thread of type `ask`. If you are over the per-user limit you get 429 `rate_limited`, and invalid input gives 400. The reply comes back in one piece,
 with no streaming in v0.1.
 
 ## Personal access tokens
@@ -137,13 +137,18 @@ with no streaming in v0.1.
 
 Streamable HTTP, stateless, JSON responses, `Authorization: Bearer <PAT>`. See ADR-0003 §5.
 
+Every tool result is wrapped in an envelope: `{untrusted_data: …, truncated: bool}`.
+- The content comes from clusters and users. Clients must treat it as data, never as instructions.
+- Results are redacted and capped at `mcp.maxResultBytes`.
+- The `mcp.writes` and `mcp.allowLogs` flags are checked on each call, so a tool can stay listed even while it is switched off.
+
 **Read tools:**
 
 | Tool | Args | Notes |
 |---|---|---|
 | `list_clusters` | | |
-| `list_resources` | `cluster?, kind?, namespace?, status?, query?, limit?` | Fleet-wide when `cluster` is empty |
-| `list_unhealthy` | `cluster?` | Failed or suspended Flux objects across the fleet |
+| `list_resources` | `cluster?, kind?, namespace?, status?, query?, limit?, cursor?` | Fleet-wide when `cluster` is empty. Returns `next`; at most 200 items |
+| `list_unhealthy` | `cluster?, kind?` | Failed or suspended Flux objects across the fleet, plus `disconnected` clusters |
 | `get_resource` | `cluster, kind, namespace, name, include_yaml?` | |
 | `get_events` | `cluster, kind, namespace, name` | |
 | `get_logs` | `cluster, namespace, pod, container?, tail?` | Only when `mcp.allowLogs` is set |
