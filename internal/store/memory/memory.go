@@ -263,7 +263,7 @@ func (x sessions) LatestGroups(_ context.Context, subject string) ([]string, err
 }
 
 // latestCmp orders sessions by (LastSeenAt, CreatedAt, IDHash), matching the
-// sqlite ORDER BY.
+// postgres ORDER BY.
 func latestCmp(a, b store.Session) int {
 	return cmp.Or(
 		a.LastSeenAt.Compare(b.LastSeenAt),
@@ -289,13 +289,24 @@ func active(t store.Token, now time.Time) bool {
 	return t.RevokedAt == nil && storeutil.Ms(t.ExpiresAt) > storeutil.Ms(now)
 }
 
-func (x tokens) Create(_ context.Context, t store.Token) error {
+func (x tokens) Create(_ context.Context, t store.Token, maxActive int) error {
 	t, err := storeutil.PrepareToken(t)
 	if err != nil {
 		return err
 	}
 	x.s.mu.Lock()
 	defer x.s.mu.Unlock()
+	if maxActive > 0 {
+		n := 0
+		for _, o := range x.s.tokens {
+			if o.Subject == t.Subject && active(o, t.CreatedAt) {
+				n++
+			}
+		}
+		if n >= maxActive {
+			return fmt.Errorf("memory: create token: %w: %d active tokens", store.ErrLimit, n)
+		}
+	}
 	if _, ok := x.s.tokens[t.ID]; ok {
 		return store.ErrConflict
 	}

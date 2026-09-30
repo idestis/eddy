@@ -117,10 +117,11 @@ type tokens struct{ s *Store }
 
 const tokenCols = `id, hash, subject, display, provider, groups, name, scopes, created_at, expires_at, last_used_at, revoked_at`
 
-// Create inserts the token. The per-user cap (auth.tokens.maxPerUser) is
-// checked by the caller with CountActive, as the store.Tokens contract
-// takes no limit.
-func (x tokens) Create(ctx context.Context, t store.Token) error {
+// Create inserts the token. With a positive maxActive it counts the
+// subject's active tokens first, in the same transaction and under
+// pg_advisory_xact_lock(hashtext(subject)), so concurrent Creates for one
+// subject on any replica cannot exceed the cap.
+func (x tokens) Create(ctx context.Context, t store.Token, maxActive int) error {
 	t, err := storeutil.PrepareToken(t)
 	if err != nil {
 		return err
@@ -133,10 +134,32 @@ func (x tokens) Create(ctx context.Context, t store.Token) error {
 	if err != nil {
 		return err
 	}
-	_, err = x.s.db.ExecContext(ctx, `INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		t.ID, t.Hash, t.Subject, t.Display, t.Provider, groups, t.Name, scopes,
-		storeutil.Ms(t.CreatedAt), storeutil.Ms(t.ExpiresAt), nullMs(t.LastUsedAt), nullMs(t.RevokedAt))
-	return mapErr("create token", err)
+	insert := func(ex interface {
+		ExecContext(context.Context, string, ...any) (sql.Result, error)
+	}) error {
+		_, err := ex.ExecContext(ctx, `INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			t.ID, t.Hash, t.Subject, t.Display, t.Provider, groups, t.Name, scopes,
+			storeutil.Ms(t.CreatedAt), storeutil.Ms(t.ExpiresAt), nullMs(t.LastUsedAt), nullMs(t.RevokedAt))
+		return mapErr("create token", err)
+	}
+	if maxActive <= 0 {
+		return insert(x.s.db)
+	}
+	return x.s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, t.Subject); err != nil {
+			return mapErr("lock token subject", err)
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count(*) FROM api_tokens WHERE subject = $1 AND revoked_at IS NULL AND expires_at > $2`,
+			t.Subject, storeutil.Ms(t.CreatedAt)).Scan(&n); err != nil {
+			return mapErr("count tokens", err)
+		}
+		if n >= maxActive {
+			return fmt.Errorf("postgres: create token: %w: %d active tokens", store.ErrLimit, n)
+		}
+		return insert(tx)
+	})
 }
 
 func scanToken(sc scanner) (store.Token, error) {

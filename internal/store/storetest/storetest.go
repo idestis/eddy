@@ -47,6 +47,8 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Tokens/GetExcludesInactive", testTokenGetExcludesInactive},
 		{"Tokens/List", testTokenList},
 		{"Tokens/CountActive", testTokenCountActive},
+		{"Tokens/CreateMaxActive", testTokenCreateMaxActive},
+		{"Tokens/CreateMaxActiveConcurrent", testTokenCreateMaxActiveConcurrent},
 		{"Tokens/Revoke", testTokenRevoke},
 		{"Tokens/MarkUsed", testTokenMarkUsed},
 		{"Threads/CreateGet", testThreadCreateGet},
@@ -305,17 +307,17 @@ func testTokenCreateGet(t *testing.T, s store.Store) {
 	v := token("aaaaaaaaaaaa", "alice", t0)
 	v.Scopes = []string{"read", "operate"}
 	v.LastUsedAt = ptr(t0.Add(time.Minute))
-	check(t, s.Tokens().Create(ctx(t), v), "create")
+	check(t, s.Tokens().Create(ctx(t), v, 0), "create")
 	got, err := s.Tokens().Get(ctx(t), v.ID, t0)
 	check(t, err, "get")
 	equal(t, got, normToken(v), "token round trip includes hash")
 
 	dupID := token("aaaaaaaaaaaa", "bob", t0)
 	dupID.Hash = []byte("other")
-	wantErr(t, s.Tokens().Create(ctx(t), dupID), store.ErrConflict, "duplicate id")
+	wantErr(t, s.Tokens().Create(ctx(t), dupID, 0), store.ErrConflict, "duplicate id")
 	dupHash := token("bbbbbbbbbbbb", "bob", t0)
 	dupHash.Hash = v.Hash
-	wantErr(t, s.Tokens().Create(ctx(t), dupHash), store.ErrConflict, "duplicate hash")
+	wantErr(t, s.Tokens().Create(ctx(t), dupHash, 0), store.ErrConflict, "duplicate hash")
 
 	_, err = s.Tokens().Get(ctx(t), "missing", t0)
 	wantErr(t, err, store.ErrNotFound, "missing token")
@@ -328,7 +330,7 @@ func testTokenGetExcludesInactive(t *testing.T, s store.Store) {
 	expired := token("expired00000", "alice", t0)
 	expired.ExpiresAt = t0.Add(time.Hour)
 	for _, v := range []store.Token{active, revoked, expired} {
-		check(t, s.Tokens().Create(ctx(t), v), "create "+v.ID)
+		check(t, s.Tokens().Create(ctx(t), v, 0), "create "+v.ID)
 	}
 	now := t0.Add(2 * time.Hour)
 	tests := []struct {
@@ -366,11 +368,11 @@ func testTokenList(t *testing.T, s store.Store) {
 		if i == 1 {
 			v.RevokedAt = ptr(t0.Add(time.Hour))
 		}
-		check(t, s.Tokens().Create(ctx(t), v), "create")
+		check(t, s.Tokens().Create(ctx(t), v, 0), "create")
 		v.Hash = nil
 		want = append(want, normToken(v))
 	}
-	check(t, s.Tokens().Create(ctx(t), token("bob000000000", "bob", t0)), "create bob")
+	check(t, s.Tokens().Create(ctx(t), token("bob000000000", "bob", t0), 0), "create bob")
 	slices.Reverse(want)
 
 	got, err = s.Tokens().List(ctx(t), "alice")
@@ -392,7 +394,7 @@ func testTokenCountActive(t *testing.T, s store.Store) {
 	c.ExpiresAt = t0.Add(time.Hour)
 	d := token("d00000000000", "bob", t0)
 	for _, v := range []store.Token{a, b, c, d} {
-		check(t, s.Tokens().Create(ctx(t), v), "create")
+		check(t, s.Tokens().Create(ctx(t), v, 0), "create")
 	}
 	n, err := s.Tokens().CountActive(ctx(t), "alice", now)
 	check(t, err, "count")
@@ -402,12 +404,62 @@ func testTokenCountActive(t *testing.T, s store.Store) {
 	equal(t, n, 0, "active tokens of unknown subject")
 }
 
+func testTokenCreateMaxActive(t *testing.T, s store.Store) {
+	a := token("a00000000000", "alice", t0)
+	b := token("b00000000000", "alice", t0)
+	b.RevokedAt = ptr(t0) // inactive: does not count
+	c := token("c00000000000", "alice", t0.Add(-40*24*time.Hour))
+	for _, v := range []store.Token{a, b, c} {
+		check(t, s.Tokens().Create(ctx(t), v, 0), "create "+v.ID)
+	}
+	d := token("d00000000000", "alice", t0)
+	check(t, s.Tokens().Create(ctx(t), d, 2), "second active token under a cap of 2")
+	e := token("e00000000000", "alice", t0)
+	wantErr(t, s.Tokens().Create(ctx(t), e, 2), store.ErrLimit, "third active token under a cap of 2")
+	_, err := s.Tokens().Get(ctx(t), e.ID, t0)
+	wantErr(t, err, store.ErrNotFound, "a refused token is not stored")
+	check(t, s.Tokens().Create(ctx(t), token("f00000000000", "bob", t0), 1), "another subject has its own cap")
+	check(t, s.Tokens().Create(ctx(t), e, 0), "no cap")
+	check(t, s.Tokens().Revoke(ctx(t), "alice", a.ID, t0), "revoke")
+	check(t, s.Tokens().Create(ctx(t), token("g00000000000", "alice", t0), 3), "revoking frees a slot")
+}
+
+func testTokenCreateMaxActiveConcurrent(t *testing.T, s store.Store) {
+	const tries, capN = 16, 3
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		ok, lim int
+	)
+	for i := range tries {
+		wg.Go(func() {
+			err := s.Tokens().Create(ctx(t), token(fmt.Sprintf("r%011d", i), "alice", t0), capN)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				ok++
+			case errors.Is(err, store.ErrLimit):
+				lim++
+			default:
+				t.Errorf("create %d: %v", i, err)
+			}
+		})
+	}
+	wg.Wait()
+	equal(t, ok, capN, "tokens created concurrently under the cap")
+	equal(t, lim, tries-capN, "tokens refused")
+	n, err := s.Tokens().CountActive(ctx(t), "alice", t0)
+	check(t, err, "count")
+	equal(t, n, capN, "active tokens after the race")
+}
+
 func testTokenRevoke(t *testing.T, s store.Store) {
 	a := token("a00000000000", "alice", t0)
 	a2 := token("a20000000000", "alice", t0)
 	b := token("b00000000000", "bob", t0)
 	for _, v := range []store.Token{a, a2, b} {
-		check(t, s.Tokens().Create(ctx(t), v), "create")
+		check(t, s.Tokens().Create(ctx(t), v, 0), "create")
 	}
 	wantErr(t, s.Tokens().Revoke(ctx(t), "bob", a.ID, t0), store.ErrNotFound, "revoke someone else's token")
 	wantErr(t, s.Tokens().Revoke(ctx(t), "alice", "missing", t0), store.ErrNotFound, "revoke missing token")
@@ -434,7 +486,7 @@ func testTokenRevoke(t *testing.T, s store.Store) {
 
 func testTokenMarkUsed(t *testing.T, s store.Store) {
 	a := token("a00000000000", "alice", t0)
-	check(t, s.Tokens().Create(ctx(t), a), "create")
+	check(t, s.Tokens().Create(ctx(t), a, 0), "create")
 	used := t0.Add(5 * time.Minute)
 	check(t, s.Tokens().MarkUsed(ctx(t), a.ID, used), "mark used")
 	got, err := s.Tokens().Get(ctx(t), a.ID, used)
@@ -1047,7 +1099,7 @@ func testPruneTokens(t *testing.T, s store.Store) {
 	mk := func(id string, expires time.Time, revoked *time.Time) store.Token {
 		v := token(id, "alice", t0)
 		v.ExpiresAt, v.RevokedAt = expires, revoked
-		check(t, s.Tokens().Create(ctx(t), v), "create")
+		check(t, s.Tokens().Create(ctx(t), v, 0), "create")
 		return v
 	}
 	mk("expiredLong0", now.Add(-31*day), nil)
@@ -1150,7 +1202,7 @@ func testPruneAskThreads(t *testing.T, s store.Store) {
 func testPruneDisabled(t *testing.T, s store.Store) {
 	tok := token("old000000000", "alice", t0)
 	tok.ExpiresAt = t0.Add(day)
-	check(t, s.Tokens().Create(ctx(t), tok), "create token")
+	check(t, s.Tokens().Create(ctx(t), tok, 0), "create token")
 	check(t, s.Audit().Append(ctx(t), event("old", "alice", t0)), "append")
 	th := newThread(refA, "old ask", human("alice"), t0)
 	th.Type, th.Visibility = store.ThreadAsk, store.VisibilityPrivate

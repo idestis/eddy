@@ -95,7 +95,12 @@ type Token struct {
 }
 
 type Tokens interface {
-	Create(ctx context.Context, t Token) error
+	// Create inserts t. When maxActive is positive, it first counts the
+	// subject's active tokens (not revoked, expiring after t.CreatedAt) and
+	// returns ErrLimit if there are maxActive or more. The count and the
+	// insert are atomic with respect to other Creates for the same subject,
+	// on every replica. A duplicate id or hash returns ErrConflict.
+	Create(ctx context.Context, t Token, maxActive int) error
 	// Get returns a token by id (including its hash) unless revoked or expired.
 	Get(ctx context.Context, id string, now time.Time) (Token, error)
 	// List returns the subject's tokens without hashes, newest first.

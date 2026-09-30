@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -30,6 +31,8 @@ type Hub struct {
 	MCP     MCP     `json:"mcp"`
 	Runtime Runtime `json:"runtime"`
 	Dev     Dev     `json:"dev"`
+	// Peer configures the channel between hub replicas (ADR-0004).
+	Peer Peer `json:"peer"`
 	// Clusters, when set, are used instead of watching Cluster CRs (local dev
 	// without a management cluster). Tokens come from TokenEnv.
 	StaticClusters []StaticCluster `json:"staticClusters,omitempty"`
@@ -116,11 +119,10 @@ type Tokens struct {
 }
 
 type Store struct {
-	// Driver is postgres | memory | sqlite. sqlite is deprecated by ADR-0004
-	// and will be removed; it supports one replica only.
+	// Driver is postgres (the default, and the only one for production) or
+	// memory. memory keeps everything in the process and loses it on
+	// restart; it is meant for tests and local development (task dev).
 	Driver    string    `json:"driver"`
-	Path      string    `json:"path"`      // sqlite file, default /var/lib/eddy/eddy.db
-	Ephemeral bool      `json:"ephemeral"` // sqlite: set by the chart when persistence is off
 	Postgres  Postgres  `json:"postgres"`
 	Retention Retention `json:"retention"`
 }
@@ -185,6 +187,26 @@ type MCP struct {
 	CallsPerMinute    int      `json:"callsPerMinute"`    // default 60
 	WritesPerMinute   int      `json:"writesPerMinute"`   // default 10
 	MaxResultBytes    int      `json:"maxResultBytes"`    // default 65536
+}
+
+// Peer configures the WebSocket between hub replicas that relays agent
+// traffic (ADR-0004). A replica without peers (one replica, or local
+// development) needs none of it.
+type Peer struct {
+	// Listen serves /peer/v1/connect only, e.g. ":8444" (the eddy-hub chart
+	// sets it). Empty turns the peer channel off: fine for one replica,
+	// but replicas then cannot relay agent traffic to each other.
+	Listen string `json:"listen"`
+	// Service is the DNS name of the headless Service that lists every hub
+	// pod, resolved every 10 s. Empty turns discovery off: replicas then
+	// dial only the owners of agent sessions they need.
+	Service string `json:"service"`
+	// PodName names this replica in agent_sessions and peer authentication.
+	// Default $POD_NAME, then the hostname.
+	PodName string `json:"podName"`
+	// Advertise is the host:port other replicas dial to reach Listen.
+	// Default $POD_IP with the Listen port.
+	Advertise string `json:"advertise"`
 }
 
 // Runtime points at the hot-reloaded kill-switch file (eddy-runtime ConfigMap).
@@ -296,8 +318,7 @@ func (h *Hub) applyDefaults() {
 	defI(&a.Tokens.MaxPerUser, 10)
 	def(&a.Tokens.ThreadWriteScope, "read")
 
-	def(&h.Store.Driver, "sqlite")
-	def(&h.Store.Path, "/var/lib/eddy/eddy.db")
+	def(&h.Store.Driver, "postgres")
 	def(&h.Store.Postgres.DSNEnv, "EDDY_DATABASE_URL")
 	defI(&h.Store.Postgres.MaxOpenConns, 10)
 	defI(&h.Store.Retention.AuditDays, 90)
@@ -318,6 +339,20 @@ func (h *Hub) applyDefaults() {
 	defI(&h.MCP.MaxResultBytes, 64<<10)
 
 	def(&h.Runtime.FlagsFile, "/etc/eddy/runtime/flags.yaml")
+
+	def(&h.Peer.PodName, os.Getenv("POD_NAME"))
+	if h.Peer.PodName == "" {
+		if n, err := os.Hostname(); err == nil {
+			h.Peer.PodName = n
+		}
+	}
+	if h.Peer.Advertise == "" && h.Peer.Listen != "" {
+		if ip := os.Getenv("POD_IP"); ip != "" {
+			if _, port, err := net.SplitHostPort(h.Peer.Listen); err == nil {
+				h.Peer.Advertise = net.JoinHostPort(ip, port)
+			}
+		}
+	}
 }
 
 // Validate rejects unsafe or incomplete configurations.
@@ -362,9 +397,22 @@ func (h *Hub) Validate() error {
 		if h.Store.Postgres.MaxOpenConns < 1 {
 			errs = append(errs, errors.New("store.postgres.maxOpenConns must be at least 1"))
 		}
-	case "sqlite", "memory":
+	case "memory":
 	default:
-		errs = append(errs, fmt.Errorf("store.driver %q is not supported (postgres, memory, sqlite)", h.Store.Driver))
+		errs = append(errs, fmt.Errorf("store.driver %q is not supported (postgres, memory)", h.Store.Driver))
+	}
+	if h.Peer.Listen != "" {
+		if _, _, err := net.SplitHostPort(h.Peer.Listen); err != nil {
+			errs = append(errs, fmt.Errorf("peer.listen: %w", err))
+		}
+		if h.Peer.PodName == "" {
+			errs = append(errs, errors.New("peer.podName (or POD_NAME) is required with peer.listen"))
+		}
+		if h.Peer.Advertise != "" {
+			if _, _, err := net.SplitHostPort(h.Peer.Advertise); err != nil {
+				errs = append(errs, fmt.Errorf("peer.advertise: %w", err))
+			}
+		}
 	}
 	if h.AI.Enabled {
 		switch h.AI.Provider {
@@ -384,6 +432,11 @@ func (h *Hub) Validate() error {
 	}
 	return errors.Join(errs...)
 }
+
+// EphemeralStore reports whether hub data is lost on restart (the memory
+// store). The hub then logs a warning and /api/v1/me sets
+// features.ephemeralStore.
+func (h *Hub) EphemeralStore() bool { return h.Store.Driver == "memory" }
 
 // SecureCookies reports whether cookies must be Secure (__Host- prefix).
 // Only plain-http localhost dev runs without it.
