@@ -31,6 +31,18 @@ func (s Served) GVR(kind string) (schema.GroupVersionResource, bool) {
 	return k.GVR(v), true
 }
 
+// Watches reports whether (group, kind) is a surfaced kind the cluster
+// serves, so the agent already summarises its objects. It is the Watched
+// function for InventoryOnly.
+func (s Served) Watches(group, kind string) bool {
+	k, ok := KindByName(kind)
+	if !ok || !k.Surfaced || !k.Matches(group, kind) {
+		return false
+	}
+	_, ok = s[k.Kind]
+	return ok
+}
+
 // Discover picks, for every kind in the table, the most preferred version in
 // Kind.Versions that the cluster serves and that lists the kind's resource.
 func Discover(dc discovery.DiscoveryInterface) (Served, error) {

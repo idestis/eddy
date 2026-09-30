@@ -18,11 +18,14 @@ import (
 
 // API groups of the supported kinds.
 const (
-	GroupKustomize = "kustomize.toolkit.fluxcd.io"
-	GroupHelm      = "helm.toolkit.fluxcd.io"
-	GroupSource    = "source.toolkit.fluxcd.io"
-	GroupApps      = "apps"
-	GroupCore      = ""
+	GroupKustomize  = "kustomize.toolkit.fluxcd.io"
+	GroupHelm       = "helm.toolkit.fluxcd.io"
+	GroupSource     = "source.toolkit.fluxcd.io"
+	GroupApps       = "apps"
+	GroupCore       = ""
+	GroupBatch      = "batch"
+	GroupNetworking = "networking.k8s.io"
+	GroupAutoscale  = "autoscaling"
 )
 
 // Names of the supported kinds.
@@ -39,6 +42,12 @@ const (
 	KindDaemonSet      = "DaemonSet"
 	KindReplicaSet     = "ReplicaSet"
 	KindPod            = "Pod"
+	KindService        = "Service"
+	KindIngress        = "Ingress"
+	KindJob            = "Job"
+	KindCronJob        = "CronJob"
+	KindHPA            = "HorizontalPodAutoscaler"
+	KindPVC            = "PersistentVolumeClaim"
 )
 
 // Kind describes one watched Kubernetes kind.
@@ -71,6 +80,12 @@ var kinds = []Kind{
 	{Group: GroupApps, Kind: KindDaemonSet, Plural: "daemonsets", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
 	{Group: GroupApps, Kind: KindReplicaSet, Plural: "replicasets", Versions: []string{"v1"}, Namespaced: true},
 	{Group: GroupCore, Kind: KindPod, Plural: "pods", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+	{Group: GroupBatch, Kind: KindJob, Plural: "jobs", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+	{Group: GroupBatch, Kind: KindCronJob, Plural: "cronjobs", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+	{Group: GroupAutoscale, Kind: KindHPA, Plural: "horizontalpodautoscalers", Versions: []string{"v2"}, Namespaced: true, Surfaced: true},
+	{Group: GroupCore, Kind: KindService, Plural: "services", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+	{Group: GroupNetworking, Kind: KindIngress, Plural: "ingresses", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+	{Group: GroupCore, Kind: KindPVC, Plural: "persistentvolumeclaims", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
 }
 
 func (k Kind) clone() Kind {

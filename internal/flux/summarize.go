@@ -61,6 +61,18 @@ func Summarize(k Kind, u *unstructured.Unstructured, owners OwnerLookup) model.R
 		summarizeFlux(k, obj, &r)
 	case k.Kind == KindPod:
 		summarizePod(obj, &r)
+	case k.Kind == KindService:
+		summarizeService(obj, &r)
+	case k.Kind == KindIngress:
+		summarizeIngress(obj, &r)
+	case k.Kind == KindJob:
+		summarizeJob(obj, &r)
+	case k.Kind == KindCronJob:
+		summarizeCronJob(obj, &r)
+	case k.Kind == KindHPA:
+		summarizeHPA(obj, &r)
+	case k.Kind == KindPVC:
+		summarizePVC(obj, &r)
 	default:
 		summarizeWorkload(k, obj, &r)
 	}

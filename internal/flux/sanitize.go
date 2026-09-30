@@ -58,13 +58,17 @@ func stripMetadata(obj map[string]any) {
 	}
 }
 
-// podSpec returns the pod spec of a Pod or of a workload's pod template.
+// podSpec returns the pod spec of a Pod or of a workload's pod template
+// (Deployments, StatefulSets, DaemonSets, ReplicaSets and Jobs, and the job
+// template of a CronJob).
 func podSpec(k Kind, obj map[string]any) map[string]any {
 	switch {
 	case k.Kind == KindPod:
 		return mapping(obj, "spec")
-	case k.Group == GroupApps:
+	case k.Group == GroupApps, k.Kind == KindJob:
 		return mapping(obj, "spec", "template", "spec")
+	case k.Kind == KindCronJob:
+		return mapping(obj, "spec", "jobTemplate", "spec", "template", "spec")
 	}
 	return nil
 }
