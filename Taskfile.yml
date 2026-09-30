@@ -4,7 +4,7 @@ vars:
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
   LDFLAGS: -s -w -X github.com/eddy-gitops/eddy/internal/version.Version={{.VERSION}}
-  STATICCHECK: honnef.co/go/tools/cmd/staticcheck@2026.1
+  STATICCHECK: honnef.co/go/tools/cmd/staticcheck@v0.8.1
 
 tasks:
   default:

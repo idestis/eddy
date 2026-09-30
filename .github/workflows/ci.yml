@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  STATICCHECK: honnef.co/go/tools/cmd/staticcheck@2026.1
+  STATICCHECK: honnef.co/go/tools/cmd/staticcheck@v0.8.1
   GOVULNCHECK: golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
 jobs:

@@ -70,7 +70,7 @@ func LoadAgent() (*Agent, error) {
 	}
 	for _, p := range a.AllowedGroupPrefixes {
 		if strings.HasPrefix(p, "system:") {
-			errs = append(errs, errors.New("EDDY_ALLOWED_GROUP_PREFIXES must not include system:"))
+			errs = append(errs, errors.New(`EDDY_ALLOWED_GROUP_PREFIXES must not include the "system:" prefix`))
 		}
 	}
 	return a, errors.Join(errs...)
