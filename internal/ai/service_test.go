@@ -436,9 +436,10 @@ func TestSearchAcrossClustersAndLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	log := out.(map[string]any)["log"].(string)
+	sample := out.(map[string]any)["sample"].(logSample)
+	log := strings.Join(sample.Recent, "\n")
 	if strings.Contains(log, "abcdef123456") || strings.Contains(log, "line1") || !strings.Contains(log, "line3") {
-		t.Errorf("log = %q", log)
+		t.Errorf("sampled log = %q", log)
 	}
 
 	out, err = dispatch(context.Background(), env, true, "get_resource", json.RawMessage(`{"kind":"Kustomization","namespace":"flux-system","name":"apps","include_yaml":true}`))
