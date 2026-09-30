@@ -49,7 +49,9 @@ type Hello struct {
 	Namespaces        []string `json:"namespaces,omitempty"` // empty = whole cluster
 }
 
-// Snapshot replaces the hub's view of the cluster.
+// Snapshot replaces the hub's view of the cluster. When the full state does
+// not fit in MaxFrameBytes, the agent sends the first chunk as a Snapshot and
+// the rest immediately as upsert-only Deltas.
 type Snapshot struct {
 	Resources []model.Resource `json:"resources"`
 }
@@ -131,7 +133,10 @@ type EventsResult struct {
 	Events []model.Event `json:"events"`
 }
 
-// LogChunk is the payload of a TypeStream frame for OpLogs.
+// LogChunk is the payload of a TypeStream frame for OpLogs. Logs always
+// stream (even without Follow): zero or more Stream frames, then exactly one
+// StreamEnd whose payload is a Response that may carry an Error. Every other
+// op gets exactly one Response; writes return an empty Result.
 type LogChunk struct {
 	Lines []string `json:"lines"`
 }

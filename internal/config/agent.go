@@ -18,6 +18,7 @@ type Agent struct {
 	Namespaces           []string // EDDY_WATCH_NAMESPACES, comma-separated; empty = all
 	AllowedGroupPrefixes []string // EDDY_ALLOWED_GROUP_PREFIXES, default "eddy:"
 	AllowedGroups        []string // EDDY_ALLOWED_GROUPS, optional exact allowlist
+	DenyUserPrefixes     []string // EDDY_DENY_USER_PREFIXES, default "system:,eks:,kubernetes-admin"
 	AllowInsecure        bool     // EDDY_ALLOW_INSECURE=1 permits ws:// (dev only)
 	HealthAddr           string   // EDDY_HEALTH_ADDR, default ":8081"
 }
@@ -41,11 +42,15 @@ func LoadAgent() (*Agent, error) {
 		Namespaces:           list("EDDY_WATCH_NAMESPACES"),
 		AllowedGroupPrefixes: list("EDDY_ALLOWED_GROUP_PREFIXES"),
 		AllowedGroups:        list("EDDY_ALLOWED_GROUPS"),
+		DenyUserPrefixes:     list("EDDY_DENY_USER_PREFIXES"),
 		HealthAddr:           os.Getenv("EDDY_HEALTH_ADDR"),
 	}
 	a.AllowInsecure, _ = strconv.ParseBool(os.Getenv("EDDY_ALLOW_INSECURE"))
 	if len(a.AllowedGroupPrefixes) == 0 {
 		a.AllowedGroupPrefixes = []string{"eddy:"}
+	}
+	if len(a.DenyUserPrefixes) == 0 {
+		a.DenyUserPrefixes = []string{"system:", "eks:", "kubernetes-admin"}
 	}
 	if a.HealthAddr == "" {
 		a.HealthAddr = ":8081"
