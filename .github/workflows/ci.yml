@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  STATICCHECK: honnef.co/go/tools/cmd/staticcheck@2026.1
+  GOVULNCHECK: golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
+jobs:
+  go:
+    name: Go (vet, staticcheck, test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal api)" || (gofmt -l cmd internal api && exit 1)
+      - run: go vet ./...
+      - run: go run "$STATICCHECK" ./...
+      - run: go test -race -count=1 ./...
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+      - run: go run "$GOVULNCHECK" ./...
+
+  web:
+    name: Web (lint, typecheck, test, build)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The pnpm version comes from "packageManager" in web/package.json.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run test
+      - run: pnpm run build
+
+  helm:
+    name: Helm (lint, template)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - run: helm lint deploy/charts/eddy-hub deploy/charts/eddy-agent
+      - run: helm template eddy deploy/charts/eddy-hub > /dev/null
+      - run: >
+          helm template eddy deploy/charts/eddy-agent
+          --set cluster.name=test
+          --set hub.url=wss://hub.example.com/agent/v1/connect
+          --set token.value=x > /dev/null
+      - name: Hub chart with every optional block enabled
+        run: >
+          helm template eddy deploy/charts/eddy-hub
+          --set credentialsSecret=creds
+          --set oauth2Proxy.enabled=true --set oauth2Proxy.existingSecret=o2p
+          --set ingress.ui.enabled=true --set 'ingress.ui.hosts={eddy.example.com}'
+          --set ingress.agents.enabled=true --set 'ingress.agents.hosts={agents.example.com}'
+          --set networkPolicy.enabled=true
+          --set 'clusters[0].name=prod' > /dev/null
+      - name: Chart CRD matches config/crd
+        run: diff -u config/crd/gitops.eddy.dev_clusters.yaml deploy/charts/eddy-hub/crds/gitops.eddy.dev_clusters.yaml
+
+  docker:
+    name: Docker build (no push)
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        target: [hub, agent]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: false
+          tags: eddy-${{ matrix.target }}:ci
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,scope=${{ matrix.target }},mode=max
