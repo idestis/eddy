@@ -15,8 +15,9 @@ type HubOptions struct {
 	Targets   []Target
 	UsersFile string // e.g. hack/users.dev.yaml
 	KeyFile   string // e.g. hack/dev.key
-	// SQLitePath, when set, uses the sqlite store there instead of memory.
-	SQLitePath string
+	// Postgres uses the postgres store with the DSN in EDDY_DATABASE_URL
+	// (task dev:pg) instead of memory, to keep data across restarts.
+	Postgres bool
 	// AI is "" (Ask AI off), "anthropic" or "bedrock"; see AIFromEnv.
 	AI AIOptions
 }
@@ -91,8 +92,8 @@ func RenderHub(o HubOptions) []byte {
 	w("publicURL: http://localhost:5173\n")
 	w("listen:\n  ui: 127.0.0.1:8080\n  agents: 127.0.0.1:8443\n  metrics: 127.0.0.1:9090\n")
 	w("auth:\n  local:\n    enabled: true\n    usersFile: %s\n  keyFile: %s\n", q(o.UsersFile), q(o.KeyFile))
-	if o.SQLitePath != "" {
-		w("store:\n  driver: sqlite\n  path: %s\n", q(o.SQLitePath))
+	if o.Postgres {
+		w("store:\n  driver: postgres\n  postgres:\n    dsnEnv: EDDY_DATABASE_URL\n")
 	} else {
 		w("store:\n  driver: memory\n")
 	}

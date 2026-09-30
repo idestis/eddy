@@ -70,7 +70,7 @@ func classify(err error) httpError {
 		return httpError{http.StatusConflict, "conflict", msg}
 	case errors.As(err, &ae) && ae.Code == http.StatusConflict:
 		return httpError{http.StatusConflict, "conflict", msg}
-	case errors.Is(err, errUnavailable), errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, errUnavailable), errors.Is(err, context.DeadlineExceeded), errors.Is(err, ai.ErrUnavailable):
 		return httpError{http.StatusServiceUnavailable, "unavailable", msg}
 	}
 	return httpError{http.StatusInternalServerError, "internal", "internal error"}

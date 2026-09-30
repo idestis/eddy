@@ -39,8 +39,9 @@ contexts:
 	out := filepath.Join(dir, ".dev", "hub.yaml")
 	tokenFile := filepath.Join(dir, ".dev", "agent-token")
 	var stdout, stderr bytes.Buffer
-	code := devConfig([]string{"--contexts", "kind-eddy," + arn, "--out", out, "--token-file", tokenFile, "--sqlite"},
-		func(string) string { return "" }, &stdout, &stderr)
+	t.Setenv("EDDY_DATABASE_URL", "postgres://eddy@127.0.0.1:55432/eddy?sslmode=disable")
+	code := devConfig([]string{"--contexts", "kind-eddy," + arn, "--out", out, "--token-file", tokenFile, "--postgres"},
+		func(k string) string { return os.Getenv(k) }, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code %d: %s", code, stderr.String())
 	}
@@ -60,7 +61,7 @@ contexts:
 	if len(h.StaticClusters) != 2 || h.StaticClusters[1].Name != "prod-eu" || !h.StaticClusters[1].Protected || h.StaticClusters[0].Protected {
 		t.Fatalf("clusters %+v", h.StaticClusters)
 	}
-	if h.Store.Driver != "sqlite" || h.Store.Path != filepath.Join(dir, ".dev", "eddy.db") || h.AI.Enabled {
+	if h.Store.Driver != "postgres" || h.Store.Postgres.DSNEnv != "EDDY_DATABASE_URL" || h.Peer.Listen != "" || h.AI.Enabled {
 		t.Fatalf("store %+v ai %v", h.Store, h.AI.Enabled)
 	}
 	if !strings.Contains(stdout.String(), "PROTECTED") {

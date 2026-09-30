@@ -77,6 +77,8 @@ func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
 	root.Handle("/api/", apiH)
 	root.Handle("/auth/", authH)
 	root.Handle("/mcp", mcpHandler)
+	// The peer endpoint lives on its own listener only.
+	root.HandleFunc("/peer/", func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "not found", http.StatusNotFound) })
 	root.HandleFunc("GET /healthz", healthz)
 	root.Handle("/", spa)
 	return observe(a.log, a.metrics, securityHeaders(a.cfg.SecureCookies(), root))

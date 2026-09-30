@@ -198,6 +198,7 @@ func TestEnsureToken(t *testing.T) {
 
 func TestRenderHubParses(t *testing.T) {
 	t.Setenv(TokenEnv, strings.Repeat("x", 64))
+	t.Setenv("EDDY_DATABASE_URL", "postgres://eddy@127.0.0.1:55432/eddy?sslmode=disable")
 	targets := []Target{
 		{Context: "kind-eddy", Cluster: "kind-eddy"},
 		{Context: "arn:aws:eks:eu-west-2:123:cluster/prod-eu", Cluster: "prod-eu", Protected: true},
@@ -206,7 +207,7 @@ func TestRenderHubParses(t *testing.T) {
 	}
 	for _, o := range []HubOptions{
 		{Targets: targets, UsersFile: "hack/users.dev.yaml", KeyFile: "hack/dev.key"},
-		{Targets: targets, UsersFile: "hack/users.dev.yaml", KeyFile: "hack/dev.key", SQLitePath: ".dev/eddy.db", AI: AIOptions{Provider: "anthropic", AnthropicModel: "claude-x"}},
+		{Targets: targets, UsersFile: "hack/users.dev.yaml", KeyFile: "hack/dev.key", Postgres: true, AI: AIOptions{Provider: "anthropic", AnthropicModel: "claude-x"}},
 		{Targets: targets, UsersFile: "hack/users.dev.yaml", KeyFile: "hack/dev.key", AI: AIOptions{
 			Provider: "bedrock", BedrockRegion: "eu-west-2", BedrockModelID: "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
 			GuardrailID: "gr-1", GuardrailVersion: "1",
@@ -225,8 +226,8 @@ func TestRenderHubParses(t *testing.T) {
 			}
 		}
 		wantDriver := "memory"
-		if o.SQLitePath != "" {
-			wantDriver = "sqlite"
+		if o.Postgres {
+			wantDriver = "postgres"
 		}
 		if h.Store.Driver != wantDriver || h.AI.Enabled != (o.AI.Provider != "") || (o.AI.Provider != "" && h.AI.Provider != o.AI.Provider) {
 			t.Fatalf("store %q ai %v/%q", h.Store.Driver, h.AI.Enabled, h.AI.Provider)

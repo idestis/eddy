@@ -7,7 +7,6 @@
 //	eddy-hub --version
 //	eddy-hub hash-password                      # reads a password from stdin
 //	eddy-hub admin revoke --user <subject> [--config …]
-//	eddy-hub admin backup --out <file> [--config …]
 //	eddy-hub dev-config --contexts a,b --out .dev/hub.yaml   # -tags dev only
 package main
 

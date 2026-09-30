@@ -74,13 +74,14 @@ func protoIdentity(p identity.Principal) protocol.Identity {
 	return protocol.Identity{User: p.User, Groups: slices.Clone(p.Groups)}
 }
 
-// session returns the connected session of a registered cluster.
-func (f *fleetService) session(cluster string) (ClusterSpec, *agentSession, error) {
+// session returns the primary session of a registered cluster: a local
+// agent session, or a relay to the replica that holds one.
+func (f *fleetService) session(cluster string) (ClusterSpec, clusterSession, error) {
 	spec, ok := f.reg.Get(cluster)
 	if !ok {
 		return ClusterSpec{}, nil, fmt.Errorf("%w: cluster %q", fleet.ErrNotFound, cluster)
 	}
-	s := f.agents.get(cluster)
+	s := f.agents.session(cluster)
 	if s == nil {
 		return spec, nil, fmt.Errorf("%w: %s", fleet.ErrDisconnected, cluster)
 	}
@@ -106,7 +107,7 @@ func canonicalRef(ref model.Ref) (model.Ref, flux.Kind, error) {
 
 // sendAccess is the authorizer's transport: an OpAccess request.
 func (f *fleetService) sendAccess(ctx context.Context, cluster string, id protocol.Identity, checks []protocol.AccessCheck) ([]bool, error) {
-	s := f.agents.get(cluster)
+	s := f.agents.session(cluster)
 	if s == nil {
 		return nil, fmt.Errorf("%w: %s", fleet.ErrDisconnected, cluster)
 	}
@@ -167,19 +168,20 @@ func (f *fleetService) Clusters(ctx context.Context, p identity.Principal) ([]mo
 			Name: spec.Name, DisplayName: spec.DisplayName, Environment: spec.Environment, Region: spec.Region,
 			Color: spec.Color, Protected: spec.Protected, Order: spec.Order,
 		}
-		s := f.agents.get(spec.Name)
+		s := f.agents.session(spec.Name)
 		if s == nil {
 			continue
 		}
 		ci := &out[i]
+		h := s.hello()
 		ci.Connected = true
-		ci.LastSeen = timeFromNanos(s.lastSeen.Load())
-		ci.AgentVersion, ci.KubernetesVersion, ci.FluxVersion = s.hello.AgentVersion, s.hello.KubernetesVersion, s.hello.FluxVersion
-		ci.Mode, ci.ReadOnly, ci.Context = s.hello.Mode, s.hello.ReadOnly, s.hello.Context
+		ci.LastSeen = s.lastSeenAt()
+		ci.AgentVersion, ci.KubernetesVersion, ci.FluxVersion = h.AgentVersion, h.KubernetesVersion, h.FluxVersion
+		ci.Mode, ci.ReadOnly, ci.Context = h.Mode, h.ReadOnly, h.Context
 		wg.Go(func() {
 			counts, err := f.counts(ctx, p, s)
 			if err != nil {
-				f.log.Debug("cluster counts unavailable", "cluster", s.cluster, "err", err)
+				f.log.Debug("cluster counts unavailable", "cluster", s.name(), "err", err)
 				return
 			}
 			ci.Counts = counts
@@ -190,13 +192,13 @@ func (f *fleetService) Clusters(ctx context.Context, p identity.Principal) ([]mo
 }
 
 // counts sums the per-tuple status counts p may list.
-func (f *fleetService) counts(ctx context.Context, p identity.Principal, s *agentSession) (map[model.Status]int, error) {
+func (f *fleetService) counts(ctx context.Context, p identity.Principal, s clusterSession) (map[model.Status]int, error) {
 	byTuple := s.tupleCounts()
 	tuples := make([]accessTuple, 0, len(byTuple))
 	for t := range byTuple {
 		tuples = append(tuples, t)
 	}
-	allowed, err := f.authz.allowedTuples(ctx, p, s.cluster, "list", tuples)
+	allowed, err := f.authz.allowedTuples(ctx, p, s.name(), "list", tuples)
 	if err != nil {
 		return nil, err
 	}
@@ -478,12 +480,12 @@ func (f *fleetService) write(ctx context.Context, p identity.Principal, cluster 
 		f.rec.Record(ctx, p, string(op), target, store.AuditDenied, detail)
 		return fmt.Errorf("%w: type the cluster name %q to confirm", fleet.ErrConfirmRequired, cluster)
 	}
-	s := f.agents.get(cluster)
+	s := f.agents.session(cluster)
 	if s == nil {
 		return fail(store.AuditError, fmt.Errorf("%w: %s", fleet.ErrDisconnected, cluster))
 	}
 	// The agent refuses these writes itself; the hub does not forward them.
-	if s.hello.ReadOnly {
+	if s.hello().ReadOnly {
 		return fail(store.AuditDenied, fmt.Errorf("%w: %s is read-only (its agent runs in read-only local mode)", fleet.ErrForbidden, cluster))
 	}
 	_, err = s.do(ctx, protocol.Request{Op: op, Identity: protoIdentity(p), Target: ref, Args: args})

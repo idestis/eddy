@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +54,12 @@ type Options struct {
 	AIOptions []ai.Option
 	// RequestTimeout bounds non-streaming agent requests (default 15 s).
 	RequestTimeout time.Duration
+	// PodName and PeerAddr override peer.podName and peer.advertise, so
+	// tests can run several replicas in one process.
+	PodName  string
+	PeerAddr string
+	// PeerLookup replaces DNS resolution of peer.service (tests).
+	PeerLookup func(ctx context.Context, host string) ([]string, error)
 }
 
 // Hub is a configured hub. Create it with New, then call Run.
@@ -69,10 +78,16 @@ type Hub struct {
 	metrics   *metrics
 	kube      *kubeSource
 	status    *statusWriter
+	bus       *bus
+	registry  *sessionRegistry
+	peers     *peerNode // nil without peer.listen
+
+	recentThreads recentSet
 
 	ui      http.Handler
 	agentH  http.Handler
 	metricH http.Handler
+	peerH   http.Handler
 
 	base       context.Context
 	cancelBase context.CancelFunc
@@ -123,10 +138,37 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 	}
 
 	b := newBus()
+	h.bus = b
 	h.reg = NewRegistry()
 	h.agents = newAgents(b, h.metrics)
 	h.fleet = &fleetService{reg: h.reg, agents: h.agents, rec: rec, denyPrefixes: cfg.Auth.DenyUserPrefixes, log: log.With("component", "fleet")}
 	h.fleet.authz = newAuthorizer(h.fleet.sendAccess, h.metrics)
+	pod := cmp.Or(o.PodName, cfg.Peer.PodName)
+	if pod == "" {
+		return nil, errors.New("hub: no replica name: set POD_NAME or peer.podName")
+	}
+	h.registry = &sessionRegistry{
+		st: h.store.AgentSessions(), events: h.store.Events(), pod: pod, agents: h.agents, log: log.With("component", "agents"),
+		addr: func() string {
+			if h.peers == nil {
+				return ""
+			}
+			return h.peers.selfAddr()
+		},
+	}
+	if cfg.Peer.Listen != "" {
+		_, port, err := net.SplitHostPort(cfg.Peer.Listen)
+		if err != nil {
+			return nil, fmt.Errorf("hub: peer.listen: %w", err)
+		}
+		h.agents.grace = failoverGrace
+		h.peers = newPeerNode(peerNodeConfig{
+			pod: pod, addr: cmp.Or(o.PeerAddr, cfg.Peer.Advertise), service: cfg.Peer.Service, port: port,
+			key: h.auth.PeerKey(), lookup: o.PeerLookup, agents: h.agents, reg: h.reg, rows: h.store.AgentSessions(),
+			valid: h.fleet.validPrincipal, metrics: h.metrics, log: log, timeout: o.RequestTimeout, base: h.base,
+		})
+		h.peerH = h.peers.handler()
+	}
 	h.reg.OnChange(func() {
 		h.agents.revalidate(h.reg, log)
 		b.publish(event{kind: evClusters})
@@ -145,10 +187,9 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 		h.agents.onChange = h.status.kick
 	}
 
-	h.threads = threads.New(h.store.Threads(), h.fleet, rec, func(t store.Thread) {
-		b.publish(event{kind: evThread, thread: t})
-	})
-	if h.ai, err = ai.New(cfg.AI, h.fleet, h.threads, rec, h.flags, groupForKind, log, o.AIOptions...); err != nil {
+	h.threads = threads.New(h.store.Threads(), h.fleet, rec, h.threadChanged)
+	aiOpts := append([]ai.Option{ai.WithRateLimits(h.store.RateLimits())}, o.AIOptions...)
+	if h.ai, err = ai.New(cfg.AI, h.fleet, h.threads, rec, h.flags, groupForKind, log, aiOpts...); err != nil {
 		return nil, err
 	}
 	mcpH, err := mcp.NewHandler(mcp.Options{
@@ -163,6 +204,7 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 		ThreadWriteScope: identity.Scope(cfg.Auth.Tokens.ThreadWriteScope),
 		Version:          version.Version,
 		Log:              log,
+		RateLimits:       h.store.RateLimits(),
 	})
 	if err != nil {
 		return nil, err
@@ -180,12 +222,13 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 		ai: h.ai, store: h.store, flags: h.flags, bus: b, metrics: h.metrics,
 		streams: newConcurrencyLimiter(maxStreamsPerUser), logStreams: newConcurrencyLimiter(maxLogStreamsUser),
 		shutdown:  h.shutdown,
-		ephemeral: cfg.Store.Ephemeral || cfg.Store.Driver == storeopen.DriverMemory,
+		ephemeral: cfg.EphemeralStore(),
 	}
 	h.ui = ap.routes(mcpH, spa)
 	h.agentH = (&agentServer{
 		reg: h.reg, agents: h.agents, failures: newWindowLimiter(agentAuthFailures, agentAuthWindow),
 		metrics: h.metrics, log: log.With("component", "agents"), base: h.base, timeout: o.RequestTimeout,
+		registry: h.registry,
 	}).handler()
 	h.metricH = h.metricsHandler()
 	ok = true
@@ -199,23 +242,34 @@ func groupForKind(kind string) (string, bool) {
 
 // statusSnapshot returns the desired Cluster status of every registered
 // cluster. A disconnected cluster keeps its last known versions and counts.
+// A replica writes Connected only for clusters whose agent is connected to
+// it, and leaves clusters served by another replica to that replica, so
+// replicas do not overwrite each other.
 func (h *Hub) statusSnapshot() func() map[string]clusterStatus {
 	last := map[string]clusterStatus{} // only used from the status writer's goroutine
 	return func() map[string]clusterStatus {
 		out := map[string]clusterStatus{}
 		for _, spec := range h.reg.List() {
-			if s := h.agents.get(spec.Name); s != nil {
+			if s := h.agents.localPrimary(spec.Name); s != nil {
 				st := clusterStatus{
 					Phase:             "Connected",
-					LastSeen:          timeFromNanos(s.lastSeen.Load()).Truncate(statusMinInterval),
-					AgentVersion:      s.hello.AgentVersion,
-					KubernetesVersion: s.hello.KubernetesVersion,
-					FluxVersion:       s.hello.FluxVersion,
+					LastSeen:          s.lastSeenAt().Truncate(statusMinInterval),
+					AgentVersion:      s.info.AgentVersion,
+					KubernetesVersion: s.info.KubernetesVersion,
+					FluxVersion:       s.info.FluxVersion,
 					Resources:         s.size(),
 				}
 				last[spec.Name] = st
 				out[spec.Name] = st
 				continue
+			}
+			if h.agents.session(spec.Name) != nil {
+				continue // relayed: the owning replica writes the status
+			}
+			if h.peers != nil {
+				if owned, known := h.peers.remoteOwner(spec.Name); owned || !known {
+					continue
+				}
 			}
 			st := last[spec.Name]
 			st.Phase = "Disconnected"
@@ -234,6 +288,17 @@ func (h *Hub) AgentHandler() http.Handler { return h.agentH }
 // MetricsHandler serves /metrics, /readyz and /healthz.
 func (h *Hub) MetricsHandler() http.Handler { return h.metricH }
 
+// PeerHandler serves /peer/v1/connect, or is nil without peer.listen.
+func (h *Hub) PeerHandler() http.Handler { return h.peerH }
+
+// SetPeerAddr sets the address other replicas dial, when it is only known
+// once the peer listener is bound (tests, or no POD_IP). Call it before Start.
+func (h *Hub) SetPeerAddr(addr string) {
+	if h.peers != nil {
+		h.peers.setAddr(addr)
+	}
+}
+
 // Fleet is the hub's fleet.Service.
 func (h *Hub) Fleet() fleet.Service { return h.fleet }
 
@@ -244,16 +309,31 @@ func (h *Hub) metricsHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", h.metrics.handler())
 	mux.HandleFunc("GET /healthz", healthz)
+	// /readyz gates only on what this pod needs to serve its own traffic: the
+	// store was migrated at startup (New fails otherwise) and the cluster
+	// registry has synced. Peer-link or store trouble is reported as
+	// "degraded" but never marks the pod unready: every replica would see the
+	// same fault, and pulling all of them out of the Service would turn a
+	// partial outage (cluster reads still work from memory) into a full one.
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
 		w.Header().Set("Cache-Control", "no-store")
-		if err := h.store.Ping(ctx); err != nil {
-			http.Error(w, "store unavailable", http.StatusServiceUnavailable)
-			return
-		}
 		if !h.reg.Synced() {
 			http.Error(w, "cluster registry not synced", http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		var degraded []string
+		if err := h.store.Ping(ctx); err != nil {
+			degraded = append(degraded, "store unavailable")
+		}
+		if h.peers != nil {
+			if err := h.peers.ready(time.Now()); err != nil {
+				degraded = append(degraded, err.Error())
+			}
+		}
+		if len(degraded) > 0 {
+			_, _ = w.Write([]byte("ok (degraded: " + strings.Join(degraded, "; ") + ")\n"))
 			return
 		}
 		_, _ = w.Write([]byte("ok\n"))
@@ -268,6 +348,15 @@ func (h *Hub) metricsHandler() http.Handler {
 // Cluster status, janitor) until ctx is done. Run calls it; tests that
 // serve the handlers themselves call it directly.
 func (h *Hub) Start(ctx context.Context) {
+	// Rows left by an earlier process with this pod name are stale.
+	h.registry.forgetAll(ctx)
+	go h.runEvents(ctx)
+	if h.peers != nil {
+		if h.peers.selfAddr() == "" {
+			h.log.Warn("peer address unknown: set POD_IP or peer.advertise, or other replicas cannot relay to this one")
+		}
+		go h.peers.run(ctx)
+	}
 	go h.auth.Run(ctx)
 	if f, ok := h.flags.(*runtimeflags.File); ok {
 		go f.Run(ctx, flagsPollEvery)
@@ -287,7 +376,6 @@ func (h *Hub) Start(ctx context.Context) {
 // shuts down gracefully: SSE streams end, agent sessions close and
 // in-flight requests get shutdownTimeout to finish.
 func (h *Hub) Run(ctx context.Context) error {
-	h.logSummary()
 	bg, cancelBg := context.WithCancel(ctx)
 	defer cancelBg()
 
@@ -308,6 +396,12 @@ func (h *Hub) Run(ctx context.Context) error {
 			ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, ErrorLog: errLog}},
 	}
 	addrs := []string{h.cfg.Listen.UI, h.cfg.Listen.Agents, h.cfg.Listen.Metrics}
+	if h.peers != nil {
+		// Peer links are long-lived WebSockets: only the header read is bounded.
+		servers = append(servers, server{name: "peers", srv: &http.Server{Handler: h.peerH, ReadHeaderTimeout: readHeaderTimeout,
+			IdleTimeout: idleConnTimeout, MaxHeaderBytes: 16 << 10, ErrorLog: errLog}})
+		addrs = append(addrs, h.cfg.Peer.Listen)
+	}
 	for i := range servers {
 		ln, err := net.Listen("tcp", addrs[i])
 		if err != nil {
@@ -318,6 +412,12 @@ func (h *Hub) Run(ctx context.Context) error {
 		}
 		servers[i].ln = ln
 	}
+	if h.peers != nil && h.peers.selfAddr() == "" {
+		if ap, err := netip.ParseAddrPort(servers[len(servers)-1].ln.Addr().String()); err == nil && !ap.Addr().IsUnspecified() {
+			h.peers.setAddr(ap.String())
+		}
+	}
+	h.logSummary()
 	h.Start(bg)
 
 	errc := make(chan error, len(servers))
@@ -362,7 +462,14 @@ func (h *Hub) Run(ctx context.Context) error {
 func (h *Hub) stop() {
 	h.stopOnce.Do(func() {
 		close(h.shutdown)
+		h.agents.stopGrace()
 		h.agents.closeAll("hub shutting down")
+		if h.peers != nil {
+			h.peers.closeAll()
+		}
+		// Peers stop relaying to this replica at once instead of waiting
+		// for the rows to go stale.
+		h.registry.forgetAll(context.Background())
 	})
 }
 
@@ -393,7 +500,8 @@ func (h *Hub) logSummary() {
 		"agentTLS", c.Listen.AgentTLS != nil,
 		"namespace", c.Namespace,
 		"clusters", mode,
-		"store", map[string]any{"driver": c.Store.Driver, "path": c.Store.Path, "ephemeral": c.Store.Ephemeral},
+		"store", map[string]any{"driver": c.Store.Driver, "ephemeral": c.EphemeralStore()},
+		"peers", h.peerSummary(),
 		"auth", map[string]bool{"local": c.Auth.Local.Enabled, "proxy": c.Auth.Proxy.Enabled, "dev": h.auth.DevMode()},
 		"ai", map[string]any{"enabled": c.AI.Enabled, "provider": c.AI.Provider},
 		"mcp", map[string]bool{"enabled": c.MCP.Enabled, "writes": c.MCP.Writes, "allowLogs": c.MCP.AllowLogs},
@@ -401,10 +509,24 @@ func (h *Hub) logSummary() {
 	if h.auth.DevMode() {
 		h.log.Warn("DEV MODE: fake login is enabled; never expose this hub")
 	}
-	if c.Store.Ephemeral || c.Store.Driver == storeopen.DriverMemory {
-		h.log.Warn("EPHEMERAL STORE: sessions, tokens, threads and stored audit are lost on restart")
+	if c.EphemeralStore() {
+		if h.auth.DevMode() {
+			h.log.Warn("EPHEMERAL STORE (memory): sessions, tokens, threads and stored audit are lost on restart")
+		} else {
+			h.log.Warn("EPHEMERAL STORE (memory) OUTSIDE DEV MODE: sessions, tokens, threads and stored audit are lost on every restart and not shared between replicas. Use store.driver=postgres for anything but an evaluation.")
+		}
 	}
 	if c.Listen.AgentTLS == nil {
 		h.log.Warn("agent listener serves plain HTTP; terminate TLS in front of it (agents require wss:// outside development)")
+	}
+}
+
+func (h *Hub) peerSummary() map[string]any {
+	if h.peers == nil {
+		return map[string]any{"enabled": false}
+	}
+	return map[string]any{
+		"enabled": true, "listen": h.cfg.Peer.Listen, "service": h.cfg.Peer.Service,
+		"pod": h.peers.pod, "advertise": h.peers.selfAddr(), "keyFingerprint": h.peers.fingerprint(),
 	}
 }

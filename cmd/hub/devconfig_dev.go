@@ -24,7 +24,7 @@ func devConfig(args []string, getenv func(string) string, stdout, stderr io.Writ
 	kubeconfig := fs.String("kubeconfig", "", "kubeconfig file (default: $KUBECONFIG, then ~/.kube/config)")
 	protect := fs.String("protect", devlocal.DefaultProtect, "regex of contexts or cluster names marked protected (and kept read-only by the agent)")
 	out := fs.String("out", ".dev/hub.yaml", "where to write the hub config")
-	sqlite := fs.Bool("sqlite", false, "use the sqlite store at .dev/eddy.db instead of memory, to keep threads across restarts")
+	pg := fs.Bool("postgres", false, "use the postgres store at $EDDY_DATABASE_URL (task dev:pg) instead of memory, to keep data across restarts")
 	tokenFile := fs.String("token-file", ".dev/agent-token", "shared agent token; generated when missing")
 	users := fs.String("users", "hack/users.dev.yaml", "local users file")
 	key := fs.String("key", "hack/dev.key", "auth key file")
@@ -55,16 +55,16 @@ func devConfig(args []string, getenv func(string) string, stdout, stderr io.Writ
 	if _, err := devlocal.EnsureToken(*tokenFile); err != nil {
 		return fail(err)
 	}
-	o := devlocal.HubOptions{Targets: targets, UsersFile: *users, KeyFile: *key}
-	if *sqlite {
-		o.SQLitePath = filepath.Join(filepath.Dir(*out), "eddy.db")
-	}
+	o := devlocal.HubOptions{Targets: targets, UsersFile: *users, KeyFile: *key, Postgres: *pg}
 	ai, err := devlocal.AIFromEnv(getenv)
 	if err != nil {
 		return fail(err)
 	}
 	o.AI = ai
 	b := devlocal.RenderHub(o)
+	if *pg && getenv("EDDY_DATABASE_URL") == "" {
+		return fail(fmt.Errorf("--postgres needs EDDY_DATABASE_URL (start one with: task dev:pg)"))
+	}
 	if _, err := config.ParseHub(b); err != nil {
 		return fail(fmt.Errorf("generated config is invalid: %w", err))
 	}

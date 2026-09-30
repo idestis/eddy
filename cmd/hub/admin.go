@@ -17,7 +17,6 @@ import (
 	"github.com/idestis/eddy/internal/audit"
 	"github.com/idestis/eddy/internal/auth"
 	"github.com/idestis/eddy/internal/config"
-	"github.com/idestis/eddy/internal/hub"
 	"github.com/idestis/eddy/internal/identity"
 	"github.com/idestis/eddy/internal/store"
 	"github.com/idestis/eddy/internal/store/storeopen"
@@ -71,8 +70,9 @@ func hashPassword(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 const adminUsage = `usage:
   eddy-hub admin revoke --user <subject> [--config /etc/eddy/hub.yaml]
       Delete every session and revoke every token of a user (e.g. local:alice).
-  eddy-hub admin backup --out <file> [--config /etc/eddy/hub.yaml]
-      Write a consistent copy of the SQLite store (VACUUM INTO).
+
+Backups: the hub keeps its data in PostgreSQL. Back it up with pg_dump or
+your operator's backups (CloudNativePG, RDS, Cloud SQL); see docs/install.md.
 `
 
 func admin(args []string, stdout, stderr io.Writer) int {
@@ -84,12 +84,13 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("eddy-hub admin "+cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	cfgPath := fs.String("config", defaultConfig, "path to hub.yaml")
-	var user, out string
+	var user string
 	switch cmd {
 	case "revoke":
 		fs.StringVar(&user, "user", "", "subject to revoke, e.g. local:alice")
 	case "backup":
-		fs.StringVar(&out, "out", "", "backup file to create")
+		fmt.Fprintln(stderr, "eddy-hub: admin backup was removed with the SQLite store; back up PostgreSQL with pg_dump or your operator's backups (see docs/install.md)")
+		return 2
 	default:
 		fmt.Fprint(stderr, adminUsage)
 		return 2
@@ -117,20 +118,6 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		fmt.Fprintf(stdout, "revoked all sessions and tokens of %s\n", user)
-	case "backup":
-		if out == "" {
-			fmt.Fprintln(stderr, "eddy-hub: --out is required")
-			return 2
-		}
-		if cfg.Store.Driver != storeopen.DriverSQLite {
-			fmt.Fprintf(stderr, "eddy-hub: backup needs the sqlite store (driver is %q)\n", cfg.Store.Driver)
-			return 1
-		}
-		if err := hub.BackupSQLite(ctx, cfg.Store.Path, out); err != nil {
-			fmt.Fprintln(stderr, "eddy-hub:", err)
-			return 1
-		}
-		fmt.Fprintf(stdout, "wrote %s\n", out)
 	}
 	return 0
 }
@@ -152,6 +139,10 @@ func revoke(ctx context.Context, cfg *config.Hub, subject string, log *slog.Logg
 	}
 	if err := st.Tokens().RevokeBySubject(ctx, subject, time.Now().UTC()); err != nil {
 		errs = append(errs, fmt.Errorf("revoke tokens: %w", err))
+	}
+	// Running hubs cache sessions for up to 30 s; tell them to drop them.
+	if err := st.Events().Publish(ctx, store.Event{Kind: store.EventRevoke, ID: subject}); err != nil {
+		log.Warn("notifying running hubs failed; they accept cached sessions for up to 30s", "err", err)
 	}
 	res := store.AuditOK
 	if len(errs) > 0 {

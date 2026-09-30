@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,74 +28,318 @@ const (
 	maxHelloFieldLength = 128
 )
 
-// agents holds the live session of every connected cluster. A new
-// connection for a cluster replaces the previous one.
+// Agent session registry timings (ADR-0004).
+const (
+	// agentHeartbeatEvery refreshes this replica's agent_sessions rows.
+	agentHeartbeatEvery = 10 * time.Second
+	// agentFreshFor is how old a heartbeat may be for its row to count.
+	agentFreshFor = 30 * time.Second
+	// failoverGrace keeps serving a cluster's last view (requests fail with
+	// ErrDisconnected) while a replacement session is found, so a primary
+	// that moves to another replica does not blink the cluster to
+	// Disconnected. Used only when peers are enabled.
+	failoverGrace = 5 * time.Second
+	// legacyInstance stands in for agents that send no Hello.Instance.
+	// Their Seq is the connect time, so the newest connection wins, as it
+	// did before agent replicas.
+	legacyInstance = "legacy"
+)
+
+// errStaleSession refuses a connection from an agent instance that already
+// has a newer one.
+var errStaleSession = errors.New("a newer connection of this agent instance is active")
+
+// agents holds every cluster session this replica knows: the local agent
+// sessions (0..N per cluster, one per agent instance) and at most one
+// remote session relayed from the replica that holds the cluster's agent.
+// For each cluster it picks one primary session: the oldest synced local
+// session, else the oldest local one, else the remote one. Only the
+// primary's events reach the bus, and every request goes to it.
 type agents struct {
 	mu       sync.RWMutex
-	sessions map[string]*agentSession
+	local    map[string][]*agentSession // oldest first
+	remote   map[string]*remoteSession
+	primary  map[string]clusterSession
+	graceT   map[string]*time.Timer
+	graceEnd map[string]bool
+	grace    time.Duration
 	rvSeq    atomic.Uint64
 	bus      *bus
 	metrics  *metrics
-	onChange func()
+
+	// Hooks, set before the first session is added.
+	onChange  func()                        // connection state changed (Cluster status)
+	onPrimary func(cluster string)          // the primary of cluster changed (peers)
+	forward   func(cluster string, e event) // events of a local primary (peer subscribers)
 }
 
 func newAgents(b *bus, m *metrics) *agents {
-	return &agents{sessions: map[string]*agentSession{}, bus: b, metrics: m}
+	return &agents{
+		local: map[string][]*agentSession{}, remote: map[string]*remoteSession{},
+		primary: map[string]clusterSession{}, graceT: map[string]*time.Timer{}, graceEnd: map[string]bool{},
+		bus: b, metrics: m,
+	}
 }
 
+// get returns the oldest live local session of cluster, or nil.
 func (a *agents) get(cluster string) *agentSession {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.sessions[cluster]
+	return a.getLocked(cluster)
 }
 
+func (a *agents) getLocked(cluster string) *agentSession {
+	for _, s := range a.local[cluster] {
+		if !s.closed() {
+			return s
+		}
+	}
+	return nil
+}
+
+// session returns the primary session of cluster, or nil. During a
+// failover grace period it may be a closed session: its view is still
+// served and its requests fail with ErrDisconnected.
+func (a *agents) session(cluster string) clusterSession {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.primary[cluster]
+}
+
+// localPrimary returns the local session that serves cluster: the primary
+// if it is local and live, else the oldest live local session.
+func (a *agents) localPrimary(cluster string) *agentSession {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if s, ok := a.primary[cluster].(*agentSession); ok && !s.closed() {
+		return s
+	}
+	return a.getLocked(cluster)
+}
+
+func (a *agents) hasLocal(cluster string) bool { return a.get(cluster) != nil }
+
+func (a *agents) remoteOf(cluster string) *remoteSession {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.remote[cluster]
+}
+
+// all returns every local session.
 func (a *agents) all() []*agentSession {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	out := make([]*agentSession, 0, len(a.sessions))
-	for _, s := range a.sessions {
-		out = append(out, s)
+	var out []*agentSession
+	for _, ss := range a.local {
+		out = append(out, ss...)
 	}
 	return out
 }
 
-func (a *agents) add(s *agentSession) {
+// add registers a local session. A session of the same agent instance
+// with a lower (or equal) Seq is replaced; one with a higher Seq wins and
+// add returns errStaleSession.
+func (a *agents) add(s *agentSession) error {
 	a.mu.Lock()
-	old := a.sessions[s.cluster]
-	a.sessions[s.cluster] = s
-	a.mu.Unlock()
-	if old != nil {
-		old.close(websocket.StatusPolicyViolation, "replaced by a new connection")
-	} else {
-		a.metrics.agentsConnected.Add(1)
+	var replaced []*agentSession
+	kept := a.local[s.cluster][:0:0]
+	for _, o := range a.local[s.cluster] {
+		if o.instance == s.instance && !o.closed() {
+			if o.seq > s.seq {
+				a.mu.Unlock()
+				return errStaleSession
+			}
+			replaced = append(replaced, o)
+			continue
+		}
+		kept = append(kept, o)
 	}
-	a.changed()
+	a.local[s.cluster] = append(kept, s)
+	a.countLocked()
+	changed := a.reselectLocked(s.cluster)
+	a.mu.Unlock()
+	for _, o := range replaced {
+		o.close(websocket.StatusPolicyViolation, "replaced by a new connection")
+	}
+	a.after(s.cluster, changed)
+	return nil
 }
 
+// remove forgets a local session after it ended.
 func (a *agents) remove(s *agentSession) {
 	a.mu.Lock()
-	cur := a.sessions[s.cluster] == s
-	if cur {
-		delete(a.sessions, s.cluster)
+	ss := a.local[s.cluster]
+	i := slices.Index(ss, s)
+	if i < 0 {
+		a.mu.Unlock()
+		return
 	}
+	ss = slices.Delete(slices.Clone(ss), i, i+1)
+	if len(ss) == 0 {
+		delete(a.local, s.cluster)
+	} else {
+		a.local[s.cluster] = ss
+	}
+	a.countLocked()
+	changed := a.reselectLocked(s.cluster)
 	a.mu.Unlock()
-	if cur {
-		a.metrics.agentsConnected.Add(-1)
-		// Clients drop the cluster's rows: the view is gone with the session.
-		a.bus.publish(event{kind: evResync, cluster: s.cluster})
-		a.changed()
-	}
+	a.after(s.cluster, changed)
 }
 
-func (a *agents) changed() {
+// setRemote installs (or with rs nil, removes) the relayed session of
+// cluster. Removing only happens if old is still the current one.
+func (a *agents) setRemote(cluster string, rs, old *remoteSession) {
+	a.mu.Lock()
+	cur := a.remote[cluster]
+	if rs == nil {
+		if cur != old || cur == nil {
+			a.mu.Unlock()
+			return
+		}
+		delete(a.remote, cluster)
+	} else {
+		a.remote[cluster] = rs
+	}
+	changed := a.reselectLocked(cluster)
+	a.mu.Unlock()
+	if cur != nil && cur != rs {
+		cur.end()
+	}
+	a.after(cluster, changed)
+}
+
+// reselect re-evaluates the primary of cluster, for example after a
+// remote session synced.
+func (a *agents) reselect(cluster string) {
+	a.mu.Lock()
+	changed := a.reselectLocked(cluster)
+	a.mu.Unlock()
+	a.after(cluster, changed)
+}
+
+func (a *agents) countLocked() {
+	n := 0
+	for _, ss := range a.local {
+		if len(ss) > 0 {
+			n++
+		}
+	}
+	a.metrics.agentsConnected.Store(int64(n))
+}
+
+// reselectLocked picks the primary of cluster and reports whether it
+// changed. Preference: the oldest synced local session, a synced remote
+// session, then the oldest unsynced local session. When the primary is
+// lost and only an unsynced session (or nothing) is left, the failover
+// grace period keeps the old view for a while, if one is configured.
+func (a *agents) reselectLocked(cluster string) bool {
+	var synced, unsynced clusterSession
+	for _, s := range a.local[cluster] {
+		if s.closed() {
+			continue
+		}
+		if s.isSynced() {
+			synced = s
+			break
+		}
+		if unsynced == nil {
+			unsynced = s
+		}
+	}
+	if synced == nil {
+		if r := a.remote[cluster]; r != nil && !r.closed() && r.isSynced() {
+			synced = r
+		}
+	}
+	cur, had := a.primary[cluster]
+	lost := had && !a.validLocked(cluster, cur)
+	inGrace := lost && a.grace > 0 && !a.graceEnd[cluster]
+	want := synced
+	if want == nil && !inGrace {
+		want = unsynced
+	}
+	if want != nil {
+		if t := a.graceT[cluster]; t != nil {
+			t.Stop()
+			delete(a.graceT, cluster)
+		}
+		delete(a.graceEnd, cluster)
+		if had && cur == want {
+			return false
+		}
+		a.primary[cluster] = want
+		return true
+	}
+	if !had {
+		return false
+	}
+	if inGrace {
+		if a.graceT[cluster] == nil {
+			a.graceT[cluster] = time.AfterFunc(a.grace, func() {
+				a.mu.Lock()
+				delete(a.graceT, cluster)
+				a.graceEnd[cluster] = true
+				changed := a.reselectLocked(cluster)
+				a.mu.Unlock()
+				a.after(cluster, changed)
+			})
+		}
+		return false
+	}
+	delete(a.primary, cluster)
+	delete(a.graceEnd, cluster)
+	return true
+}
+
+// validLocked reports whether s is still one of cluster's live sessions.
+func (a *agents) validLocked(cluster string, s clusterSession) bool {
+	if s.closed() {
+		return false
+	}
+	if r, ok := s.(*remoteSession); ok {
+		return a.remote[cluster] == r
+	}
+	return slices.Contains(a.local[cluster], s.(*agentSession))
+}
+
+// after publishes a primary change: SSE clients refetch the cluster's
+// rows, Cluster status is rewritten and peers are told.
+func (a *agents) after(cluster string, changed bool) {
+	if changed {
+		a.bus.publish(event{kind: evResync, cluster: cluster})
+		if a.onPrimary != nil {
+			a.onPrimary(cluster)
+		}
+	}
 	a.bus.publish(event{kind: evClusters})
 	if a.onChange != nil {
 		a.onChange()
 	}
 }
 
+// emit is the event sink of every session. Only the primary's events
+// reach the bus, and a local primary's events also go to peers that
+// subscribed to the cluster. A standby that finishes its first snapshot
+// may become the primary.
+func (a *agents) emit(src clusterSession, e event) {
+	cluster := src.name()
+	a.mu.RLock()
+	cur := a.primary[cluster]
+	if cur == src {
+		a.bus.publish(e)
+		if _, local := src.(*agentSession); local && a.forward != nil {
+			a.forward(cluster, e)
+		}
+	}
+	a.mu.RUnlock()
+	if cur != src && e.kind == evResync {
+		a.reselect(cluster)
+	}
+}
+
 // revalidate closes sessions whose cluster was removed or whose token is no
-// longer accepted (Secret rotated or deleted).
+// longer accepted (Secret rotated or deleted), and drops relayed sessions
+// of unregistered clusters.
 func (a *agents) revalidate(reg *Registry, log *slog.Logger) {
 	for _, s := range a.all() {
 		if !reg.Accepts(s.cluster, s.tokenHash) {
@@ -102,11 +347,32 @@ func (a *agents) revalidate(reg *Registry, log *slog.Logger) {
 			s.close(websocket.StatusPolicyViolation, "token no longer valid")
 		}
 	}
+	a.mu.RLock()
+	var gone []*remoteSession
+	for c, r := range a.remote {
+		if _, ok := reg.Get(c); !ok {
+			gone = append(gone, r)
+		}
+	}
+	a.mu.RUnlock()
+	for _, r := range gone {
+		a.setRemote(r.cluster, nil, r)
+	}
 }
 
 func (a *agents) closeAll(reason string) {
 	for _, s := range a.all() {
 		s.close(websocket.StatusGoingAway, reason)
+	}
+}
+
+// stopGrace cancels pending failover timers (hub shutdown).
+func (a *agents) stopGrace() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for c, t := range a.graceT {
+		t.Stop()
+		delete(a.graceT, c)
 	}
 }
 
@@ -125,6 +391,9 @@ type agentServer struct {
 	log      *slog.Logger
 	base     context.Context // hub lifetime; sessions end with it
 	timeout  time.Duration
+	// registry records local agent sessions in agent_sessions so other
+	// replicas can relay to them; nil (tests) records nothing.
+	registry *sessionRegistry
 }
 
 func (a *agentServer) handler() http.Handler {
@@ -196,18 +465,41 @@ func (a *agentServer) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := newSession(cluster, hello, h, conn, sessionDeps{
-		bus: a.agents.bus, metrics: a.metrics, rvSeq: &a.agents.rvSeq, log: a.log, timeout: a.timeout,
+		bus: a.agents.bus, emit: a.agents.emit, metrics: a.metrics, rvSeq: &a.agents.rvSeq, log: a.log, timeout: a.timeout,
 	})
-	a.agents.add(s)
-	a.log.Info("agent connected", "cluster", cluster, "agentVersion", hello.AgentVersion,
+	s.instance, s.seq = hello.Instance, hello.Seq
+	if s.instance == "" {
+		s.instance, s.seq = legacyInstance, s.connectedAt.UnixNano()
+	}
+	if err := a.agents.add(s); err != nil {
+		a.log.Warn("agent connection refused", "cluster", cluster, "instance", s.instance, "seq", s.seq, "err", err)
+		_ = conn.Close(websocket.StatusPolicyViolation, truncate(err.Error(), 120))
+		return
+	}
+	if a.registry != nil {
+		if err := a.registry.register(a.base, s); err != nil {
+			a.log.Warn("agent connection refused: another hub replica holds a newer connection of this agent instance",
+				"cluster", cluster, "instance", s.instance, "seq", s.seq)
+			s.close(websocket.StatusPolicyViolation, errStaleSession.Error())
+			a.agents.remove(s)
+			return
+		}
+	}
+	a.log.Info("agent connected", "cluster", cluster, "instance", s.instance, "seq", s.seq, "agentVersion", hello.AgentVersion,
 		"kubernetesVersion", hello.KubernetesVersion, "fluxVersion", hello.FluxVersion, "peer", ip)
 	if hello.Mode == protocol.ModeLocal {
 		a.log.Warn("agent runs in local mode: it acts as a developer's kubeconfig identity, not as the Eddy user",
 			"cluster", cluster, "context", hello.Context, "readOnly", hello.ReadOnly)
 	}
+	if a.registry != nil {
+		go a.registry.heartbeat(a.base, s)
+	}
 	err = s.run(a.base)
 	a.agents.remove(s)
-	a.log.Info("agent disconnected", "cluster", cluster, "reason", closeReason(err))
+	if a.registry != nil {
+		a.registry.unregister(s)
+	}
+	a.log.Info("agent disconnected", "cluster", cluster, "instance", s.instance, "reason", closeReason(err))
 }
 
 func closeReason(err error) string {
@@ -261,8 +553,14 @@ func validateHello(h *protocol.Hello, cluster string) error {
 	default:
 		return fmt.Errorf("unknown agent mode %q", truncate(h.Mode, 16))
 	}
-	for _, f := range []*string{&h.AgentVersion, &h.KubernetesVersion, &h.FluxVersion, &h.Context} {
+	for _, f := range []*string{&h.AgentVersion, &h.KubernetesVersion, &h.FluxVersion, &h.Context, &h.Instance} {
 		*f = cleanText(*f, maxHelloFieldLength)
+	}
+	if h.Instance == legacyInstance {
+		return fmt.Errorf("agent instance %q is reserved", legacyInstance)
+	}
+	if h.Seq < 0 {
+		return errors.New("hello seq must not be negative")
 	}
 	if len(h.Namespaces) > 1000 {
 		h.Namespaces = h.Namespaces[:1000]

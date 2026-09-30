@@ -21,6 +21,7 @@ type metrics struct {
 	agentsConnected atomic.Int64
 	sseClients      atomic.Int64
 	logStreams      atomic.Int64
+	peerLinks       atomic.Int64
 
 	agentAuthFailures atomic.Uint64
 	framesThrottled   atomic.Uint64
@@ -28,6 +29,8 @@ type metrics struct {
 	sarHits           atomic.Uint64
 	sarMisses         atomic.Uint64
 	sseDropped        atomic.Uint64
+	peerAuthFailures  atomic.Uint64
+	peerRelayed       atomic.Uint64
 
 	mu     sync.Mutex
 	http   map[int]uint64
@@ -67,7 +70,8 @@ func (m *metrics) write(w io.Writer) {
 	}
 	fmt.Fprintf(w, "# HELP eddy_hub_build_info Build information.\n# TYPE eddy_hub_build_info gauge\neddy_hub_build_info{version=%s} 1\n",
 		strconv.Quote(version.Version))
-	gauge("eddy_hub_agents_connected", "Agents with an open session.", m.agentsConnected.Load())
+	gauge("eddy_hub_agents_connected", "Clusters with an agent session on this replica.", m.agentsConnected.Load())
+	gauge("eddy_hub_peer_links", "Open links to other hub replicas.", m.peerLinks.Load())
 	gauge("eddy_hub_sse_clients", "Open /api/v1/stream connections.", m.sseClients.Load())
 	gauge("eddy_hub_log_streams", "Open pod log streams.", m.logStreams.Load())
 	counter("eddy_hub_agent_auth_failures_total", "Rejected agent connection attempts.", m.agentAuthFailures.Load())
@@ -76,6 +80,8 @@ func (m *metrics) write(w io.Writer) {
 	counter("eddy_hub_sar_cache_hits_total", "Access checks answered from the cache.", m.sarHits.Load())
 	counter("eddy_hub_sar_cache_misses_total", "Access checks sent to an agent.", m.sarMisses.Load())
 	counter("eddy_hub_sse_overflows_total", "SSE clients that fell behind and were resynced.", m.sseDropped.Load())
+	counter("eddy_hub_peer_auth_failures_total", "Rejected peer connection attempts.", m.peerAuthFailures.Load())
+	counter("eddy_hub_peer_relayed_requests_total", "Requests this replica ran for another replica.", m.peerRelayed.Load())
 
 	m.mu.Lock()
 	httpCounts := maps.Clone(m.http)

@@ -3,7 +3,6 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -39,33 +38,29 @@ const (
 	frameBurst = 400
 )
 
-// agentSession is one connected agent. It owns the cluster's resource view
-// for as long as the connection lives, and multiplexes hub requests over it.
+// agentSession is one connected agent. It keeps its own view of the
+// cluster for as long as the connection lives, and multiplexes hub requests
+// over it. With several agent replicas a cluster has several sessions; the
+// agents registry picks one as the primary and only the primary's changes
+// reach the bus.
 type agentSession struct {
+	*clusterView
 	cluster     string
-	hello       protocol.Hello
+	info        protocol.Hello
+	instance    string // Hello.Instance, or legacyInstance
+	seq         int64
 	tokenHash   [32]byte
 	conn        *websocket.Conn
 	connectedAt time.Time
 	log         *slog.Logger
-	bus         *bus
+	emit        func(clusterSession, event)
 	metrics     *metrics
-	rvSeq       *atomic.Uint64
 	limiter     *rate.Limiter
 	timeout     time.Duration
 
 	lastSeen atomic.Int64 // unix nanoseconds of the last frame
 
-	mu        sync.RWMutex
-	resources map[string]model.Resource
-	synced    bool
-	rv        uint64
-	counts    map[accessTuple]map[model.Status]int
-	countsRV  uint64
-
-	reqMu   sync.Mutex
-	pending map[string]*pendingRequest
-	nextID  atomic.Uint64
+	reqs requestTable
 
 	done      chan struct{}
 	closeOnce sync.Once
@@ -77,8 +72,71 @@ type pendingRequest struct {
 	chunks chan protocol.LogChunk // stream only
 }
 
+// requestTable correlates request ids with their pending replies.
+type requestTable struct {
+	prefix  string
+	mu      sync.Mutex
+	pending map[string]*pendingRequest
+	nextID  atomic.Uint64
+}
+
+func (t *requestTable) register(stream bool) (string, *pendingRequest) {
+	id := t.prefix + strconv.FormatUint(t.nextID.Add(1), 36)
+	p := &pendingRequest{stream: stream, final: make(chan protocol.Response, 1)}
+	if stream {
+		p.chunks = make(chan protocol.LogChunk, streamBuffer)
+	}
+	t.mu.Lock()
+	if t.pending == nil {
+		t.pending = map[string]*pendingRequest{}
+	}
+	t.pending[id] = p
+	t.mu.Unlock()
+	return id, p
+}
+
+func (t *requestTable) unregister(id string) {
+	t.mu.Lock()
+	delete(t.pending, id)
+	t.mu.Unlock()
+}
+
+// finish delivers the final reply of id; unknown ids are ignored.
+func (t *requestTable) finish(id string, resp protocol.Response) {
+	t.mu.Lock()
+	p, ok := t.pending[id]
+	delete(t.pending, id)
+	t.mu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case p.final <- resp:
+	default:
+	}
+}
+
+// chunk delivers one stream chunk. It reports false when the consumer is
+// too slow; the caller then ends the stream.
+func (t *requestTable) chunk(id string, c protocol.LogChunk) bool {
+	t.mu.Lock()
+	p, ok := t.pending[id]
+	t.mu.Unlock()
+	if !ok || !p.stream {
+		return true
+	}
+	select {
+	case p.chunks <- c:
+		return true
+	default:
+		return false
+	}
+}
+
 type sessionDeps struct {
-	bus     *bus
+	bus *bus
+	// emit receives the session's events; nil publishes them to bus.
+	emit    func(clusterSession, event)
 	metrics *metrics
 	rvSeq   *atomic.Uint64
 	log     *slog.Logger
@@ -87,28 +145,34 @@ type sessionDeps struct {
 
 func newSession(cluster string, hello protocol.Hello, tokenHash [32]byte, conn *websocket.Conn, d sessionDeps) *agentSession {
 	s := &agentSession{
+		clusterView: newClusterView(d.rvSeq),
 		cluster:     cluster,
-		hello:       hello,
+		info:        hello,
 		tokenHash:   tokenHash,
 		conn:        conn,
 		connectedAt: time.Now(),
 		log:         d.log.With("cluster", cluster),
-		bus:         d.bus,
+		emit:        d.emit,
 		metrics:     d.metrics,
-		rvSeq:       d.rvSeq,
 		limiter:     rate.NewLimiter(frameRate, frameBurst),
 		timeout:     d.timeout,
-		resources:   map[string]model.Resource{},
-		pending:     map[string]*pendingRequest{},
+		reqs:        requestTable{prefix: "h"},
 		done:        make(chan struct{}),
+	}
+	if s.emit == nil {
+		b := d.bus
+		s.emit = func(_ clusterSession, e event) { b.publish(e) }
 	}
 	if s.timeout <= 0 {
 		s.timeout = defaultRequestTimeout
 	}
-	s.rv = s.rvSeq.Add(1)
 	s.lastSeen.Store(time.Now().UnixNano())
 	return s
 }
+
+func (s *agentSession) name() string          { return s.cluster }
+func (s *agentSession) hello() protocol.Hello { return s.info }
+func (s *agentSession) lastSeenAt() time.Time { return timeFromNanos(s.lastSeen.Load()) }
 
 // run reads frames until the connection fails, ctx ends or close is called.
 func (s *agentSession) run(ctx context.Context) error {
@@ -205,24 +269,34 @@ func (s *agentSession) handle(f protocol.Frame) error {
 		}
 		s.applyDelta(d)
 	case protocol.TypeResponse, protocol.TypeStreamEnd:
-		var resp protocol.Response
-		if len(f.Payload) > 0 {
-			if err := json.Unmarshal(f.Payload, &resp); err != nil {
-				resp = protocol.Response{Error: &protocol.Error{Code: 500, Message: "invalid response from agent"}}
-			}
-		}
-		s.finish(f.ID, resp)
+		s.reqs.finish(f.ID, decodeResponse(f.Payload, "agent"))
 	case protocol.TypeStream:
 		var chunk protocol.LogChunk
 		if err := json.Unmarshal(f.Payload, &chunk); err != nil {
 			return fmt.Errorf("decode stream chunk: %w", err)
 		}
-		s.chunk(f.ID, chunk)
+		if !s.reqs.chunk(f.ID, chunk) {
+			// The consumer is too slow: end its stream instead of blocking
+			// every other frame of this agent.
+			s.reqs.finish(f.ID, protocol.Response{Error: &protocol.Error{Code: 503, Message: "log stream consumer too slow"}})
+			go s.cancel(f.ID)
+		}
 	case protocol.TypePing:
 	default:
 		s.log.Debug("ignoring agent frame", "type", string(f.Type))
 	}
 	return nil
+}
+
+// decodeResponse reads a Response payload; an unreadable one becomes a 500.
+func decodeResponse(payload json.RawMessage, from string) protocol.Response {
+	var resp protocol.Response
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &resp); err != nil {
+			resp = protocol.Response{Error: &protocol.Error{Code: 500, Message: "invalid response from " + from}}
+		}
+	}
+	return resp
 }
 
 // sanitizeResource accepts only surfaced kinds from the kind table and
@@ -239,105 +313,18 @@ func sanitizeResource(r model.Resource) (model.Resource, bool) {
 }
 
 func (s *agentSession) applySnapshot(snap protocol.Snapshot) {
-	m := make(map[string]model.Resource, len(snap.Resources))
-	for _, r := range snap.Resources {
-		if r, ok := sanitizeResource(r); ok && len(m) < maxResources {
-			m[r.ID] = r
-		}
-	}
-	s.mu.Lock()
-	s.resources = m
-	s.synced = true
-	s.rv = s.rvSeq.Add(1)
-	s.mu.Unlock()
-	s.bus.publish(event{kind: evResync, cluster: s.cluster})
-	s.bus.publish(event{kind: evClusters})
+	s.replace(snap.Resources)
+	s.emit(s, event{kind: evResync, cluster: s.cluster})
+	s.emit(s, event{kind: evClusters})
 }
 
 func (s *agentSession) applyDelta(d protocol.Delta) {
-	upserts := make([]model.Resource, 0, len(d.Upserts))
-	var deletes []string
-	s.mu.Lock()
-	for _, r := range d.Upserts {
-		r, ok := sanitizeResource(r)
-		if !ok {
-			continue
-		}
-		if _, exists := s.resources[r.ID]; !exists && len(s.resources) >= maxResources {
-			continue
-		}
-		s.resources[r.ID] = r
-		upserts = append(upserts, r)
-	}
-	for _, id := range d.Deletes {
-		if _, ok := s.resources[id]; ok {
-			delete(s.resources, id)
-			deletes = append(deletes, id)
-		}
-	}
-	if len(upserts) > 0 || len(deletes) > 0 {
-		s.rv = s.rvSeq.Add(1)
-	}
-	s.mu.Unlock()
+	upserts, deletes := s.apply(d)
 	if len(upserts) == 0 && len(deletes) == 0 {
 		return
 	}
-	s.bus.publish(event{kind: evChange, cluster: s.cluster, upserts: upserts, deletes: deletes})
-	s.bus.publish(event{kind: evClusters})
-}
-
-// view returns a copy of every resource and the view's resourceVersion.
-func (s *agentSession) view() ([]model.Resource, string) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]model.Resource, 0, len(s.resources))
-	for _, r := range s.resources {
-		out = append(out, r)
-	}
-	return out, strconv.FormatUint(s.rv, 10)
-}
-
-func (s *agentSession) lookup(id string) (model.Resource, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	r, ok := s.resources[id]
-	return r, ok
-}
-
-func (s *agentSession) size() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.resources)
-}
-
-// tupleCounts returns resource counts by access tuple and status, cached
-// until the view changes. The returned map must not be modified.
-func (s *agentSession) tupleCounts() map[accessTuple]map[model.Status]int {
-	s.mu.RLock()
-	if s.counts != nil && s.countsRV == s.rv {
-		c := s.counts
-		s.mu.RUnlock()
-		return c
-	}
-	s.mu.RUnlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.counts != nil && s.countsRV == s.rv {
-		return s.counts
-	}
-	c := map[accessTuple]map[model.Status]int{}
-	for _, r := range s.resources {
-		t, ok := tupleOf(r.Ref)
-		if !ok {
-			continue
-		}
-		if c[t] == nil {
-			c[t] = map[model.Status]int{}
-		}
-		c[t][r.Status]++
-	}
-	s.counts, s.countsRV = c, s.rv
-	return c
+	s.emit(s, event{kind: evChange, cluster: s.cluster, upserts: upserts, deletes: deletes})
+	s.emit(s, event{kind: evClusters})
 }
 
 // --- requests -------------------------------------------------------------
@@ -366,55 +353,6 @@ func (s *agentSession) send(ctx context.Context, typ protocol.FrameType, id stri
 	return nil
 }
 
-func (s *agentSession) register(stream bool) (string, *pendingRequest) {
-	id := "h" + strconv.FormatUint(s.nextID.Add(1), 36)
-	p := &pendingRequest{stream: stream, final: make(chan protocol.Response, 1)}
-	if stream {
-		p.chunks = make(chan protocol.LogChunk, streamBuffer)
-	}
-	s.reqMu.Lock()
-	s.pending[id] = p
-	s.reqMu.Unlock()
-	return id, p
-}
-
-func (s *agentSession) unregister(id string) {
-	s.reqMu.Lock()
-	delete(s.pending, id)
-	s.reqMu.Unlock()
-}
-
-func (s *agentSession) finish(id string, resp protocol.Response) {
-	s.reqMu.Lock()
-	p, ok := s.pending[id]
-	delete(s.pending, id)
-	s.reqMu.Unlock()
-	if !ok {
-		return
-	}
-	select {
-	case p.final <- resp:
-	default:
-	}
-}
-
-func (s *agentSession) chunk(id string, c protocol.LogChunk) {
-	s.reqMu.Lock()
-	p, ok := s.pending[id]
-	s.reqMu.Unlock()
-	if !ok || !p.stream {
-		return
-	}
-	select {
-	case p.chunks <- c:
-	default:
-		// The consumer is too slow: end its stream instead of blocking
-		// every other frame of this agent.
-		s.finish(id, protocol.Response{Error: &protocol.Error{Code: 503, Message: "log stream consumer too slow"}})
-		go s.cancel(id)
-	}
-}
-
 // cancel tells the agent to stop request id. Failures are ignored: the
 // request ends with the connection anyway.
 func (s *agentSession) cancel(id string) {
@@ -432,8 +370,8 @@ func (s *agentSession) do(ctx context.Context, req protocol.Request) (json.RawMe
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-	id, p := s.register(false)
-	defer s.unregister(id)
+	id, p := s.reqs.register(false)
+	defer s.reqs.unregister(id)
 	if err := s.send(ctx, protocol.TypeRequest, id, req); err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", fleet.ErrDisconnected, s.cluster, err)
 	}
@@ -457,8 +395,8 @@ func (s *agentSession) stream(ctx context.Context, req protocol.Request, onChunk
 	if s.closed() {
 		return fmt.Errorf("%w: %s", fleet.ErrDisconnected, s.cluster)
 	}
-	id, p := s.register(true)
-	defer s.unregister(id)
+	id, p := s.reqs.register(true)
+	defer s.reqs.unregister(id)
 	if err := s.send(ctx, protocol.TypeRequest, id, req); err != nil {
 		return fmt.Errorf("%w: %s: %w", fleet.ErrDisconnected, s.cluster, err)
 	}
@@ -495,8 +433,5 @@ func (s *agentSession) stream(ctx context.Context, req protocol.Request, onChunk
 }
 
 func (s *agentSession) ctxError(ctx context.Context, op protocol.Op) error {
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("%w: %s request to cluster %s timed out", errUnavailable, op, s.cluster)
-	}
-	return ctx.Err()
+	return requestCtxError(ctx, op, s.cluster)
 }
