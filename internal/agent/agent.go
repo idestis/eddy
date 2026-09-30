@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 
 	"github.com/idestis/eddy/internal/config"
 	"github.com/idestis/eddy/internal/flux"
@@ -46,6 +47,17 @@ func Run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 type configureFunc func(h *Handler, hello *protocol.Hello, kube kubernetes.Interface, dyn dynamic.Interface)
 
 func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.Logger, configure configureFunc) error {
+	cfg.ApplyLimitDefaults()
+	// Control-plane protection: one token bucket for the agent's own
+	// clients (discovery, informers, SubjectAccessReviews) and another
+	// shared by every impersonating client, so neither many users nor many
+	// reviews can push the API server past QPS/Burst.
+	rc = rest.CopyConfig(rc)
+	rc.QPS, rc.Burst = cfg.KubeQPS, cfg.KubeBurst
+	impersonateBase := rest.CopyConfig(rc)
+	rc.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(cfg.KubeQPS, cfg.KubeBurst)
+	impersonateBase.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(cfg.KubeQPS, cfg.KubeBurst)
+
 	kube, err := kubernetes.NewForConfig(rc)
 	if err != nil {
 		return fmt.Errorf("agent: build client: %w", err)
@@ -71,8 +83,10 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 		return fmt.Errorf("agent: read server version: %w", err)
 	}
 	fluxVersion := flux.DetectFluxVersion(ctx, kube, flux.FluxNamespace)
-	logger.Info("agent: starting", "version", version.Version, "cluster", cfg.Cluster,
-		"kubernetes", info.GitVersion, "flux", fluxVersion, "kinds", served, "namespaces", cfg.Namespaces)
+	logger.Info("agent: starting", "version", version.Version, "cluster", cfg.Cluster, "instance", processInstance,
+		"kubernetes", info.GitVersion, "flux", fluxVersion, "kinds", served, "namespaces", cfg.Namespaces,
+		"limits", map[string]any{"qps": cfg.KubeQPS, "burst": cfg.KubeBurst, "concurrent": cfg.MaxConcurrent,
+			"logStreams": cfg.MaxLogStreams, "sar": cfg.MaxSARConcurrent})
 
 	c, err := NewCache(dyn, served, cfg.Namespaces, logger)
 	if err != nil {
@@ -81,9 +95,10 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 	h := &Handler{
 		Policy:      Policy{AllowedGroupPrefixes: cfg.AllowedGroupPrefixes, AllowedGroups: cfg.AllowedGroups, DenyUserPrefixes: cfg.DenyUserPrefixes},
 		Served:      served,
-		Impersonate: ImpersonatingFactory(rc, clientCacheSize, clientCacheTTL),
+		Impersonate: ImpersonatingFactory(impersonateBase, clientCacheSize, clientCacheTTL),
 		Self:        kube,
 		Logger:      logger,
+		MaxSAR:      cfg.MaxSARConcurrent,
 	}
 	sess := &Session{
 		URL:     cfg.HubURL,
@@ -96,9 +111,11 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 			FluxVersion:       fluxVersion,
 			Namespaces:        cfg.Namespaces,
 		},
-		Source:  c,
-		Handler: h,
-		Logger:  logger,
+		Source:        c,
+		Handler:       h,
+		Logger:        logger,
+		MaxConcurrent: cfg.MaxConcurrent,
+		MaxLogStreams: cfg.MaxLogStreams,
 	}
 	if configure != nil {
 		configure(h, &sess.Hello, kube, dyn)

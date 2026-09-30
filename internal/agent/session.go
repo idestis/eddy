@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -24,6 +26,7 @@ const (
 	defaultDeltaInterval  = 250 * time.Millisecond
 	defaultPingInterval   = 20 * time.Second
 	defaultMaxConcurrent  = 16
+	defaultMaxLogStreams  = 8
 	dialTimeout           = 15 * time.Second
 	writeTimeout          = 30 * time.Second
 	pingTimeout           = 10 * time.Second
@@ -70,9 +73,29 @@ type Session struct {
 
 	DeltaInterval time.Duration
 	PingInterval  time.Duration
+	// MaxConcurrent caps requests in flight; MaxLogStreams caps the log
+	// streams among them. Excess requests get a 503.
 	MaxConcurrent int
+	MaxLogStreams int
+	// Instance identifies this agent process to the hub (Hello.Instance);
+	// empty uses one random id per process.
+	Instance string
 
 	connected atomic.Bool
+	seq       atomic.Int64
+}
+
+// processInstance is Hello.Instance for every session of this process.
+var processInstance = newInstanceID()
+
+func newInstanceID() string {
+	var b [12]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		// crypto/rand does not fail on supported platforms; fall back to a
+		// time-based id rather than refusing to start.
+		return fmt.Sprintf("t%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // Connected reports whether a hub connection is up and its snapshot was sent.
@@ -152,6 +175,11 @@ func (s *Session) connectOnce(ctx context.Context) error {
 
 	hello := s.Hello
 	hello.Protocol, hello.Cluster = protocol.Version, s.Cluster
+	hello.Instance = s.Instance
+	if hello.Instance == "" {
+		hello.Instance = processInstance
+	}
+	hello.Seq = s.seq.Add(1)
 	if err := c.send(ctx, protocol.TypeHello, "", hello); err != nil {
 		return err
 	}
@@ -250,6 +278,7 @@ func (s *Session) pingLoop(ctx context.Context, c *sessionConn) error {
 
 func (s *Session) readLoop(ctx context.Context, c *sessionConn, inflight *sync.WaitGroup) error {
 	sem := make(chan struct{}, orDefault(s.MaxConcurrent, defaultMaxConcurrent))
+	logSem := make(chan struct{}, orDefault(s.MaxLogStreams, defaultMaxLogStreams))
 	var mu sync.Mutex
 	cancels := map[string]context.CancelFunc{}
 	for {
@@ -280,6 +309,20 @@ func (s *Session) readLoop(ctx context.Context, c *sessionConn, inflight *sync.W
 				s.reject(ctx, c, f, &protocol.Error{Code: 503, Message: "agent: too many concurrent requests"})
 				continue
 			}
+			var op struct {
+				Op protocol.Op `json:"op"`
+			}
+			_ = json.Unmarshal(f.Payload, &op)
+			isLogs := op.Op == protocol.OpLogs
+			if isLogs {
+				select {
+				case logSem <- struct{}{}:
+				default:
+					<-sem
+					s.reject(ctx, c, f, &protocol.Error{Code: 503, Message: "agent: too many concurrent log streams"})
+					continue
+				}
+			}
 			rctx, cancel := context.WithCancel(ctx)
 			mu.Lock()
 			cancels[f.ID] = cancel
@@ -290,6 +333,9 @@ func (s *Session) readLoop(ctx context.Context, c *sessionConn, inflight *sync.W
 					delete(cancels, f.ID)
 					mu.Unlock()
 					cancel()
+					if isLogs {
+						<-logSem
+					}
 					<-sem
 				}()
 				s.serve(rctx, c, f)

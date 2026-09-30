@@ -165,6 +165,9 @@ func TestSessionRoundTrip(t *testing.T) {
 	if f.Type != protocol.TypeHello || hello.Protocol != protocol.Version || hello.Cluster != "prod-eu" || hello.AgentVersion != "test" {
 		t.Fatalf("hello %+v %+v", f, hello)
 	}
+	if hello.Instance == "" || hello.Instance != processInstance || hello.Seq != 1 {
+		t.Fatalf("hello instance %q seq %d, want the process instance and seq 1", hello.Instance, hello.Seq)
+	}
 
 	f = hub.read()
 	if f.Type != protocol.TypeSnapshot {
@@ -249,8 +252,11 @@ func TestSessionRoundTrip(t *testing.T) {
 	b := <-conns
 	defer close(b.closed)
 	hub2 := hubConn{t: t, conn: b.conn}
-	if f := hub2.read(); f.Type != protocol.TypeHello {
-		t.Fatalf("after reconnect want hello, got %s", f.Type)
+	f = hub2.read()
+	var hello2 protocol.Hello
+	_ = json.Unmarshal(f.Payload, &hello2)
+	if f.Type != protocol.TypeHello || hello2.Instance != hello.Instance || hello2.Seq != 2 {
+		t.Fatalf("after reconnect want hello from the same instance with seq 2, got %s %+v", f.Type, hello2)
 	}
 	if f := hub2.read(); f.Type != protocol.TypeSnapshot {
 		t.Fatalf("after reconnect want snapshot, got %s", f.Type)
@@ -289,5 +295,69 @@ func TestSplitAndBackoff(t *testing.T) {
 	}
 	if backoff(0) > backoffBase {
 		t.Fatal("first backoff too long")
+	}
+}
+
+// TestLogStreamCap checks that log streams beyond MaxLogStreams are refused
+// with a 503 StreamEnd while other requests still run.
+func TestLogStreamCap(t *testing.T) {
+	conns := make(chan *websocket.Conn, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		conns <- c
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+	s := &Session{
+		URL: "ws" + strings.TrimPrefix(srv.URL, "http"), Cluster: "c", Token: "t",
+		Source: &fakeSource{}, Handler: fakeHandler{}, Logger: discardLogger(),
+		PingInterval: time.Hour, MaxLogStreams: 1,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	hub := hubConn{t: t, conn: <-conns}
+	hub.read() // hello
+	hub.read() // snapshot
+	pod := model.Ref{Kind: "Pod", Namespace: "apps", Name: "p"}
+	args, _ := json.Marshal(protocol.LogsArgs{Follow: true})
+	hub.send(protocol.TypeRequest, "l1", protocol.Request{Op: protocol.OpLogs, Identity: alice, Target: pod, Args: args})
+	for range 3 {
+		if f := hub.read(); f.Type != protocol.TypeStream || f.ID != "l1" {
+			t.Fatalf("first stream: %+v", f)
+		}
+	}
+	hub.send(protocol.TypeRequest, "l2", protocol.Request{Op: protocol.OpLogs, Identity: alice, Target: pod, Args: args})
+	f := hub.read()
+	var resp protocol.Response
+	_ = json.Unmarshal(f.Payload, &resp)
+	if f.Type != protocol.TypeStreamEnd || f.ID != "l2" || resp.Error == nil || resp.Error.Code != 503 {
+		t.Fatalf("second stream: %+v %+v, want a 503 stream end", f, resp)
+	}
+	hub.send(protocol.TypeRequest, "y1", protocol.Request{Op: protocol.OpYAML, Identity: alice, Target: pod})
+	if f := hub.read(); f.Type != protocol.TypeResponse || f.ID != "y1" {
+		t.Fatalf("yaml while a stream runs: %+v", f)
+	}
+	hub.send(protocol.TypeCancel, "l1", nil)
+	if f := hub.read(); f.Type != protocol.TypeStreamEnd || f.ID != "l1" {
+		t.Fatalf("first stream end: %+v", f)
+	}
+	// The slot is released just after the stream end is sent, so retry.
+	for i := 0; ; i++ {
+		id := fmt.Sprintf("l3-%d", i)
+		hub.send(protocol.TypeRequest, id, protocol.Request{Op: protocol.OpLogs, Identity: alice, Target: pod, Args: args})
+		f := hub.read()
+		if f.Type == protocol.TypeStream && f.ID == id {
+			break
+		}
+		if f.Type != protocol.TypeStreamEnd || i > 50 {
+			t.Fatalf("a freed slot was not reused: %+v", f)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

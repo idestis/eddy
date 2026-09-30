@@ -56,6 +56,15 @@ type Hello struct {
 	ReadOnly bool `json:"readOnly,omitempty"`
 	// Context is the kubeconfig context a local-mode agent serves.
 	Context string `json:"context,omitempty"`
+	// Instance is a random id chosen once per agent process. Several
+	// instances of one cluster (agent replicas) connect side by side; the
+	// hub uses the oldest healthy one and keeps the others as standbys.
+	Instance string `json:"instance,omitempty"`
+	// Seq counts the process's dials, starting at 1. A connection from the
+	// same Instance with a higher Seq replaces the older one on every hub
+	// replica. Agents that send no Instance are treated as one instance
+	// whose newest connection wins.
+	Seq int64 `json:"seq,omitempty"`
 }
 
 // ModeLocal is the Hello.Mode of a local-mode agent.
@@ -166,3 +175,35 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return e.Message }
+
+// ---- hub peer channel (peer/v1, ADR-0004) ----
+
+// PeerVersion is the version in the peer endpoint path /peer/v<PeerVersion>/connect.
+// Changes within one version are additive only; a peer ignores frame types
+// it does not know.
+const PeerVersion = "1"
+
+// Frame types used only between hub replicas. Every other frame on the peer
+// channel is one of the agent frame types above, relayed unchanged.
+const (
+	// TypeSubscribe asks the peer that holds an agent session for Cluster to
+	// stream that cluster's view: a Hello, a Snapshot (chunked like an
+	// agent's), then Deltas.
+	TypeSubscribe FrameType = "subscribe"
+	// TypeUnsubscribe stops a subscription. Sent by the subscriber it means
+	// "stop sending"; sent by the owner with ID PeerEnded it means the owner
+	// no longer holds an agent session for Cluster.
+	TypeUnsubscribe FrameType = "unsubscribe"
+)
+
+// PeerEnded is the Frame.ID of an owner-initiated TypeUnsubscribe.
+const PeerEnded = "ended"
+
+// PeerFrame is the envelope of every message on the peer channel. Cluster
+// names the cluster Frame is about; it is empty for link-level pings.
+// Request frames carry the original caller's Identity, which the owner and
+// then the agent validate again.
+type PeerFrame struct {
+	Cluster string `json:"cluster,omitempty"`
+	Frame   Frame  `json:"frame"`
+}

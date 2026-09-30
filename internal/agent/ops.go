@@ -61,6 +61,24 @@ type Handler struct {
 	review accessReviewer
 	// readOnly, when set, refuses every write op with a 403 carrying it.
 	readOnly string
+
+	// MaxSAR caps SubjectAccessReviews in flight across all requests
+	// (default 8).
+	MaxSAR  int
+	sarOnce sync.Once
+	sarSem  chan struct{}
+}
+
+// sarSlots returns the agent-wide SubjectAccessReview semaphore.
+func (h *Handler) sarSlots() chan struct{} {
+	h.sarOnce.Do(func() {
+		n := h.MaxSAR
+		if n <= 0 {
+			n = 8
+		}
+		h.sarSem = make(chan struct{}, n)
+	})
+	return h.sarSem
 }
 
 // accessReviewer answers one access check for id.
@@ -322,10 +340,15 @@ func (h *Handler) access(ctx context.Context, id protocol.Identity, args protoco
 	allowed := make([]bool, len(args.Checks))
 	errs := make([]error, len(args.Checks))
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8)
+	sem := h.sarSlots()
 	for i, c := range args.Checks {
 		wg.Go(func() {
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				errs[i] = ctx.Err()
+				return
+			}
 			defer func() { <-sem }()
 			allowed[i], errs[i] = review(ctx, id, c)
 		})
