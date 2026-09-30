@@ -10,8 +10,8 @@
 <text x="80" y="290" fill="#ECEEF2" font-family="Geist, Helvetica, Arial, sans-serif" font-size="68" font-weight="700" letter-spacing="-2">A fast, keyboard-first,</text>
 <text x="80" y="370" fill="#ECEEF2" font-family="Geist, Helvetica, Arial, sans-serif" font-size="68" font-weight="700" letter-spacing="-2">multi-cluster UI for Flux.</text>
 <text x="80" y="450" fill="#B9BFCB" font-family="Geist, Helvetica, Arial, sans-serif" font-size="30">Open source. Agents dial out. Kubernetes RBAC decides.</text>
-<rect x="80" y="508" width="250" height="44" rx="22" fill="#14171C" stroke="#363C47"/>
-<text x="205" y="537" text-anchor="middle" fill="#B9BFCB" font-family="Menlo, Consolas, monospace" font-size="18">v0.1 MVP · pre-release</text>
+<rect x="80" y="508" width="230" height="44" rx="22" fill="#14171C" stroke="#363C47"/>
+<text x="195" y="537" text-anchor="middle" fill="#B9BFCB" font-family="Menlo, Consolas, monospace" font-size="18">v1.0 · early release</text>
 <g font-family="Menlo, Consolas, monospace" font-size="20" fill="#ECEEF2"><rect x="840" y="508" width="60" height="44" rx="8" fill="#14171C" stroke="#363C47"/><text x="870" y="537" text-anchor="middle">⌘K</text></g>
 <rect x="920" y="508" width="200" height="44" rx="8" fill="#14171C" stroke="#363C47"/>
 <text x="1020" y="537" text-anchor="middle" fill="#ECEEF2" font-family="Menlo, Consolas, monospace" font-size="18">idestis/eddy</text>

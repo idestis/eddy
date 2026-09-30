@@ -1,0 +1,131 @@
+@import "tailwindcss";
+@import "./theme.css";
+@import "./mock.css";
+@import "./prose.css";
+
+@font-face {
+  font-family: "Geist";
+  src: url("/assets/fonts/geist-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/assets/fonts/geist-mono-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+    scroll-padding-top: 76px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+  body {
+    @apply bg-page font-sans text-base leading-relaxed text-ink antialiased;
+    overflow-x: clip;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply leading-tight tracking-tight;
+  }
+  h1,
+  h2 {
+    text-wrap: balance;
+  }
+  a {
+    @apply text-accent underline-offset-[3px];
+  }
+  a:hover {
+    text-decoration-thickness: 2px;
+  }
+  :focus-visible {
+    @apply rounded-md outline-2 outline-offset-2 outline-accent;
+  }
+  code {
+    @apply rounded-md border border-line bg-surface-sunken px-[0.35em] py-[0.1em] font-mono text-[0.88em] [overflow-wrap:anywhere];
+  }
+  kbd {
+    @apply inline-block rounded-[5px] border border-b-2 border-line-strong bg-surface px-[0.45em] py-[0.2em] align-baseline font-mono text-[0.78em] leading-none whitespace-nowrap text-ink-2;
+  }
+  pre code {
+    @apply border-0 bg-transparent p-0;
+  }
+}
+
+@layer components {
+  .wrap {
+    @apply mx-auto w-full max-w-[1080px] px-4 sm:px-6;
+  }
+  .btn {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-transparent px-5 py-2.5 text-[0.97rem] font-semibold no-underline transition-transform hover:-translate-y-px hover:no-underline;
+  }
+  .btn-primary {
+    @apply bg-linear-to-br from-accent to-accent-2 text-on-accent shadow-[0_8px_22px_-10px_var(--color-accent-2)];
+  }
+  .btn-secondary {
+    @apply border-line-strong bg-surface text-ink;
+  }
+  .card {
+    @apply min-w-0 rounded-2xl border border-line bg-surface p-5 sm:p-6;
+  }
+  .card > p {
+    @apply mb-3 text-ink-2;
+  }
+  .card > :last-child {
+    @apply mb-0;
+  }
+  .hero-bg {
+    background:
+      radial-gradient(900px 520px at -5% -10%, var(--color-glow-1), transparent 65%),
+      radial-gradient(800px 520px at 105% 0%, var(--color-glow-2), transparent 65%),
+      radial-gradient(700px 500px at 60% 110%, var(--color-glow-3), transparent 65%);
+  }
+  .grad-text {
+    @apply bg-linear-to-r from-accent from-0% via-accent-2 via-55% to-prod bg-clip-text text-transparent;
+  }
+  .stripes {
+    background: repeating-linear-gradient(-45deg, var(--color-prod) 0 5px, var(--color-stripe) 5px 10px);
+  }
+  .keys li:nth-child(-n + 2) kbd {
+    animation: press 4s infinite;
+  }
+  .keys li:nth-child(2) kbd {
+    animation-delay: 0.6s;
+  }
+  .fine {
+    @apply text-sm text-ink-3;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes press {
+  0%,
+  12%,
+  100% {
+    transform: none;
+  }
+  6% {
+    transform: translateY(1px);
+  }
+}
