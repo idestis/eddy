@@ -371,28 +371,10 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
         }
       }}
     >
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3 text-12-5 text-ink-3">
-        About
-        <span className="inline-flex min-h-[30px] max-w-full items-center gap-[7px] rounded-full border border-line-strong bg-surface py-1 pr-1.5 pl-[9px] font-mono text-12 text-ink">
-          <span className="size-[7px] shrink-0 rounded-full bg-c" />
-          <span className="truncate">
-            {target ? `${kindInfo(target.kind).abbr} ${target.name}` : `all of ${cluster.name}`}
-          </span>
-          {resource && (
-            <button
-              type="button"
-              className="inline-flex size-[22px] items-center justify-center rounded-full text-ink-3 hover:bg-surface-sunken"
-              onClick={() => setWholeCluster(!wholeCluster)}
-              aria-label={
-                wholeCluster ? `Ask about ${resource.name} instead` : "Ask about the whole cluster instead"
-              }
-              title={wholeCluster ? `Ask about ${resource.name}` : "Ask about the whole cluster"}
-            >
-              <Icon name={wholeCluster ? "arrowUp" : "x"} className="size-3.5" />
-            </button>
-          )}
-        </span>
-        <span className="ml-auto flex items-center gap-1.5">
+      <div className="flex shrink-0 flex-col gap-2 border-b border-line px-4 py-3 text-12-5 text-ink-3">
+        {/* Conversation controls first, then what the question is about, so the target is
+            visible right above the conversation it applies to. */}
+        <div className="flex items-center justify-end gap-1.5">
           <AskHistory cluster={cluster.name} target={target} onOpen={(t) => void openThread(t)} />
           <button
             type="button"
@@ -403,7 +385,29 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
             <Icon name="plus" />
             New chat
           </button>
-        </span>
+        </div>
+        <div className="flex min-w-0 items-center gap-2">
+          About
+          <span className="inline-flex min-h-[30px] min-w-0 max-w-full items-center gap-[7px] rounded-full border border-line-strong bg-surface py-1 pr-1.5 pl-[9px] font-mono text-12 text-ink">
+            <span className="size-[7px] shrink-0 rounded-full bg-c" />
+            <span className="truncate">
+              {target ? `${kindInfo(target.kind).abbr} ${target.name}` : `all of ${cluster.name}`}
+            </span>
+            {resource && (
+              <button
+                type="button"
+                className="inline-flex size-[22px] items-center justify-center rounded-full text-ink-3 hover:bg-surface-sunken"
+                onClick={() => setWholeCluster(!wholeCluster)}
+                aria-label={
+                  wholeCluster ? `Ask about ${resource.name} instead` : "Ask about the whole cluster instead"
+                }
+                title={wholeCluster ? `Ask about ${resource.name}` : "Ask about the whole cluster"}
+              >
+                <Icon name={wholeCluster ? "arrowUp" : "x"} className="size-3.5" />
+              </button>
+            )}
+          </span>
+        </div>
       </div>
       {/* The conversation sits at the bottom, like a chat, and grows upwards. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4" ref={log} aria-live="polite">
