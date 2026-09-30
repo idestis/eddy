@@ -36,7 +36,7 @@ tasks:
   lint:
     desc: gofmt, go vet, staticcheck and Biome
     cmds:
-      - test -z "$(gofmt -l cmd internal api)" || (gofmt -l cmd internal api && exit 1)
+      - test -z "$(gofmt -l cmd internal)" || (gofmt -l cmd internal && exit 1)
       - go vet ./...
       - go run {{.STATICCHECK}} ./...
       - task: ui:lint

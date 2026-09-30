@@ -12,6 +12,7 @@ WORKDIR /src/web
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
+COPY design/ /src/design/
 COPY web/ ./
 RUN pnpm run build
 
@@ -23,7 +24,6 @@ ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY api/ api/
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY --from=web /src/internal/ui/dist/ internal/ui/dist/
