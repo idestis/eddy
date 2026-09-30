@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eddy-gitops/eddy/internal/config"
+	"github.com/idestis/eddy/internal/config"
 )
 
 func TestFakeLoginRefusedWithoutDevBuild(t *testing.T) {

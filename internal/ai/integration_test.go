@@ -7,12 +7,12 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/runtimeflags"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/memory"
-	"github.com/eddy-gitops/eddy/internal/threads"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/runtimeflags"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/memory"
+	"github.com/idestis/eddy/internal/threads"
 )
 
 // TestAskWithThreadsService runs Ask against the real threads service to

@@ -3,7 +3,7 @@ version: "3"
 vars:
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
-  LDFLAGS: -s -w -X github.com/eddy-gitops/eddy/internal/version.Version={{.VERSION}}
+  LDFLAGS: -s -w -X github.com/idestis/eddy/internal/version.Version={{.VERSION}}
   STATICCHECK: honnef.co/go/tools/cmd/staticcheck@v0.8.1
 
 tasks:
@@ -81,8 +81,8 @@ tasks:
   images:
     desc: Build the hub and agent container images
     cmds:
-      - docker build --target hub -t ghcr.io/eddy-gitops/eddy-hub:{{.VERSION}} .
-      - docker build --target agent -t ghcr.io/eddy-gitops/eddy-agent:{{.VERSION}} .
+      - docker build --target hub -t ghcr.io/idestis/eddy-hub:{{.VERSION}} .
+      - docker build --target agent -t ghcr.io/idestis/eddy-agent:{{.VERSION}} .
 
   charts:
     desc: Lint and template the Helm charts

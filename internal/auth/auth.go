@@ -23,10 +23,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/audit"
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/audit"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // Provider names recorded on principals, sessions and tokens.

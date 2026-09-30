@@ -4,8 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // eventKind enumerates what the bus carries to SSE clients.

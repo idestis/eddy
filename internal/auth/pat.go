@@ -14,8 +14,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // PAT format: eddy_pat_<id:12><secret:32><crc:6>, all base62. The CRC is

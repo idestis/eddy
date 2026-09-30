@@ -6,7 +6,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/eddy-gitops/eddy/internal/model"
+	"github.com/idestis/eddy/internal/model"
 )
 
 type obj = map[string]any

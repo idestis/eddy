@@ -15,8 +15,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 // Session timings. Tests shorten them through the Session fields.

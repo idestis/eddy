@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // Run executes the conformance suite against the backend built by newStore.

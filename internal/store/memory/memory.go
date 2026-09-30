@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/internal/storeutil"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/internal/storeutil"
 )
 
 // Store is the in-memory backend. The zero value is not usable; use New.

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/eddy-gitops/eddy/internal/config"
+	"github.com/idestis/eddy/internal/config"
 )
 
 // ClusterSpec is what the hub knows about a registered cluster from its

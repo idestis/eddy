@@ -10,14 +10,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/audit"
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/redact"
-	"github.com/eddy-gitops/eddy/internal/runtimeflags"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/audit"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/redact"
+	"github.com/idestis/eddy/internal/runtimeflags"
+	"github.com/idestis/eddy/internal/store"
 )
 
 var (

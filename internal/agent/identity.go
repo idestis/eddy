@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 // Policy is the agent's own check on who it may impersonate. The hub applies

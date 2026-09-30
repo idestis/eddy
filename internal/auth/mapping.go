@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/eddy-gitops/eddy/internal/config"
+	"github.com/idestis/eddy/internal/config"
 )
 
 // This file is the single identity mapping used by every provider (local,

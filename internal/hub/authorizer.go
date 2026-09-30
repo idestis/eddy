@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/flux"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/flux"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 // Authorizer cache settings (SPEC: a SAR per (group, resource, namespace),

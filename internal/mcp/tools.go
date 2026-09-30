@@ -16,12 +16,12 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/redact"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/threads"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/redact"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/threads"
 )
 
 // Per-tool limits.

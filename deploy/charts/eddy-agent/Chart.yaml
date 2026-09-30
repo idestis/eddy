@@ -5,12 +5,12 @@ type: application
 version: 1.0.0
 appVersion: "1.0.0"
 kubeVersion: ">=1.27.0-0"
-home: https://github.com/eddy-gitops/eddy
+home: https://github.com/idestis/eddy
 sources:
-  - https://github.com/eddy-gitops/eddy
+  - https://github.com/idestis/eddy
 keywords: [fluxcd, gitops, ui, multi-cluster]
 maintainers:
   - name: Eddy maintainers
-    url: https://github.com/eddy-gitops/eddy
+    url: https://github.com/idestis/eddy
 annotations:
   artifacthub.io/license: Apache-2.0

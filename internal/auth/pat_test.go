@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/store"
 )
 
 var scannerRE = regexp.MustCompile(`^eddy_pat_[0-9A-Za-z]{50}$`)

@@ -3,9 +3,9 @@ package memory_test
 import (
 	"testing"
 
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/memory"
-	"github.com/eddy-gitops/eddy/internal/store/storetest"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/memory"
+	"github.com/idestis/eddy/internal/store/storetest"
 )
 
 func TestConformance(t *testing.T) {

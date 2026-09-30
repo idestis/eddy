@@ -10,8 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/eddy-gitops/eddy/internal/protocol"
-	"github.com/eddy-gitops/eddy/internal/version"
+	"github.com/idestis/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/version"
 )
 
 // metrics is a tiny Prometheus text-format exposition. The hub exposes a

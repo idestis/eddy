@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/config"
+	"github.com/idestis/eddy/internal/config"
 )
 
 func testLimiter(c *fakeClock) *loginLimiter {

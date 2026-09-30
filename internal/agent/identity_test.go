@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 func TestPolicyValidate(t *testing.T) {

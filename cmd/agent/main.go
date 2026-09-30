@@ -16,9 +16,9 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/eddy-gitops/eddy/internal/agent"
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/version"
+	"github.com/idestis/eddy/internal/agent"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/version"
 )
 
 func main() {

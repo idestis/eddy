@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 // ErrBadRequest marks malformed input detected by the hub (HTTP 400).

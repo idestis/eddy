@@ -8,8 +8,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/model"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/model"
 )
 
 var (

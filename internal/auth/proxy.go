@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // proxyIdentity is a user asserted by a trusted reverse proxy.

@@ -25,8 +25,8 @@ import (
 	msqlite "modernc.org/sqlite" // also registers the "sqlite" database/sql driver
 	sqlite3 "modernc.org/sqlite/lib"
 
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/internal/storeutil"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/internal/storeutil"
 )
 
 // DefaultPath is where the Helm chart mounts the database.

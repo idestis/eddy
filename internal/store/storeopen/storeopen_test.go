@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/store/memory"
-	"github.com/eddy-gitops/eddy/internal/store/sqlite"
-	"github.com/eddy-gitops/eddy/internal/store/storeopen"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/store/memory"
+	"github.com/idestis/eddy/internal/store/sqlite"
+	"github.com/idestis/eddy/internal/store/storeopen"
 )
 
 func TestOpen(t *testing.T) {

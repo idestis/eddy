@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/threads"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/threads"
 )
 
 // CreateInput is threads.CreateInput.

@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/eddy-gitops/eddy/internal/flux"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/threads"
+	"github.com/idestis/eddy/internal/flux"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/threads"
 )
 
 // Message paging (docs/api.md): 100 by default, at most 500.

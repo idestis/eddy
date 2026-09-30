@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 func testSession(b *bus) *agentSession {

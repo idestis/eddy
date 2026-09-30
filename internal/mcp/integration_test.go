@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/memory"
-	"github.com/eddy-gitops/eddy/internal/threads"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/memory"
+	"github.com/idestis/eddy/internal/threads"
 )
 
 // TestThreadsServiceIntegration runs thread tools against the real threads

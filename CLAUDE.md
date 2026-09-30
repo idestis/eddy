@@ -5,7 +5,7 @@ every file is written for outside contributors.
 
 ## Layout
 
-- Go module `github.com/eddy-gitops/eddy` (Go 1.26). There are two binaries:
+- Go module `github.com/idestis/eddy` (Go 1.26). There are two binaries:
   - `cmd/hub`: the hub, which runs in the management cluster.
   - `cmd/agent`: the agent, which runs in every workload cluster and dials out to the hub.
 - Shared contracts. Change them only deliberately, and update `docs/api.md` in the same change:

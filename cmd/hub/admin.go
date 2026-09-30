@@ -14,13 +14,13 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/eddy-gitops/eddy/internal/audit"
-	"github.com/eddy-gitops/eddy/internal/auth"
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/hub"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/storeopen"
+	"github.com/idestis/eddy/internal/audit"
+	"github.com/idestis/eddy/internal/auth"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/hub"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/storeopen"
 )
 
 // hashPassword prints the argon2id hash of a password read from stdin: with

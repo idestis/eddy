@@ -36,7 +36,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/eddy-gitops/eddy-agent
+  repository: ghcr.io/idestis/eddy-agent
   tag: ""             # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 imagePullSecrets: []

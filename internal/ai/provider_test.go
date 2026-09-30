@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
-	"github.com/eddy-gitops/eddy/internal/config"
+	"github.com/idestis/eddy/internal/config"
 )
 
 type fakeConverser struct {

@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/eddy-gitops/eddy/internal/config"
+	"github.com/idestis/eddy/internal/config"
 )
 
 const (

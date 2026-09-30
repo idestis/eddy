@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/internal/storeutil"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/internal/storeutil"
 )
 
 func encodeStrings(v []string) (string, error) {

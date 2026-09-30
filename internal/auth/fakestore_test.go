@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // fakeStore implements store.Store with in-memory sessions and tokens only.

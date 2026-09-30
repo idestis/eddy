@@ -11,8 +11,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 // Log streaming limits. A chunk is flushed every logFlushEvery, or sooner at

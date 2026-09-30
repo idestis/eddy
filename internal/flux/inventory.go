@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/eddy-gitops/eddy/internal/model"
+	"github.com/idestis/eddy/internal/model"
 )
 
 // ParseInventoryID parses a Kustomization status.inventory.entries[].id,

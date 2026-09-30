@@ -28,3 +28,6 @@ hub.local.yaml
 # Built SPA (embedded by the hub); keep the placeholder
 internal/ui/dist/*
 !internal/ui/dist/.gitkeep
+
+# Playwright MCP scratch output
+.playwright-mcp/

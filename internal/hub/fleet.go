@@ -11,14 +11,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/eddy-gitops/eddy/internal/audit"
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/flux"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/protocol"
-	"github.com/eddy-gitops/eddy/internal/redact"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/audit"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/flux"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/redact"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // Log limits for pod logs requested through the hub.

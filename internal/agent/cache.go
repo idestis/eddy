@@ -16,8 +16,8 @@ import (
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/eddy-gitops/eddy/internal/flux"
-	"github.com/eddy-gitops/eddy/internal/model"
+	"github.com/idestis/eddy/internal/flux"
+	"github.com/idestis/eddy/internal/model"
 )
 
 // podControllerIndex indexes Pods by "<namespace>/<name>" of their

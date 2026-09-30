@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
-	"github.com/eddy-gitops/eddy/internal/redact"
+	"github.com/idestis/eddy/internal/redact"
 )
 
 // Result is the envelope of every successful tool result. Content from

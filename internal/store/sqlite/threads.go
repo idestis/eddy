@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/internal/storeutil"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/internal/storeutil"
 )
 
 // eq is an optional "column = value" filter; empty values are wildcards.

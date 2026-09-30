@@ -46,7 +46,7 @@ Agent endpoint: {{ $agentsURL }}
 Register each workload cluster by running this against THAT cluster:
 {{ range .Values.clusters }}
   # {{ .name }}
-  helm install eddy-agent oci://ghcr.io/eddy-gitops/charts/eddy-agent --version {{ $.Chart.Version }} \
+  helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version {{ $.Chart.Version }} \
     --kube-context <{{ .name }}-context> --namespace eddy-system --create-namespace \
     --set cluster.name={{ .name }} \
     --set hub.url={{ $agentsURL }} \

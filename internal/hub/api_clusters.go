@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/version"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/version"
 )
 
 type features struct {

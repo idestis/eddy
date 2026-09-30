@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/ai"
-	"github.com/eddy-gitops/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/ai"
+	"github.com/idestis/eddy/internal/identity"
 )
 
 func (a *api) handleAsk(w http.ResponseWriter, r *http.Request) {

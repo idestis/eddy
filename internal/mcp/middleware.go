@@ -10,9 +10,9 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/redact"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/redact"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // maxAuditArgs caps the redacted arguments stored per audit event.

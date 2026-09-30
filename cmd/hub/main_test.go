@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eddy-gitops/eddy/internal/store/sqlite"
+	"github.com/idestis/eddy/internal/store/sqlite"
 )
 
 func TestVersion(t *testing.T) {

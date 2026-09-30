@@ -256,3 +256,4 @@ Security invariants (never break):
 - Config keys follow `internal/config/hub.go`; where this ADR shows a nested or different key (for example `mcp.threads.writeScope`), the Go key (`auth.tokens.threadWriteScope`) is authoritative.
 - Ask AI audit events use `via: askai` (`identity.ViaAskAI`). `maxContextBytes`, `globalDailyAsks` and `auditPrompts` are not implemented in v0.1.
 - The MCP per-token call limit applies to `tools/call`. The concurrency limit (4) applies to every POST.
+- **Agent listener TLS:** when `listen.agentTLS` is unset, the hub accepts plain HTTP on `:8443` and assumes TLS terminates at the NLB, ingress or PrivateLink endpoint in front of it. It logs a startup WARN. With `agentTLS` set, it serves TLS 1.2+ itself. Agents still require `wss://` unless `allowInsecure` is set.

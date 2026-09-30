@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/sqlite"
-	"github.com/eddy-gitops/eddy/internal/store/storetest"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/sqlite"
+	"github.com/idestis/eddy/internal/store/storetest"
 )
 
 func TestConformance(t *testing.T) {

@@ -22,10 +22,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/flux"
-	"github.com/eddy-gitops/eddy/internal/protocol"
-	"github.com/eddy-gitops/eddy/internal/version"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/flux"
+	"github.com/idestis/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/version"
 )
 
 // Impersonated clients are cached per identity.

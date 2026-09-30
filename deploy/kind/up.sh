@@ -75,10 +75,10 @@ spec:
 YAML
 
 log "Container images"
-docker build --target hub -t "ghcr.io/eddy-gitops/eddy-hub:${IMAGE_TAG}" "$ROOT"
-docker build --target agent -t "ghcr.io/eddy-gitops/eddy-agent:${IMAGE_TAG}" "$ROOT"
+docker build --target hub -t "ghcr.io/idestis/eddy-hub:${IMAGE_TAG}" "$ROOT"
+docker build --target agent -t "ghcr.io/idestis/eddy-agent:${IMAGE_TAG}" "$ROOT"
 kind load docker-image --name "$CLUSTER" \
-  "ghcr.io/eddy-gitops/eddy-hub:${IMAGE_TAG}" "ghcr.io/eddy-gitops/eddy-agent:${IMAGE_TAG}"
+  "ghcr.io/idestis/eddy-hub:${IMAGE_TAG}" "ghcr.io/idestis/eddy-agent:${IMAGE_TAG}"
 
 log "Hub namespace, dev users and agent TLS certificate"
 kctl create namespace "$HUB_NS" --dry-run=client -o yaml | kctl apply -f -

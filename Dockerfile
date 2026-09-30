@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
 # Build targets: `hub` and `agent`.
-#   docker build --target hub   -t ghcr.io/eddy-gitops/eddy-hub .
-#   docker build --target agent -t ghcr.io/eddy-gitops/eddy-agent .
+#   docker build --target hub   -t ghcr.io/idestis/eddy-hub .
+#   docker build --target agent -t ghcr.io/idestis/eddy-agent .
 
 # ---- SPA ----------------------------------------------------------------
 # The Vite build writes to ../internal/ui/dist (relative to web/), which the hub embeds.
@@ -29,9 +29,9 @@ COPY internal/ internal/
 COPY --from=web /src/internal/ui/dist/ internal/ui/dist/
 ENV CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -ldflags "-s -w -X github.com/eddy-gitops/eddy/internal/version.Version=${VERSION}" \
+    go build -trimpath -ldflags "-s -w -X github.com/idestis/eddy/internal/version.Version=${VERSION}" \
       -o /out/eddy-hub ./cmd/hub && \
-    go build -trimpath -ldflags "-s -w -X github.com/eddy-gitops/eddy/internal/version.Version=${VERSION}" \
+    go build -trimpath -ldflags "-s -w -X github.com/idestis/eddy/internal/version.Version=${VERSION}" \
       -o /out/eddy-agent ./cmd/agent
 
 # ---- Runtime images -------------------------------------------------------

@@ -21,9 +21,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/hub"
-	"github.com/eddy-gitops/eddy/internal/version"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/hub"
+	"github.com/idestis/eddy/internal/version"
 )
 
 const defaultConfig = "/etc/eddy/hub.yaml"

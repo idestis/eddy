@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/eddy-gitops/eddy/internal/model"
+	"github.com/idestis/eddy/internal/model"
 )
 
 // Caps on text copied into a summary.

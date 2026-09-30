@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // Page sizes. A limit of zero or less selects the default; larger limits are

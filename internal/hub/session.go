@@ -14,10 +14,10 @@ import (
 	"github.com/coder/websocket"
 	"golang.org/x/time/rate"
 
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/flux"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/flux"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 // Session limits and timings.

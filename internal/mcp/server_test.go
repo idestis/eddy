@@ -15,11 +15,11 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/eddy-gitops/eddy/internal/audit"
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/runtimeflags"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/audit"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/runtimeflags"
+	"github.com/idestis/eddy/internal/store"
 )
 
 const (

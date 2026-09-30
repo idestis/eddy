@@ -14,8 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	"github.com/eddy-gitops/eddy/internal/flux"
-	"github.com/eddy-gitops/eddy/internal/model"
+	"github.com/idestis/eddy/internal/flux"
+	"github.com/idestis/eddy/internal/model"
 )
 
 func owned(obj *unstructured.Unstructured, apiVersion, kind, name string) *unstructured.Unstructured {

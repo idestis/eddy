@@ -26,7 +26,7 @@ Agent (every workload cluster)    ── informers on Flux + workloads, imperson
 
 ## Go services
 
-Single module `github.com/eddy-gitops/eddy` (placeholder org), two binaries, Go 1.26+ (client-go v0.37 requires it).
+Single module `github.com/idestis/eddy` (placeholder org), two binaries, Go 1.26+ (client-go v0.37 requires it).
 
 | Package | Purpose |
 |---|---|

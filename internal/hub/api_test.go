@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/ai"
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/protocol"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/threads"
+	"github.com/idestis/eddy/internal/ai"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/threads"
 )
 
 func TestClassify(t *testing.T) {

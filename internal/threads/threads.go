@@ -27,11 +27,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/eddy-gitops/eddy/internal/audit"
-	"github.com/eddy-gitops/eddy/internal/fleet"
-	"github.com/eddy-gitops/eddy/internal/identity"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/audit"
+	"github.com/idestis/eddy/internal/fleet"
+	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // ErrInvalid is returned (wrapped, with a reason) for malformed input such

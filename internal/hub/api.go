@@ -4,12 +4,12 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/eddy-gitops/eddy/internal/ai"
-	"github.com/eddy-gitops/eddy/internal/auth"
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/runtimeflags"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/threads"
+	"github.com/idestis/eddy/internal/ai"
+	"github.com/idestis/eddy/internal/auth"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/runtimeflags"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/threads"
 )
 
 // api holds the UI listener's handlers.

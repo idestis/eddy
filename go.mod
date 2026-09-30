@@ -1,4 +1,4 @@
-module github.com/eddy-gitops/eddy
+module github.com/idestis/eddy
 
 go 1.26.0
 

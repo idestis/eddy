@@ -14,7 +14,7 @@ import (
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/eddy-gitops/eddy/internal/model"
+	"github.com/idestis/eddy/internal/model"
 )
 
 func TestKindByName(t *testing.T) {

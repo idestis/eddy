@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/memory"
-	"github.com/eddy-gitops/eddy/internal/store/sqlite"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/memory"
+	"github.com/idestis/eddy/internal/store/sqlite"
 )
 
 // Driver names accepted in store.driver.

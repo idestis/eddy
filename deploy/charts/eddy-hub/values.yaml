@@ -13,7 +13,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/eddy-gitops/eddy-hub
+  repository: ghcr.io/idestis/eddy-hub
   tag: ""            # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 imagePullSecrets: []
@@ -126,7 +126,7 @@ persistence:
 
 # ---------------------------------------------------------------------------
 # Local users (auth.local). Either point at your own Secret, or list users inline.
-# Create hashes with: docker run --rm -i ghcr.io/eddy-gitops/eddy-hub hash-password
+# Create hashes with: docker run --rm -i ghcr.io/idestis/eddy-hub hash-password
 # ---------------------------------------------------------------------------
 users:
   existingSecret: ""               # Secret with key users.yaml

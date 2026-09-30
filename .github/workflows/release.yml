@@ -9,8 +9,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAMESPACE: ghcr.io/eddy-gitops
-  CHART_REPO: oci://ghcr.io/eddy-gitops/charts
+  IMAGE_NAMESPACE: ghcr.io/idestis
+  CHART_REPO: oci://ghcr.io/idestis/charts
 
 jobs:
   notes:

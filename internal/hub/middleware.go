@@ -9,8 +9,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/audit"
-	"github.com/eddy-gitops/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/audit"
+	"github.com/idestis/eddy/internal/identity"
 )
 
 // Request body caps.

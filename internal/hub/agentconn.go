@@ -16,7 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/eddy-gitops/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/protocol"
 )
 
 // Agent endpoint limits.

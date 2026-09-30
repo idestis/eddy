@@ -20,13 +20,13 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/eddy-gitops/eddy/internal/auth"
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/model"
-	"github.com/eddy-gitops/eddy/internal/protocol"
-	"github.com/eddy-gitops/eddy/internal/runtimeflags"
-	"github.com/eddy-gitops/eddy/internal/store"
-	"github.com/eddy-gitops/eddy/internal/store/memory"
+	"github.com/idestis/eddy/internal/auth"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/model"
+	"github.com/idestis/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/runtimeflags"
+	"github.com/idestis/eddy/internal/store"
+	"github.com/idestis/eddy/internal/store/memory"
 )
 
 const (

@@ -5,7 +5,7 @@ package protocol
 import (
 	"encoding/json"
 
-	"github.com/eddy-gitops/eddy/internal/model"
+	"github.com/idestis/eddy/internal/model"
 )
 
 // Version is bumped on incompatible frame changes. The hub rejects agents

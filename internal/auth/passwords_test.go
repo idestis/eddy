@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/eddy-gitops/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/identity"
 )
 
 func TestHashPasswordFormatAndVerify(t *testing.T) {

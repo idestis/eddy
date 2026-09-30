@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/eddy-gitops/eddy/internal/config"
-	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/idestis/eddy/internal/config"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // Janitor cadence (ADR-0002 §3).
