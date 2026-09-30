@@ -1,0 +1,230 @@
+.ai {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.aictx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--ink-3);
+  flex: none;
+  flex-wrap: wrap;
+}
+.ctxchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px 4px 9px;
+  border-radius: 999px;
+  background: var(--win);
+  border: 1px solid var(--line-2);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  max-width: 100%;
+  min-height: 30px;
+}
+.ctxchip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+  flex: none;
+}
+.ctxchip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctxchip button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-3);
+}
+.ctxchip button:hover {
+  background: var(--s2);
+}
+.aictx .new {
+  margin-left: auto;
+}
+.aimsgs {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+.ahello {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in oklab, var(--c) 28%, var(--line));
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in oklab, var(--c) 16%, transparent), transparent 60%),
+    radial-gradient(120% 140% at 100% 100%, color-mix(in oklab, var(--c2) 16%, transparent), transparent 60%),
+    var(--win);
+}
+.ahello h4 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 620;
+}
+.ahello p {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.ahello .qs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.mu {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 9px 13px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--ink);
+  color: var(--win);
+  font-size: 13.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ma {
+  max-width: 100%;
+}
+.ma .who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.ma .steps {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ma .step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.ma .step .i {
+  width: 12px;
+  height: 12px;
+  color: var(--c);
+}
+.ma .step code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ma .step span {
+  flex: none;
+}
+.think {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.think .i {
+  color: var(--c);
+}
+.ma .err {
+  color: var(--bad);
+  font-size: 12.5px;
+  margin-top: 6px;
+}
+.comp {
+  border-top: 1px solid var(--line);
+  padding: 12px 14px 14px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cbox {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  background: var(--win);
+}
+.cbox:focus-within {
+  border-color: var(--c);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--c) 15%, transparent);
+}
+.cbox textarea {
+  flex: 1;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: none;
+  font-size: 14px;
+  color: var(--ink);
+  max-height: 140px;
+  min-height: 24px;
+  padding: 6px 0;
+  line-height: 1.45;
+  field-sizing: content;
+}
+.send {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--c);
+  color: var(--c-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.send[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.fine {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ai-off {
+  margin: 16px;
+  padding: 16px;
+  border: 1px dashed var(--line-2);
+  border-radius: 14px;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.ai-off strong {
+  display: block;
+  color: var(--ink);
+  margin-bottom: 4px;
+}

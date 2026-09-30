@@ -1,0 +1,371 @@
+/* Login */
+.login {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.login-card {
+  width: min(400px, 100%);
+  background: var(--win);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.login-card .logo {
+  padding: 0;
+}
+.login-card h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.015em;
+}
+.login-card p {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-card .btn {
+  justify-content: center;
+}
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* Fleet */
+.fleet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.fcard {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  background: var(--win);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-decoration: none;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+.fcard::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--cc);
+}
+.fcard.protected::before {
+  height: 5px;
+  background: repeating-linear-gradient(-45deg, var(--cc) 0 9px, var(--stripe) 9px 18px);
+}
+.fcard:hover {
+  border-color: color-mix(in oklab, var(--cc) 45%, var(--line));
+}
+.fcard .fh {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 0 11px;
+  align-items: center;
+}
+.fcard .sw {
+  background: linear-gradient(135deg, var(--cc), var(--cc2));
+}
+.fcard .fn {
+  font-weight: 650;
+  font-size: 15px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+.fcard .fe {
+  font-size: 12px;
+  color: var(--ink-3);
+  grid-column: 2;
+}
+.fcard .fk {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.conn .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.conn.off .dot {
+  background: var(--bad);
+}
+.conn.off {
+  color: var(--bad);
+}
+
+/* Generic data tables (tokens, audit, threads) */
+.dtable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--win);
+  font-size: 13px;
+}
+.dtable th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  background: var(--side);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.dtable td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.dtable tr:last-child td {
+  border-bottom: 0;
+}
+.dtable tbody tr:hover td {
+  background: var(--s2);
+}
+.dtable .mono {
+  font-size: 12.5px;
+}
+.dtable a {
+  text-decoration: none;
+}
+.dtable a:hover {
+  text-decoration: underline;
+}
+.dtable .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--win);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.panel h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 620;
+}
+.panel p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.form-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.form-row .field {
+  flex: 1 1 180px;
+}
+.radio-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.radio:has(input:checked) {
+  border-color: var(--c);
+  background: var(--c-soft);
+}
+.secret {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.secret code,
+.snippet {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--log-bg);
+  color: var(--log-ink);
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+.callout {
+  border: 1px solid color-mix(in oklab, var(--ok) 40%, var(--line));
+  background: color-mix(in oklab, var(--ok) 7%, var(--win));
+}
+
+/* Threads */
+.threads {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.thread {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--win);
+  overflow: hidden;
+}
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  width: 100%;
+  text-align: left;
+}
+.thread-head:hover {
+  background: var(--s2);
+}
+.thread-head .tt {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-head .tm {
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.thread-body {
+  border-top: 1px solid var(--line);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.msgs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tmsg {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+}
+.tmsg .av {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+.tmsg.ai .av {
+  background: linear-gradient(135deg, var(--c), var(--c2));
+  color: var(--c-ink);
+  border: 0;
+}
+.tmsg .mh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-3);
+  margin-bottom: 3px;
+  flex-wrap: wrap;
+}
+.tmsg .mh b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.reply {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.reply textarea {
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  background: var(--s2);
+  color: var(--ink);
+  outline: none;
+  resize: vertical;
+  font-size: 13.5px;
+}
+.reply textarea:focus {
+  border-color: var(--c);
+}
+.reply .row-btns {
+  justify-content: flex-end;
+}
+fieldset.plain {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+fieldset.plain legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.dtable td.msg {
+  max-width: 0;
+  width: 50%;
+}
+.dtable.clickable tbody tr {
+  cursor: pointer;
+}
