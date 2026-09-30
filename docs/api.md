@@ -54,7 +54,8 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
   "user": "local:alice", "display": "alice", "groups": ["eddy:platform","eddy:authenticated"],
   "provider": "local", "csrf": "…",
   "features": {"ai": true, "aiProvider": "bedrock" /* only when ai is on */, "mcp": true, "mcpWrites": true,
-               "logs": true, "ephemeralStore": false, "devMode": false},
+               "logs": true, "ephemeralStore": false, "devMode": false,
+               "onboarding": true /* Cluster CRs watched and onboarding.enabled */},
   "version": "v1.0.0"
 }
 ```
@@ -74,6 +75,43 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | `POST …/objects/{kind}/{ns}/{name}/resume` | body `{confirm?: string}` → 202 |
 | `GET /api/v1/clusters/{c}/pods/{ns}/{name}/logs?container=&tail=&follow=` | SSE `log` events `{lines: string[]}`, then `end` with `{}` or `{error:{code,message}}` (including when a followed pod stops). `tail` defaults to 500 and must be 1–5000. `follow` is a boolean. At most 4 streams per user, beyond that 429. Works with the session cookie alone, since EventSource cannot send headers. Pod summaries list `containers` for the picker. |
 
+### Resource fields and inventory-only rows
+
+- **New `Resource` fields:** `ports` (Service), `hosts` (Ingress), `schedule` (CronJob) and `inventoryOnly`.
+- **Inventory-only rows** are objects a Kustomization manages but Eddy does not watch. They carry kind, namespace and name only, with status `unknown`.
+  - **Visibility:** you see them if you can list the parent Kustomization, and, for known kinds, also list the row's own kind in its namespace.
+  - **Endpoints:** `GET …/objects/{kind}/…` works for them. `/yaml` and `/events` return 403 `forbidden` for inventory-only rows and for kinds outside the table.
+  - **Counts** exclude them.
+- **Kinds added** to the table: Service, PersistentVolumeClaim (core), Ingress (networking.k8s.io), Job, CronJob (batch) and HorizontalPodAutoscaler (autoscaling).
+
+## Clusters: onboarding (ADR-0005)
+
+- **Permissions:** each call is checked with a SubjectAccessReview as the user, in the **management** cluster, on `clusters.gitops.eddy.dev`.
+- **Onboarding off:** when onboarding is disabled or clusters are static, write calls return 409 `conflict`.
+- **Audit:** every change is recorded as `cluster.create`, `cluster.update`, `cluster.join_token`, `cluster.delete` or `cluster.joined`.
+
+| Method and path | Body | Response |
+|---|---|---|
+| `GET /api/v1/clusters/permissions` | | `{onboarding, create}` |
+| `POST /api/v1/clusters` | `{name (DNS-1123 ≤63), displayName?, environment?, region?, color? (#RRGGBB), protected?, order?, ttl? (5m–24h, default 1h)}` | 201 `{cluster: OnboardedCluster, joinToken: {token, expiresAt}, guide: InstallGuide}`. The token is shown once. |
+| `PATCH /api/v1/clusters/{c}` | same fields, optional, plus `confirm` (required to turn `protected` off) | `{cluster}`. 409 for Helm-managed clusters, 428 without `confirm` |
+| `POST /api/v1/clusters/{c}/join-token` | `{ttl?}` | 201 `{joinToken, guide}`. The unused predecessor is revoked. |
+| `DELETE /api/v1/clusters/{c}` | `{confirm?}` | 204. 428 on a protected cluster without `confirm == c`, 409 for Helm-managed clusters |
+| `GET /api/v1/clusters/{c}/connection` | | `{cluster, checks[], agents, joinToken?, attempts[] (newest 20), permissions, guide}` |
+
+**Types and codes:**
+- **Check ids:** `connected, protocol, flux, informers, sar, impersonation, namespaces, credentials`. Each check has a state: `ok`, `warn`, `fail`, `pending` or `info`.
+- **Attempt reasons:** `bad_token, join_expired, join_used, wrong_cluster, protocol_mismatch, hello_rejected, credentials_failed`.
+- **`OnboardedCluster`:** `{name, displayName, environment?, region?, color?, protected, order, phase: Pending|Connected|Disconnected, managedBy?: "helm"}`.
+- **`InstallGuide`:** `{hubURL, namespace, helm, values, manifests, clusterResource, networkDocs, warnings?}`.
+
+**Join flow on the agent endpoint:**
+1. The agent connects with `Authorization: Bearer eddy_join_…`.
+2. After the hello, the hub sends `credentials {token}`.
+3. The agent stores the token and answers `response {stored, error?}`.
+4. The hub closes the connection with status 1000.
+5. The agent reconnects with the permanent token.
+
 ## Live updates: `GET /api/v1/stream` (SSE)
 
 | Event | Data |
@@ -83,6 +121,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | `change` | `{cluster, upserts: Resource[], deletes: string[]}`, filtered per user |
 | `resync` | `{cluster}`: the client refetches that cluster's resources |
 | `thread` | `{threadId, ref}`: a thread the user can see changed |
+| `connection` | `{cluster}`: that cluster's onboarding or connection state changed. Refetch `…/connection`. |
 
 - **Keepalive:** the hub sends a comment line every 20 s. Clients treat 45 s without data as a dead stream and reconnect with backoff.
 - **On connect:** a `clusters` event follows `hello` straight away.
