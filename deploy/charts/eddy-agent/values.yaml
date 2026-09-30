@@ -80,10 +80,9 @@ tolerations: []
 affinity: {}
 priorityClassName: ""
 
-# Egress-only policy: the agent needs DNS, the Kubernetes API and the hub.
-# Nothing is allowed in (the health probes come from the kubelet on the node).
-# Egress-only policy, on by default: the agent accepts no inbound traffic. Kubelet health
-# probes are allowed by most CNIs; set enabled: false if yours blocks them.
+# Egress-only policy, on by default: the agent needs DNS, the Kubernetes API and the hub, and
+# accepts no inbound traffic. Kubelet health probes are allowed by most CNIs; set
+# enabled: false if yours blocks them.
 networkPolicy:
   enabled: true
   hubPorts: [443]
