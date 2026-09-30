@@ -19,6 +19,8 @@ var (
 	ErrNotFound = errors.New("store: not found")
 	ErrConflict = errors.New("store: conflict")
 	ErrLimit    = errors.New("store: limit exceeded")
+	// ErrInvalid wraps malformed input such as a bad cursor, enum or JSON.
+	ErrInvalid = errors.New("store: invalid input")
 )
 
 // Store groups the sub-stores. Consumers depend on the narrow one they need.
@@ -226,12 +228,16 @@ type Audit interface {
 	Query(ctx context.Context, f AuditFilter) ([]AuditEvent, string, error)
 }
 
+// Prefs stores per-user UI preferences. Get returns ErrNotFound when none
+// are stored. Delete and Revoke methods elsewhere are idempotent.
 type Prefs interface {
 	Get(ctx context.Context, subject string) (json.RawMessage, error)
 	Put(ctx context.Context, subject string, data json.RawMessage) error
 }
 
-// Retention configures Prune.
+// Retention configures Prune. A zero value turns that rule off (expired
+// sessions are always deleted). The hub passes TokenPurgeAfter itself (30d);
+// it is not configurable yet.
 type Retention struct {
 	AuditDays           int
 	ResolvedThreadsDays int // 0 = keep
