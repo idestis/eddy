@@ -1,0 +1,6 @@
+# DEV ONLY. Local users for `task dev:hub` and `task kind:up`.
+# Login: username "dev", password "eddy-dev-password". Never reuse this file in a real install.
+users:
+  - username: dev
+    passwordHash: "$argon2id$v=19$m=65536,t=3,p=4$AaY9qtPG5v7Ge9/Su01egg$zzwK+tTnIG6qE7Pta3RmTIImTezGjfD1QrPfaC64VM0"
+    groups: [platform]

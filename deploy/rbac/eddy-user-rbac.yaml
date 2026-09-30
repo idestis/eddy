@@ -1,0 +1,96 @@
+# Example RBAC for Eddy users. Apply in EVERY workload cluster (kubectl apply -f).
+#
+# Eddy never invents permissions: the agent impersonates the signed-in user and the API server
+# decides. Users and groups arrive as:
+#   user   local:<username>  (local auth) or <userPrefix><header value> (proxy auth)
+#   groups eddy:<group>      (prefix from auth.groups.prefix), plus eddy:authenticated for all
+#
+# Edit the subjects to match your groups. Bind to a namespace-scoped RoleBinding instead of the
+# ClusterRoleBinding below to limit a team to some namespaces.
+#
+# Adding a Flux kind to Eddy means extending both ClusterRoles.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eddy-viewer
+  labels:
+    app.kubernetes.io/part-of: eddy
+rules:
+  - apiGroups: [kustomize.toolkit.fluxcd.io]
+    resources: [kustomizations]
+    verbs: [get, list, watch]
+  - apiGroups: [helm.toolkit.fluxcd.io]
+    resources: [helmreleases]
+    verbs: [get, list, watch]
+  - apiGroups: [source.toolkit.fluxcd.io]
+    resources: [gitrepositories, ocirepositories, helmrepositories, helmcharts, buckets]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods, events, namespaces]
+    verbs: [get, list, watch]
+  # Logs are only readable in the UI when this is granted (and over MCP when mcp.allowLogs is on).
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eddy-operator
+  labels:
+    app.kubernetes.io/part-of: eddy
+rules:
+  # Everything a viewer can do...
+  - apiGroups: [kustomize.toolkit.fluxcd.io]
+    resources: [kustomizations]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [helm.toolkit.fluxcd.io]
+    resources: [helmreleases]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [source.toolkit.fluxcd.io]
+    resources: [gitrepositories, ocirepositories, helmrepositories, helmcharts, buckets]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods, events, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  # ...plus patch on the Flux kinds: reconcile (requestedAt annotation), suspend and resume.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eddy-viewer
+  labels:
+    app.kubernetes.io/part-of: eddy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eddy-viewer
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: eddy:authenticated
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eddy-operator
+  labels:
+    app.kubernetes.io/part-of: eddy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eddy-operator
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: eddy:platform

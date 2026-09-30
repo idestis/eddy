@@ -1,0 +1,327 @@
+# Eddy hub chart values. See docs/install.md for a walkthrough.
+
+# Browser-facing origin (https://...). Drives Origin/Host checks and cookie security.
+# Change this: the default is a placeholder.
+publicURL: https://eddy.internal.example.com
+
+# URL that agents in workload clusters use to reach the hub's agent listener. Only used to
+# print the `helm install eddy-agent` command in NOTES.txt. If empty, the first
+# ingress.agents host is used, then the in-cluster Service address.
+agentsPublicURL: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/eddy-gitops/eddy-hub
+  tag: ""            # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# v0.1 supports a single replica (SQLite). The chart fails if you raise this.
+replicaCount: 1
+
+# ---------------------------------------------------------------------------
+# hub.yaml. Rendered into the eddy-hub ConfigMap. Keys match internal/config/hub.go exactly
+# (the hub parses strictly, so an unknown key stops it from starting).
+# The chart sets these for you, so do not set them here: publicURL, namespace, store,
+# runtime.flagsFile, auth.local.usersFile, auth.keyFile, listen.ui (only when the
+# oauth2-proxy sidecar is on) and listen.agentTLS.
+# ${ENV} references are expanded by the hub, so secrets can come from credentialsSecret.
+# ---------------------------------------------------------------------------
+config:
+  listen:
+    ui: ":8080"        # SPA, /api, /auth, /mcp
+    agents: ":8443"    # /agent/v1/connect and /healthz only
+    metrics: ":9090"   # /metrics and /readyz
+  auth:
+    local:
+      enabled: true
+      userPrefix: "local:"
+    proxy:             # enabled automatically when oauth2Proxy.enabled is true
+      enabled: false
+      userHeader: X-Forwarded-Email
+      groupsHeader: X-Forwarded-Groups
+      groupsSeparator: ","
+      trustedCIDRs: []             # sidecar mode defaults to ["127.0.0.1/32"]
+      sharedSecretHeader: X-Eddy-Proxy-Secret
+      sharedSecretEnv: EDDY_PROXY_SECRET   # must come from credentialsSecret (>= 32 bytes)
+      insecureSkipSharedSecret: false
+      userPrefix: ""
+    groups:
+      prefix: "eddy:"
+      allUsers: authenticated      # every signed-in user gets eddy:authenticated
+      static: {}                   # identity -> extra groups, e.g. {"alice@example.com": [oncall]}
+      maxGroups: 64
+      maxGroupLength: 128
+    denyUserPrefixes: ["system:", "eks:", "kubernetes-admin"]
+    session:
+      idleTimeout: 8h
+      absoluteTimeout: 24h
+      maxPerUser: 10
+    loginRateLimit:
+      perUsernameFailures: 5
+      window: 15m
+      lockout: 15m
+      perIPPerMinute: 20
+      maxConcurrentHashes: 4
+    tokens:
+      defaultTTL: 720h
+      maxTTLLocal: 2160h
+      maxTTLProxy: 720h
+      maxPerUser: 10
+      threadWriteScope: read       # read | operate
+    auditViewerGroups: []          # already prefixed, e.g. ["eddy:platform"]
+  ai:
+    enabled: false
+    provider: anthropic            # anthropic | bedrock
+    anthropic:
+      model: claude-haiku-4-5-20251001
+      apiKeyEnv: ANTHROPIC_API_KEY  # env var from credentialsSecret
+      baseURL: ""
+    bedrock:                       # credentials come from IRSA / Pod Identity, never static keys
+      region: ""
+      modelId: ""                  # inference profile id or ARN, e.g. eu.anthropic.claude-haiku-4-5-20251001-v1:0
+      guardrail: {id: "", version: "", trace: false}
+    allowLogs: false
+    limits:
+      maxRounds: 6
+      maxToolResultBytes: 24576
+      maxOutputTokens: 1024
+      timeout: 60s
+      perUserPerHour: 30
+  mcp:
+    enabled: true
+    allowedOrigins: []             # CLI clients send no Origin, so leave empty unless needed
+    allowLogs: false
+    writes: true                   # reconcile/suspend/resume over MCP (needs an `operate` PAT)
+    protectedClusters: confirm     # confirm | deny
+    callsPerMinute: 60
+    writesPerMinute: 10
+    maxResultBytes: 65536
+
+# Secret (in the release namespace) whose keys become environment variables via envFrom,
+# e.g. ANTHROPIC_API_KEY and EDDY_PROXY_SECRET. Create it yourself; the chart never holds
+# your secrets.
+credentialsSecret: ""
+
+# Extra environment variables for the hub container.
+extraEnv: []
+
+# Storage. v0.1 ships SQLite (on a PVC) and a memory driver for dev.
+store:
+  driver: sqlite                   # sqlite | memory (dev only: loses everything on restart)
+  retention:
+    auditDays: 90
+    resolvedThreadsDays: 0         # 0 keeps them
+    askThreadsDays: 30
+
+persistence:
+  enabled: true                    # false runs SQLite on an emptyDir: every restart logs users out
+  existingClaim: ""
+  storageClass: ""                 # "" = cluster default, "-" = no class
+  accessModes: [ReadWriteOnce]
+  size: 1Gi
+  annotations: {}                  # the chart always adds helm.sh/resource-policy: keep
+
+# ---------------------------------------------------------------------------
+# Local users (auth.local). Either point at your own Secret, or list users inline.
+# Create hashes with: docker run --rm -i ghcr.io/eddy-gitops/eddy-hub hash-password
+# ---------------------------------------------------------------------------
+users:
+  existingSecret: ""               # Secret with key users.yaml
+  list: []
+  #  - username: alice              # ^[a-z0-9][a-z0-9._-]{0,62}$
+  #    passwordHash: "$argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash>"
+  #    groups: [platform]           # -> eddy:platform
+  #    disabled: false
+
+# Secret holding the signing/pepper key (key name: "key", >= 32 random bytes). If empty, the
+# chart generates one on first install and keeps it across upgrades with `lookup`.
+# Note: `helm template` and Argo CD cannot `lookup`, so pass your own Secret there.
+sessionKeySecret: ""
+
+# Optional TLS on the agent listener (Secret of type kubernetes.io/tls). Leave empty when TLS
+# ends at your load balancer or ingress.
+agentTLS:
+  secretName: ""
+
+# ---------------------------------------------------------------------------
+# Workload clusters. Each entry creates a Cluster CR and a random token Secret
+# (eddy-agent-<name>), both kept across upgrades. NOTES.txt prints the agent install command.
+# ---------------------------------------------------------------------------
+clusters: []
+#  - name: prod-eu
+#    displayName: prod-eu
+#    environment: Production
+#    region: eu-central-1
+#    color: "#C2410C"
+#    protected: true
+#    order: 1
+#    existingTokenSecret: ""   # optional: use your own Secret (key "token") instead of a generated one
+
+# Kill switches. Mounted as the eddy-runtime ConfigMap and hot-reloaded (about 90 s).
+# A flag only turns a feature OFF: it cannot enable anything that config.* disables.
+runtimeFlags:
+  aiEnabled: true
+  mcpEnabled: true
+  mcpWrites: true
+  mcpAllowLogs: true
+
+# ---------------------------------------------------------------------------
+# Services and ingress. Both Services are ClusterIP; expose them internally.
+# ---------------------------------------------------------------------------
+service:
+  ui:
+    type: ClusterIP
+    port: 80                       # -> container 8080 (or the oauth2-proxy sidecar on 4180)
+    annotations: {}
+  agents:
+    type: ClusterIP
+    httpsPort: 443                 # -> container 8443
+    httpPort: 80                   # -> container 8443 (TLS terminated in front of the hub)
+    annotations: {}
+
+ingress:
+  ui:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []                      # e.g. [eddy.internal.example.com]
+    path: /
+    pathType: Prefix
+    tls: []
+    # --- nginx, internal controller (SSE and WebSocket need long timeouts) ---
+    # className: nginx-internal
+    # annotations:
+    #   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    #   nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    #   nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    #   nginx.ingress.kubernetes.io/whitelist-source-range: 10.0.0.0/8
+    # tls:
+    #   - secretName: eddy-tls
+    #     hosts: [eddy.internal.example.com]
+    # --- AWS ALB, internal ---
+    # className: alb
+    # annotations:
+    #   alb.ingress.kubernetes.io/scheme: internal
+    #   alb.ingress.kubernetes.io/target-type: ip
+    #   alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    #   alb.ingress.kubernetes.io/ssl-redirect: "443"
+    #   alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-central-1:111122223333:certificate/xxxx
+    #   alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600
+    #   alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    #   alb.ingress.kubernetes.io/inbound-cidrs: 10.0.0.0/8
+  agents:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []                      # e.g. [eddy-agents.internal.example.com]
+    path: /agent/v1/connect        # only the agent endpoint is routed
+    pathType: Prefix
+    tls: []
+    # Same annotation examples as above. The agent connection is a long-lived WebSocket, so
+    # keep idle timeouts high (3600 s). This route skips your auth proxy on purpose: agents
+    # authenticate with their token, so restrict it by source CIDR or security group.
+    # If you front it with an NLB instead, use ingress.agents.enabled=false and set
+    # service.agents.annotations for the NLB controller.
+
+# ---------------------------------------------------------------------------
+# Optional oauth2-proxy sidecar for proxy auth (Google, GitHub, Okta, Entra, ...).
+# The sidecar listens on 4180 and forwards to 127.0.0.1:8080. The hub UI listener then binds
+# to 127.0.0.1, so the only way in is through the proxy, and the UI Service targets 4180.
+# /mcp bypasses the proxy (skip-auth-route ^/mcp$) because MCP clients send only a PAT.
+# ---------------------------------------------------------------------------
+oauth2Proxy:
+  enabled: false
+  image:
+    repository: quay.io/oauth2-proxy/oauth2-proxy
+    tag: v7.15.4
+    pullPolicy: IfNotPresent
+  # Secret with OAUTH2_PROXY_COOKIE_SECRET and whatever your provider config references
+  # (OAUTH2_PROXY_CLIENT_ID, OAUTH2_PROXY_CLIENT_SECRET, ...). Loaded with envFrom.
+  existingSecret: ""
+  # Extra command-line flags, added after the ones the chart always sets:
+  # --reverse-proxy, --cookie-secure, --redirect-url=<publicURL>/oauth2/callback and
+  # --skip-auth-route=^/mcp$. Options that alpha config removes (provider, client-id, ...) go
+  # in alphaConfig instead. Restrict who may sign in here or at the IdP, for example:
+  # extraArgs: ["--email-domain=example.com"]
+  extraArgs: []
+  # Merged into oauth2-proxy's alpha config. The chart sets upstreams, server and the
+  # injectRequestHeaders (X-Forwarded-Email, X-Forwarded-Groups, X-Eddy-Proxy-Secret). You
+  # supply `providers`. Example for Google:
+  # alphaConfig:
+  #   providers:
+  #     - id: google
+  #       provider: google
+  #       clientID: ${OAUTH2_PROXY_CLIENT_ID}
+  #       clientSecret: ${OAUTH2_PROXY_CLIENT_SECRET}
+  alphaConfig: {}
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+# ---------------------------------------------------------------------------
+# Kubernetes plumbing
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  automountServiceAccountToken: true
+  annotations: {}
+  # IRSA for Bedrock Ask AI (see docs/install.md):
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/eddy-hub-bedrock
+
+rbac:
+  create: true
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile: {type: RuntimeDefault}
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities: {drop: [ALL]}
+  seccompProfile: {type: RuntimeDefault}
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 512Mi}
+
+livenessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+
+# Optional. With no `from` entries the port accepts traffic from any source, so set them.
+networkPolicy:
+  enabled: false
+  ui:
+    from: []        # e.g. [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]
+  agents:
+    from: []        # e.g. [{ipBlock: {cidr: 10.20.0.0/16}}]
+  metrics:
+    from: []        # e.g. your Prometheus namespace
+  egress:
+    enabled: true   # DNS, the Kubernetes API and HTTPS (AI provider, IdP)
+    kubeAPIPorts: [443, 6443]
+    extra: []       # additional egress rules, verbatim

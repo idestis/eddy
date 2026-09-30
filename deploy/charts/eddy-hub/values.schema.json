@@ -1,0 +1,161 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "publicURL": {"type": "string", "pattern": "^https?://[^/\\s]+$", "description": "Browser-facing origin, no path."},
+    "agentsPublicURL": {"type": "string"},
+    "replicaCount": {"type": "integer", "minimum": 0, "description": "v0.1 supports a single replica (SQLite); the templates fail for more."},
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "credentialsSecret": {"type": "string"},
+    "sessionKeySecret": {"type": "string"},
+    "store": {
+      "type": "object",
+      "properties": {
+        "driver": {"enum": ["sqlite", "memory"]},
+        "retention": {
+          "type": "object",
+          "properties": {
+            "auditDays": {"type": "integer", "minimum": 1},
+            "resolvedThreadsDays": {"type": "integer", "minimum": 0},
+            "askThreadsDays": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "existingClaim": {"type": "string"},
+        "storageClass": {"type": "string"},
+        "accessModes": {"type": "array", "items": {"type": "string"}},
+        "size": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti)?$"}
+      }
+    },
+    "users": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {"type": "string"},
+        "list": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["username", "passwordHash"],
+            "properties": {
+              "username": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"},
+              "passwordHash": {"type": "string", "pattern": "^\\$(argon2id|2[aby])\\$"},
+              "groups": {"type": "array", "items": {"type": "string"}},
+              "disabled": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63},
+          "displayName": {"type": "string"},
+          "environment": {"type": "string"},
+          "region": {"type": "string"},
+          "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+          "protected": {"type": "boolean"},
+          "order": {"type": "integer"},
+          "existingTokenSecret": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "runtimeFlags": {
+      "type": "object",
+      "properties": {
+        "aiEnabled": {"type": "boolean"},
+        "mcpEnabled": {"type": "boolean"},
+        "mcpWrites": {"type": "boolean"},
+        "mcpAllowLogs": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "auth": {
+          "type": "object",
+          "properties": {
+            "local": {"type": "object", "properties": {"enabled": {"type": "boolean"}}},
+            "proxy": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "trustedCIDRs": {"type": "array", "items": {"type": "string"}}}},
+            "tokens": {"type": "object", "properties": {"threadWriteScope": {"enum": ["read", "operate"]}}},
+            "groups": {"type": "object", "properties": {"prefix": {"type": "string", "pattern": ":$"}}}
+          }
+        },
+        "ai": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "provider": {"enum": ["anthropic", "bedrock"]},
+            "allowLogs": {"type": "boolean"}
+          }
+        },
+        "mcp": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "writes": {"type": "boolean"},
+            "protectedClusters": {"enum": ["confirm", "deny"]}
+          }
+        }
+      }
+    },
+    "service": {"type": "object"},
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "ui": {"$ref": "#/definitions/ingress"},
+        "agents": {"$ref": "#/definitions/ingress"}
+      }
+    },
+    "oauth2Proxy": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "existingSecret": {"type": "string"},
+        "extraArgs": {"type": "array", "items": {"type": "string"}},
+        "alphaConfig": {"type": "object"}
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": {"type": "boolean"},
+        "name": {"type": "string"},
+        "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "networkPolicy": {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+  },
+  "definitions": {
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "className": {"type": "string"},
+        "annotations": {"type": "object", "additionalProperties": {"type": "string"}},
+        "hosts": {"type": "array", "items": {"type": "string"}},
+        "path": {"type": "string"},
+        "pathType": {"enum": ["Prefix", "Exact", "ImplementationSpecific"]},
+        "tls": {"type": "array"}
+      }
+    }
+  }
+}

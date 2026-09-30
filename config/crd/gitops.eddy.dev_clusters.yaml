@@ -1,0 +1,115 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clusters.gitops.eddy.dev
+spec:
+  group: gitops.eddy.dev
+  scope: Cluster
+  names:
+    kind: Cluster
+    listKind: ClusterList
+    plural: clusters
+    singular: cluster
+    shortNames: [ecl]
+    categories: [eddy]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Environment
+          type: string
+          jsonPath: .spec.environment
+        - name: Protected
+          type: boolean
+          jsonPath: .spec.protected
+        - name: Agent
+          type: string
+          jsonPath: .status.agentVersion
+        - name: Kubernetes
+          type: string
+          jsonPath: .status.kubernetesVersion
+        - name: Flux
+          type: string
+          jsonPath: .status.fluxVersion
+        - name: Resources
+          type: integer
+          jsonPath: .status.resources
+        - name: Last Seen
+          type: date
+          jsonPath: .status.lastSeen
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: Cluster registers a workload cluster whose agent may connect to the Eddy hub.
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [agentTokenSecretRef]
+              properties:
+                displayName:
+                  type: string
+                  description: Name shown in the UI. Defaults to metadata.name.
+                  maxLength: 63
+                environment:
+                  type: string
+                  description: Free-form label such as Production or Staging.
+                  maxLength: 63
+                region:
+                  type: string
+                  maxLength: 63
+                color:
+                  type: string
+                  description: Cluster accent colour as #RRGGBB.
+                  pattern: '^#[0-9A-Fa-f]{6}$'
+                protected:
+                  type: boolean
+                  default: false
+                  description: Writes need a typed confirmation of the cluster name.
+                order:
+                  type: integer
+                  description: Sort position in the cluster list (lower first).
+                agentTokenSecretRef:
+                  type: object
+                  description: Secret in the hub namespace that holds the agent token.
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                    key:
+                      type: string
+                      default: token
+            status:
+              type: object
+              description: Written by the hub.
+              properties:
+                phase:
+                  type: string
+                  enum: [Connected, Disconnected]
+                lastSeen:
+                  type: string
+                  format: date-time
+                agentVersion:
+                  type: string
+                kubernetesVersion:
+                  type: string
+                fluxVersion:
+                  type: string
+                resources:
+                  type: integer
+                  minimum: 0

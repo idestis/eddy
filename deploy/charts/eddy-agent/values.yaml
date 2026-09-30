@@ -1,0 +1,88 @@
+# Eddy agent chart values. Install one agent per workload cluster; the eddy-hub chart's
+# NOTES.txt prints the exact command.
+
+cluster:
+  name: ""            # required. Must match the Cluster CR name in the hub.
+
+hub:
+  # The hub's agent endpoint, e.g. wss://eddy-agents.internal.example.com/agent/v1/connect
+  url: ""             # required. Must be wss://.
+  # PEM CA bundle, only if the hub certificate is not publicly trusted.
+  caBundle: ""
+  # ws:// instead of wss://. Local development only (the kind quickstart uses TLS and does
+  # not need this).
+  allowInsecure: false
+
+token:
+  existingSecret: ""  # Secret holding the agent token (preferred)
+  key: token
+  value: ""           # or pass the token inline; the chart stores it in a Secret
+
+watch:
+  namespaces: []      # empty = whole cluster. Sets EDDY_WATCH_NAMESPACES.
+
+impersonation:
+  # Groups the agent may impersonate must start with one of these. `system:` is always refused.
+  allowedGroupPrefixes: ["eddy:"]
+  # Optional exact allowlist. When set, the impersonate verb on groups is pinned to these
+  # names (RBAC resourceNames) and EDDY_ALLOWED_GROUPS is set: the strictest option.
+  # Remember eddy:authenticated, which every signed-in user carries.
+  groups: []
+  # e.g. ["eddy:authenticated", "eddy:platform", "eddy:oncall"]
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/eddy-gitops/eddy-agent
+  tag: ""             # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+replicaCount: 1
+
+extraEnv: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile: {type: RuntimeDefault}
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities: {drop: [ALL]}
+  seccompProfile: {type: RuntimeDefault}
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 512Mi}
+
+healthPort: 8081
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+# Egress-only policy: the agent needs DNS, the Kubernetes API and the hub.
+# Nothing is allowed in (the health probes come from the kubelet on the node).
+networkPolicy:
+  enabled: false
+  hubPorts: [443]
+  hubTo: []           # e.g. [{ipBlock: {cidr: 10.20.0.0/16}}]. Empty allows any destination.
+  kubeAPIPorts: [443, 6443]
+  extraEgress: []

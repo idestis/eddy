@@ -1,0 +1,20 @@
+Eddy agent {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+{{- if not .Values.cluster.name }}
+
+WARNING: cluster.name is not set. It must equal the Cluster CR name in the hub.
+{{- end }}
+{{- if not .Values.hub.url }}
+
+WARNING: hub.url is not set (wss://<hub agent endpoint>/agent/v1/connect).
+{{- end }}
+{{- if not (or .Values.token.existingSecret .Values.token.value) }}
+
+WARNING: no token. Set token.existingSecret or token.value (the hub chart's NOTES print how).
+{{- end }}
+
+Check the connection:
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "eddy-agent.fullname" . }}
+The cluster should show as Connected in the hub UI (kubectl get clusters.gitops.eddy.dev on the hub).
+
+The agent can read Flux objects and workloads, but it can do nothing on its own: every user
+request is impersonated. Apply deploy/rbac/eddy-user-rbac.yaml so people can see and act on things.

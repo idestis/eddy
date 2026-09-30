@@ -1,0 +1,59 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [gitops.eddy.dev]
+    resources: [clusters]
+    verbs: [get, list, watch]
+  - apiGroups: [gitops.eddy.dev]
+    resources: [clusters/status]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "eddy-hub.fullname" . }}-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "eddy-hub.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Secrets (agent tokens) are readable in the hub's own namespace only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "eddy-hub.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "eddy-hub.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

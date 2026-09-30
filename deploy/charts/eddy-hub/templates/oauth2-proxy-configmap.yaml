@@ -1,0 +1,12 @@
+{{- if .Values.oauth2Proxy.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}-oauth2-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+data:
+  alpha.yaml: |
+    {{- include "eddy-hub.oauth2ProxyConfig" . | nindent 4 }}
+{{- end }}

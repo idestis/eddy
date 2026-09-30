@@ -1,0 +1,16 @@
+apiVersion: v2
+name: eddy-hub
+description: Eddy hub, the multi-cluster FluxCD UI. Runs in the management cluster.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/eddy-gitops/eddy
+sources:
+  - https://github.com/eddy-gitops/eddy
+keywords: [fluxcd, gitops, ui, multi-cluster]
+maintainers:
+  - name: Eddy maintainers
+    url: https://github.com/eddy-gitops/eddy
+annotations:
+  artifacthub.io/license: Apache-2.0

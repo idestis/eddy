@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+  {{- with .Values.service.ui.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.ui.type }}
+  selector:
+    {{- include "eddy-hub.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.ui.port }}
+      targetPort: ui
+---
+# Agent endpoint: separate Service so it can be exposed separately from the UI.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}-agents
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+  {{- with .Values.service.agents.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.agents.type }}
+  selector:
+    {{- include "eddy-hub.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: {{ .Values.service.agents.httpsPort }}
+      targetPort: agents
+    - name: http
+      port: {{ .Values.service.agents.httpPort }}
+      targetPort: agents

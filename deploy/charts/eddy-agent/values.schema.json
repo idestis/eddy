@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "cluster": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$", "maxLength": 63}
+      }
+    },
+    "hub": {
+      "type": "object",
+      "properties": {
+        "url": {"type": "string", "pattern": "^(wss?://.+)?$"},
+        "caBundle": {"type": "string"},
+        "allowInsecure": {"type": "boolean"}
+      }
+    },
+    "token": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {"type": "string"},
+        "key": {"type": "string", "minLength": 1},
+        "value": {"type": "string"}
+      }
+    },
+    "watch": {
+      "type": "object",
+      "properties": {"namespaces": {"type": "array", "items": {"type": "string"}}}
+    },
+    "impersonation": {
+      "type": "object",
+      "properties": {
+        "allowedGroupPrefixes": {"type": "array", "items": {"type": "string", "pattern": ":$", "not": {"pattern": "^system:"}}},
+        "groups": {"type": "array", "items": {"type": "string", "minLength": 1, "not": {"pattern": "^system:"}}}
+      }
+    },
+    "replicaCount": {"type": "integer", "minimum": 0, "maximum": 1},
+    "healthPort": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "networkPolicy": {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+  }
+}

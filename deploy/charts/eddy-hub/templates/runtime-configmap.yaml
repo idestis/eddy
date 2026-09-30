@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eddy-runtime
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+data:
+  flags.yaml: |
+    # Kill switches, hot-reloaded by the hub. A flag can only turn a feature off.
+    {{- toYaml .Values.runtimeFlags | nindent 4 }}

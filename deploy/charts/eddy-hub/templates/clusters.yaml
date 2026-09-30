@@ -1,0 +1,45 @@
+{{- range $c := .Values.clusters }}
+{{- $secretName := default (printf "eddy-agent-%s" $c.name) $c.existingTokenSecret }}
+---
+apiVersion: gitops.eddy.dev/v1alpha1
+kind: Cluster
+metadata:
+  name: {{ $c.name }}
+  labels:
+    {{- include "eddy-hub.labels" $ | nindent 4 }}
+spec:
+  displayName: {{ default $c.name $c.displayName | quote }}
+  {{- with $c.environment }}
+  environment: {{ . | quote }}
+  {{- end }}
+  {{- with $c.region }}
+  region: {{ . | quote }}
+  {{- end }}
+  {{- with $c.color }}
+  color: {{ . | quote }}
+  {{- end }}
+  protected: {{ default false $c.protected }}
+  {{- if hasKey $c "order" }}
+  order: {{ $c.order }}
+  {{- end }}
+  agentTokenSecretRef:
+    name: {{ $secretName }}
+    key: token
+{{- if not $c.existingTokenSecret }}
+{{- $existing := lookup "v1" "Secret" $.Release.Namespace $secretName }}
+{{- $token := randAlphaNum 48 | b64enc }}
+{{- if $existing }}{{ $token = index $existing.data "token" }}{{ end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" $ | nindent 4 }}
+    gitops.eddy.dev/cluster: {{ $c.name }}
+type: Opaque
+data:
+  token: {{ $token }}
+{{- end }}
+{{- end }}

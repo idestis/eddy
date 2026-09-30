@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "eddy-agent.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-agent.labels" . | nindent 4 }}
+spec:
+  # One agent per cluster: two would both stream to the hub under the same name.
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "eddy-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "eddy-agent.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "eddy-agent.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: agent
+          image: {{ include "eddy-agent.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: EDDY_CLUSTER
+              value: {{ .Values.cluster.name | quote }}
+            - name: EDDY_HUB_URL
+              value: {{ .Values.hub.url | quote }}
+            - name: EDDY_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "eddy-agent.tokenSecretName" . }}
+                  key: {{ .Values.token.key }}
+            {{- if .Values.hub.caBundle }}
+            - name: EDDY_HUB_CA_FILE
+              value: /etc/eddy/hub-ca/ca.crt
+            {{- end }}
+            {{- if .Values.watch.namespaces }}
+            - name: EDDY_WATCH_NAMESPACES
+              value: {{ join "," .Values.watch.namespaces | quote }}
+            {{- end }}
+            - name: EDDY_ALLOWED_GROUP_PREFIXES
+              value: {{ join "," .Values.impersonation.allowedGroupPrefixes | quote }}
+            {{- if .Values.impersonation.groups }}
+            - name: EDDY_ALLOWED_GROUPS
+              value: {{ join "," .Values.impersonation.groups | quote }}
+            {{- end }}
+            {{- if .Values.hub.allowInsecure }}
+            - name: EDDY_ALLOW_INSECURE
+              value: "1"
+            {{- end }}
+            - name: EDDY_HEALTH_ADDR
+              value: {{ printf ":%d" (int .Values.healthPort) | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - {name: health, containerPort: {{ .Values.healthPort }}}
+          livenessProbe:
+            httpGet: {path: /healthz, port: health}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /healthz, port: health}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            {{- if .Values.hub.caBundle }}
+            - {name: hub-ca, mountPath: /etc/eddy/hub-ca, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 16Mi}
+        {{- if .Values.hub.caBundle }}
+        - name: hub-ca
+          configMap: {name: {{ include "eddy-agent.fullname" . }}-hub-ca}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

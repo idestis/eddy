@@ -1,0 +1,36 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "eddy-agent.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "eddy-agent.selectorLabels" . | nindent 6 }}
+  # Egress only. Listing no ingress rules denies all inbound traffic to the pod.
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    - ports:
+        {{- range $np.kubeAPIPorts }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+    - ports:
+        {{- range $np.hubPorts }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+      {{- with $np.hubTo }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

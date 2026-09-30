@@ -1,0 +1,62 @@
+Eddy hub {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+
+UI:  {{ .Values.publicURL }}
+{{- if not (or .Values.ingress.ui.enabled .Values.oauth2Proxy.enabled) }}
+     No UI ingress is enabled. To try it locally:
+       kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "eddy-hub.fullname" . }} 8080:{{ .Values.service.ui.port }}
+     (publicURL must match the address in your browser, or sign-in fails the Origin check.)
+{{- end }}
+{{- if eq (include "eddy-hub.ephemeral" .) "true" }}
+
+WARNING: the store is EPHEMERAL ({{ if eq .Values.store.driver "memory" }}store.driver=memory{{ else }}persistence.enabled=false{{ end }}).
+  Every pod restart or reschedule logs out all users, invalidates every MCP token
+  (clients get 401) and loses threads and in-database audit events.
+  Set persistence.enabled=true for anything beyond a demo.
+{{- end }}
+{{- if and .Values.config.auth.local.enabled (not .Values.users.existingSecret) (not .Values.users.list) }}
+
+WARNING: local sign-in is enabled but no users are defined. Set users.list or
+  users.existingSecret (hash passwords with: eddy-hub hash-password).
+{{- end }}
+{{- if .Values.config.ai.enabled }}
+
+Ask AI is enabled with provider "{{ .Values.config.ai.provider }}". Data from the asking user's
+RBAC-filtered view is sent to that provider. Kill switch: runtimeFlags.aiEnabled.
+{{- end }}
+{{- if .Values.oauth2Proxy.enabled }}
+
+Proxy auth: oauth2-proxy runs as a sidecar. /mcp bypasses the proxy on purpose (MCP clients
+authenticate with a personal access token), so do not add a second auth layer in front of it.
+{{- end }}
+{{- $agentsURL := "" }}
+{{- if .Values.agentsPublicURL }}
+{{- $agentsURL = printf "%s/agent/v1/connect" (trimSuffix "/" (.Values.agentsPublicURL | replace "https://" "wss://" | replace "http://" "ws://")) }}
+{{- else if .Values.ingress.agents.hosts }}
+{{- $agentsURL = printf "wss://%s/agent/v1/connect" (first .Values.ingress.agents.hosts) }}
+{{- else }}
+{{- $agentsURL = printf "wss://%s-agents.%s.svc:%d/agent/v1/connect" (include "eddy-hub.fullname" .) .Release.Namespace (int .Values.service.agents.httpsPort) }}
+{{- end }}
+
+Agent endpoint: {{ $agentsURL }}
+{{- if not (or .Values.agentsPublicURL .Values.ingress.agents.hosts) }}
+  (in-cluster address only. For agents in other clusters set agentsPublicURL or
+   ingress.agents.hosts, and terminate TLS there.)
+{{- end }}
+{{ if .Values.clusters }}
+Register each workload cluster by running this against THAT cluster:
+{{ range .Values.clusters }}
+  # {{ .name }}
+  helm install eddy-agent oci://ghcr.io/eddy-gitops/charts/eddy-agent --version {{ $.Chart.Version }} \
+    --kube-context <{{ .name }}-context> --namespace eddy-system --create-namespace \
+    --set cluster.name={{ .name }} \
+    --set hub.url={{ $agentsURL }} \
+    --set-string token.value="$(kubectl --context <hub-context> -n {{ $.Release.Namespace }} get secret {{ default (printf "eddy-agent-%s" .name) .existingTokenSecret }} -o jsonpath='{.data.token}' | base64 -d)"
+{{ end }}
+Prefer token.existingSecret over token.value if you manage secrets with GitOps.
+Add hub.caBundle (--set-file hub.caBundle=ca.pem) when the hub certificate is not publicly trusted.
+{{- else }}
+No clusters registered yet. Add entries to `clusters:` and upgrade. NOTES will then print the
+exact `helm install eddy-agent` command for each one.
+{{- end }}
+
+Next: apply deploy/rbac/eddy-user-rbac.yaml in each workload cluster so users can see something.

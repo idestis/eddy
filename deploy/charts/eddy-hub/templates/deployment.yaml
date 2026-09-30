@@ -1,0 +1,181 @@
+{{- $sidecar := .Values.oauth2Proxy.enabled }}
+{{- $uiPort := include "eddy-hub.port" .Values.config.listen.ui }}
+{{- $agentsPort := include "eddy-hub.port" .Values.config.listen.agents }}
+{{- $metricsPort := include "eddy-hub.port" .Values.config.listen.metrics }}
+{{- $ephemeral := eq (include "eddy-hub.ephemeral" .) "true" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "eddy-hub.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # SQLite on a ReadWriteOnce volume: never run two pods at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "eddy-hub.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "eddy-hub.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include "eddy-hub.hubConfig" . | sha256sum }}
+        {{- if not .Values.users.existingSecret }}
+        checksum/users: {{ .Values.users.list | toYaml | sha256sum }}
+        {{- end }}
+        {{- if $sidecar }}
+        checksum/oauth2-proxy: {{ include "eddy-hub.oauth2ProxyConfig" . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "eddy-hub.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: hub
+          image: {{ include "eddy-hub.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/etc/eddy/hub.yaml"]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.credentialsSecret }}
+          envFrom:
+            - secretRef: {name: {{ . }}}
+          {{- end }}
+          ports:
+            {{- if not $sidecar }}
+            - {name: ui, containerPort: {{ $uiPort }}}
+            {{- end }}
+            - {name: agents, containerPort: {{ $agentsPort }}}
+            - {name: metrics, containerPort: {{ $metricsPort }}}
+          # With the sidecar the UI listener is bound to 127.0.0.1, which the kubelet cannot
+          # reach, so liveness uses the agent listener (every listener serves /healthz).
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ ternary "agents" "ui" $sidecar }}
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: data, mountPath: /var/lib/eddy}
+            - {name: config, mountPath: /etc/eddy/hub.yaml, subPath: hub.yaml, readOnly: true}
+            - {name: users, mountPath: /etc/eddy/users, readOnly: true}
+            - {name: key, mountPath: /etc/eddy/key, readOnly: true}
+            - {name: runtime, mountPath: /etc/eddy/runtime, readOnly: true}
+            {{- if .Values.agentTLS.secretName }}
+            - {name: agent-tls, mountPath: /etc/eddy/agent-tls, readOnly: true}
+            {{- end }}
+        {{- if $sidecar }}
+        - name: oauth2-proxy
+          image: "{{ .Values.oauth2Proxy.image.repository }}:{{ .Values.oauth2Proxy.image.tag }}"
+          imagePullPolicy: {{ .Values.oauth2Proxy.image.pullPolicy }}
+          args:
+            - --alpha-config=/etc/oauth2-proxy/alpha.yaml
+            - --redirect-url={{ trimSuffix "/" .Values.publicURL }}/oauth2/callback
+            - --reverse-proxy=true
+            - --cookie-secure={{ hasPrefix "https://" .Values.publicURL }}
+            # MCP clients send only a PAT, so /mcp must bypass the proxy.
+            - --skip-auth-route=^/mcp$
+            {{- range .Values.oauth2Proxy.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef: {name: {{ .Values.oauth2Proxy.existingSecret }}}
+          ports:
+            - {name: ui, containerPort: 4180}
+          readinessProbe:
+            httpGet: {path: /ping, port: ui}
+          livenessProbe:
+            httpGet: {path: /ping, port: ui}
+          resources:
+            {{- toYaml .Values.oauth2Proxy.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - {name: oauth2-proxy-config, mountPath: /etc/oauth2-proxy/alpha.yaml, subPath: alpha.yaml, readOnly: true}
+            - {name: proxy-secret, mountPath: /etc/oauth2-proxy/secret, readOnly: true}
+        {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 16Mi}
+        - name: data
+          {{- if and .Values.persistence.enabled (not $ephemeral) }}
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-data" (include "eddy-hub.fullname" .)) .Values.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {sizeLimit: 1Gi}
+          {{- end }}
+        - name: config
+          configMap: {name: {{ include "eddy-hub.fullname" . }}}
+        - name: users
+          secret:
+            secretName: {{ include "eddy-hub.usersSecretName" . }}
+            defaultMode: 0440
+        - name: key
+          secret:
+            secretName: {{ include "eddy-hub.keySecretName" . }}
+            defaultMode: 0440
+        - name: runtime
+          configMap: {name: eddy-runtime}
+        {{- with .Values.agentTLS.secretName }}
+        - name: agent-tls
+          secret: {secretName: {{ . }}, defaultMode: 0440}
+        {{- end }}
+        {{- if $sidecar }}
+        - name: oauth2-proxy-config
+          configMap: {name: {{ include "eddy-hub.fullname" . }}-oauth2-proxy}
+        - name: proxy-secret
+          secret:
+            secretName: {{ .Values.credentialsSecret }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.config.auth.proxy.sharedSecretEnv }}
+                path: {{ .Values.config.auth.proxy.sharedSecretEnv }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

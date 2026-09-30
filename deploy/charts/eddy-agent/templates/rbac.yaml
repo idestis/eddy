@@ -1,0 +1,55 @@
+{{- if .Values.rbac.create }}
+# Read-only cache access plus the two things Eddy needs to act as the signed-in user:
+# SubjectAccessReviews and impersonation. No write verbs on any resource, and no access to
+# Secrets or ConfigMaps. Adding a Flux kind means extending the first rule.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "eddy-agent.fullname" . }}
+  labels:
+    {{- include "eddy-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [kustomize.toolkit.fluxcd.io]
+    resources: [kustomizations]
+    verbs: [get, list, watch]
+  - apiGroups: [helm.toolkit.fluxcd.io]
+    resources: [helmreleases]
+    verbs: [get, list, watch]
+  - apiGroups: [source.toolkit.fluxcd.io]
+    resources: [gitrepositories, ocirepositories, helmrepositories, helmcharts, buckets]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods, events, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [users]
+    verbs: [impersonate]
+  - apiGroups: [""]
+    resources: [groups]
+    verbs: [impersonate]
+    {{- with .Values.impersonation.groups }}
+    resourceNames:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "eddy-agent.fullname" . }}
+  labels:
+    {{- include "eddy-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "eddy-agent.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "eddy-agent.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
