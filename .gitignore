@@ -1,0 +1,30 @@
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Node
+node_modules/
+web/dist/
+web/.tanstack/
+*.tsbuildinfo
+
+# Local config and data
+hub.local.yaml
+*.db
+*.db-*
+.env
+.env.*
+!.env.example
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Built SPA (embedded by the hub); keep the placeholder
+internal/ui/dist/*
+!internal/ui/dist/.gitkeep
