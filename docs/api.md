@@ -21,7 +21,7 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
   - `confirm_required` 428
   - `rate_limited` 429
   - `disconnected` 503: the cluster's agent is not connected. No stale data is served.
-  - `unavailable` 503: the agent timed out or is busy
+  - `unavailable` 503: the agent timed out or is busy. It is also returned when PostgreSQL is unreachable, for sign-in, rate-limited writes, Ask AI, and session checks after the 30 s session cache expires. Reads of cluster data keep working.
   - `disabled` 503
   - `internal` 500
 - **Resource path:** `{kind}/{ns}/{name}` uses the Flux or workload Kind (for example
@@ -32,6 +32,7 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
   - JSON bodies are capped at 64 KiB, thread bodies at 512 KiB and requests at 1 MiB.
   - Anything larger gets 413 with code `bad_request`.
   - A store limit, such as too many messages in a thread, gives 409 `conflict`.
+- **Rate limits** are global across hub replicas: login, MCP calls, logs and writes, thread writes, and the Ask AI hourly quota. Concurrency caps are per replica: SSE streams, log streams, MCP in-flight requests and Ask AI concurrency.
 - **Unknown routes:** an unknown `/api` route returns a 404 JSON body, or 401 when the caller is not signed in.
 
 ## Session

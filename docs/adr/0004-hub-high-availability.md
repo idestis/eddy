@@ -248,3 +248,20 @@ sequenceDiagram
   `pg_advisory_xact_lock(hashtext(subject))`.
 - **Migrations** take a database-wide advisory lock, so hubs using different schemas of
   one database migrate one after another. This is harmless.
+
+## Implementation notes (HA, 2026-09-30)
+
+- **Readiness:** `/readyz` gates only on the cluster registry having synced (migrations
+  already ran at startup). Store and peer-link faults show as `ok (degraded: …)` and in
+  metrics, but never mark a pod unready. Every replica would see the same fault, so taking
+  all of them out of the Service would turn a partial outage into a full one.
+- **Peer auth** binds the dialled and the dialling *address*, because discovery yields
+  addresses, not pod names:
+  `HMAC(k_peer, "eddy-peer-v1"‖"dial"‖pod‖unix‖targetAddr‖fromAddr)`. The accepter
+  replies with its own MAC (mutual auth), and a 2-minute replay cache applies.
+- **Failover grace:** a lost primary agent session gets 5 s for a standby or mirror to take
+  over before the cluster shows as Disconnected.
+- **Cluster status** is written only by the replica holding an agent session. There is no
+  `broadcast` peer frame: thread and revoke fan-out uses store events only.
+- **Peers are opt-in** (`peer.listen`). The chart enables them, and single-replica dev
+  needs none.

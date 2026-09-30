@@ -18,7 +18,7 @@ This page summarises how Eddy protects your clusters, for people who run it and 
      v
  +-------------------------------- management cluster ------------------------------+
  |  [ingress: internal] --> Hub :8080  UI, /api, /auth, /mcp                          |
- |                              |   store: SQLite (sessions, PATs, threads, audit)    |
+ |                              |   store: PostgreSQL (sessions, PATs, threads, audit)|
  |                              |   reads: Cluster CRs + agent token Secrets (own ns) |
  |                          Hub :8443  /agent/v1/connect only  <-- separate Service   |
  +--------------------------------------------^---------------------------------------+

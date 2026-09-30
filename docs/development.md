@@ -42,7 +42,7 @@ Ctrl+C stops the hub, the agent and Vite together. Output is prefixed with `hub 
 `task dev` does four things (`hack/dev.sh` has the details):
 
 1. `task dev:config` writes `.dev/hub.yaml` with `go run -tags dev ./cmd/hub dev-config`:
-   loopback listeners, the memory store (or sqlite with `SQLITE=1`), local users, the dev
+   loopback listeners, the memory store (or PostgreSQL with `PG=1`), local users, the dev
    fake login, MCP, and one static cluster per context. It also creates the shared agent
    token in `.dev/agent-token` the first time. It reads your kubeconfig file but contacts
    no cluster, and it leaves an unchanged file alone.
@@ -50,8 +50,8 @@ Ctrl+C stops the hub, the agent and Vite together. Output is prefixed with `hub 
 3. The agent, built with `-tags dev`, under air (`.air.agent.toml`), in local mode.
 4. Vite on `:5173`, which proxies `/api`, `/auth` and `/mcp` to the hub on `:8080`.
 
-`.dev/` is gitignored. It holds `hub.yaml`, `agent-token`, `bin/` (the air builds),
-`tmp/` and, with `SQLITE=1`, `eddy.db`. Delete it to start from scratch.
+`.dev/` is gitignored. It holds `hub.yaml`, `agent-token`, `bin/` (the air builds) and
+`tmp/`. Delete it to start from scratch.
 
 ## Settings
 
@@ -65,7 +65,7 @@ Task variables on the command line win over your shell's environment, which wins
 | `ALLOW_WRITES_PROTECTED=1` | none, on purpose | `--allow-writes-protected` | off | Also allow writes on protected contexts. Needs `ALLOW_WRITES=1`. |
 | `PROTECT` | `EDDY_AGENT_PROTECT` | `--protect` | `(?i)prod` | Regex of contexts or cluster names that are protected. |
 | `LOCAL=0` | `EDDY_AGENT_LOCAL` | `--local` | `1` in tasks | `0` runs the real, impersonating agent (see [kind](#testing-the-impersonating-agent-on-kind)). |
-| `SQLITE=1` | | | memory | Keep sessions and threads in `.dev/eddy.db` across restarts. |
+| `PG=1` | `EDDY_DATABASE_URL` | | memory | Use PostgreSQL instead of the memory store, so sessions and threads survive restarts. `task dev PG=1` starts the `task dev:pg` container and uses its DSN unless `EDDY_DATABASE_URL` is set. |
 | | `EDDY_LOG_LEVEL` | | `info` | `debug`, `info`, `warn` or `error`, for the hub and the agent. |
 | | `KUBECONFIG` | `--kubeconfig` | `~/.kube/config` | Which kubeconfig to read. |
 
@@ -116,6 +116,32 @@ task dev:mock                        # Vite with mock data (VITE_MOCK=1), no hub
 
 Pass the same `CONTEXTS` and `PROTECT` to `dev:hub` and `dev:agent`: both regenerate
 `.dev/hub.yaml`, and the hub restarts when it changes.
+
+## PostgreSQL
+
+The memory store is enough for UI and agent work. For store work, or to keep data across
+restarts, use a throwaway PostgreSQL:
+
+```sh
+task dev:pg          # postgres:17 on 127.0.0.1:55432, named volume eddy-dev-pg; prints the DSN
+task dev PG=1        # the hub uses it (EDDY_DATABASE_URL)
+task dev:pg:down     # stop it; `docker volume rm eddy-dev-pg` deletes the data
+```
+
+The port is bound to loopback and the password is a fixed dev value.
+
+The store conformance suite and the HA tests (several hub replicas in one process) run
+against PostgreSQL when `EDDY_TEST_POSTGRES_DSN` is set; each test creates and drops its own
+schema:
+
+```sh
+docker run -d --rm --name eddy-pg-test -e POSTGRES_PASSWORD=eddy -p 55433:5432 postgres:17
+EDDY_TEST_POSTGRES_DSN='postgres://postgres:eddy@127.0.0.1:55433/postgres?sslmode=disable' go test -race ./...
+docker stop eddy-pg-test
+```
+
+Without it, the same tests run on the memory store, which stands in for everything the
+replicas share (rate limits, agent sessions and events).
 
 ## Hot reload
 

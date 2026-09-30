@@ -2,7 +2,7 @@
 
 > **v1.0 changes (2026-09-30).** Where this spec and the ADRs disagree, the ADRs win:
 > - Sign-in is local users plus trusted-proxy headers ([ADR-0003](docs/adr/0003-mvp-security.md)). GitHub OAuth, OIDC and SAML move to v1.1.
-> - Hub-owned data (sessions, PATs, threads, audit) lives in SQLite on a PVC ([ADR-0002](docs/adr/0002-hub-storage.md)). Cluster state stays in Kubernetes.
+> - Hub-owned data (sessions, PATs, threads, audit, rate limits) lives in PostgreSQL, bring your own ([ADR-0004](docs/adr/0004-hub-high-availability.md)). Hubs run active/active and agents 1..N per cluster. Cluster state stays in Kubernetes.
 > - New in v1.0: `/mcp` for Claude Code and other MCP clients, review **threads** on resources, AWS Bedrock as an Ask AI provider, and runtime kill switches.
 > - The API contract is [docs/api.md](docs/api.md).
 
@@ -37,7 +37,7 @@ Single module `github.com/idestis/eddy` (placeholder org), two binaries, Go 1.26
 | `internal/agent` | Informers, store, WebSocket session, impersonated actions |
 | `internal/hub` | HTTP API, SSE, agent registry, SAR-based filtering, audit, Ask AI |
 | `internal/auth` | Local users, trusted-proxy headers, sessions, CSRF, PATs, group mapping (OIDC/SAML in v1.1) |
-| `internal/store` | Hub storage: SQLite (default) and memory backends (ADR-0002) |
+| `internal/store` | Hub storage: PostgreSQL and memory backends (ADR-0004) |
 | `internal/threads` | RBAC-aware review threads on resources |
 | `internal/mcp` | MCP server at `/mcp` (streamable HTTP, PAT bearer) |
 | `internal/redact` | Secret-looking value redaction before AI and MCP output |
@@ -46,7 +46,7 @@ Single module `github.com/idestis/eddy` (placeholder org), two binaries, Go 1.26
 | `internal/ui` | `go:embed` of the built SPA |
 | `api/v1alpha1` | CRD types (`controller-gen` for deepcopy and CRD YAML) |
 
-Main dependencies: `client-go`, `coder/websocket`, `modelcontextprotocol/go-sdk`, `aws-sdk-go-v2/service/bedrockruntime`, `anthropic-sdk-go`, `modernc.org/sqlite`, `x/crypto`, `sigs.k8s.io/yaml`. Flux kinds are read as unstructured objects through dynamic informers, so no Flux API modules are imported.
+Main dependencies: `client-go`, `coder/websocket`, `modelcontextprotocol/go-sdk`, `aws-sdk-go-v2/service/bedrockruntime`, `anthropic-sdk-go`, `jackc/pgx/v5`, `x/crypto`, `sigs.k8s.io/yaml`. Flux kinds are read as unstructured objects through dynamic informers, so no Flux API modules are imported.
 
 ### Agent
 

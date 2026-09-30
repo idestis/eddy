@@ -109,6 +109,43 @@ the corporate network only.
 - **Protection:** TLS protects the channel. The hub pins the token to the Cluster name, and
   the agent can pin the hub's CA with `hub.caBundle`. Mutual TLS arrives in v1.1.
 
+## Replicas and control-plane protection
+
+The chart runs **two agent replicas** by default (`replicaCount`), spread across nodes
+(preferred anti-affinity) with a PodDisruptionBudget of `maxUnavailable: 1`.
+
+- **Each replica is a full agent:** it watches the cluster, keeps its own informer cache and
+  holds its own WebSocket to the hub. It introduces itself with a random `instance` id,
+  chosen once per process, and a `seq` that counts its dials.
+- **One cluster, several sessions:** the hub builds the cluster's view from one session (on
+  each hub replica, the oldest synced one connected to it, or else a relay to the replica
+  that has one) and keeps the others as hot standbys. When the primary goes away, a standby
+  takes over at once and the cluster does not show as `Disconnected`.
+- **Reconnects:** the same instance reconnecting with a higher `seq` replaces its old
+  connection on every hub replica. A dial with a lower `seq` than an existing connection is
+  refused.
+- **Cost:** every replica runs its own watches, so N replicas mean N times the watch
+  connections. Watches are cheap; two replicas is the default.
+
+Eddy must never overload a cluster's control plane, so the agent enforces limits closest to
+the API server. They apply per agent process; the chart's `limits.*` values are for the
+whole Deployment and it divides them by `replicaCount` (rounding down, at least 1):
+
+| Chart value (default) | Environment variable | What it limits |
+|---|---|---|
+| `limits.qps` (20) | `EDDY_KUBE_QPS` | client-go QPS. One token bucket for the agent's own clients (discovery, informers, SubjectAccessReviews) and a separate one shared by every impersonated client. |
+| `limits.burst` (40) | `EDDY_KUBE_BURST` | client-go burst, for both buckets. |
+| `limits.concurrency` (16) | `EDDY_MAX_CONCURRENT` | User requests in flight. More get a 503. |
+| `limits.logStreams` (8) | `EDDY_MAX_LOG_STREAMS` | Log streams in flight, counted within the requests. |
+| `limits.sarConcurrency` (8) | `EDDY_MAX_SAR_CONCURRENT` | SubjectAccessReviews in flight across all access checks. |
+
+A request also carries at most 100 access checks. The hub adds its own limits on top
+(per-user rates, SSE and log-stream caps, the 45 s access-check cache).
+
+Agent replicas need a hub that understands `instance` and `seq`. An older agent sends
+neither; the hub then treats every connection of that cluster as one instance whose newest
+connection wins, so run only one replica of an older agent.
+
 ## Hardening checklist
 
 - [ ] Install the agent in its own namespace, labelled with Pod Security `restricted`.

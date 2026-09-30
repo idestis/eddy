@@ -57,7 +57,7 @@ yours.
             ┌──────────────── Hub (management cluster) ────────────────┐
             │  :8080  UI · /api · /auth · /mcp       (internal ingress)│
             │  :8443  /agent/v1/connect              (agent endpoint)  │
-            │  SQLite: sessions · tokens · threads · audit             │
+            │  PostgreSQL: sessions · tokens · threads · audit         │
             │  K8s:    Cluster CRs · agent token Secrets               │
             └────────────▲────────────────────────────▲────────────────┘
                          │ WebSocket (agent dials out)│

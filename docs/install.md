@@ -25,9 +25,10 @@ This is `deploy/kind/up.sh`. It is safe to re-run. It:
 1. Creates a kind cluster named `eddy` and installs Flux.
 2. Adds a demo `GitRepository` and `Kustomization` (podinfo), so there is data to look at.
 3. Builds the hub and agent images and loads them into kind.
-4. Installs the hub with local users, a persistent volume and one registered cluster called `kind`.
-5. Installs the agent, pointing at the in-cluster agents Service over TLS. The script generates a self-signed certificate and gives it to the agent as `hub.caBundle`, so nothing uses plain `ws://`.
-6. Applies the example user RBAC.
+4. Installs the CloudNativePG operator (pinned release) and a one-instance PostgreSQL `Cluster` named `eddy-db`.
+5. Installs two hub replicas with local users, the `eddy-db-app` Secret as the store DSN, and one registered cluster called `kind`.
+6. Installs two agent replicas, pointing at the in-cluster agents Service over TLS. The script generates a self-signed certificate and gives it to the agent as `hub.caBundle`, so nothing uses plain `ws://`.
+7. Applies the example user RBAC.
 
 Then run the port-forward it prints:
 
@@ -39,7 +40,57 @@ Open <http://localhost:8080> and sign in as `dev` with password `eddy-dev-passwo
 
 ## Production install
 
-### 1. Install the hub (management cluster)
+### 1. PostgreSQL
+
+The hub keeps its own data in PostgreSQL 14 or later: sessions, personal access tokens, threads, audit events, preferences, plus the state replicas share (rate-limit counters, which replica holds which agent, cross-replica notifications). Cluster state is never stored there. Bring your own database: CloudNativePG, RDS or Aurora, Cloud SQL, or any PostgreSQL. It needs no extensions. The hub runs its migrations at start, under an advisory lock, so replicas starting together are fine.
+
+Give the hub a Secret whose key holds the DSN, a libpq URL such as `postgres://eddy:<password>@db.example.com:5432/eddy?sslmode=verify-full` (`verify-full` is recommended outside the cluster). Each replica opens up to `store.postgres.maxOpenConns` connections (default 10) plus one for `LISTEN`.
+
+**CloudNativePG.** With the [operator](https://cloudnative-pg.io) installed, this is all it takes (two instances give you a standby; one is enough to start):
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: eddy-db
+  namespace: eddy            # the hub's namespace
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:17
+  storage:
+    size: 5Gi
+  bootstrap:
+    initdb:
+      database: eddy
+      owner: eddy
+  # backup:                  # barman to object storage, see the CNPG docs
+  #   barmanObjectStore: {...}
+```
+
+CNPG creates the Secret `eddy-db-app`. Its `uri` key is a complete DSN, so point the hub at it:
+
+```yaml
+store:
+  postgres:
+    dsnSecret: {name: eddy-db-app, key: uri}
+```
+
+With the hub's NetworkPolicy on, also allow egress to the database, for example `networkPolicy.egress.postgresTo: [{podSelector: {matchLabels: {cnpg.io/cluster: eddy-db}}}]`.
+
+**Your own database.** Create a database and a role that owns it, then the Secret:
+
+```sh
+kubectl -n eddy create secret generic eddy-db \
+  --from-literal=dsn='postgres://eddy:<password>@db.example.com:5432/eddy?sslmode=verify-full'
+```
+
+and set `store.postgres.dsnSecret: {name: eddy-db, key: dsn}`.
+
+Sessions, rate-limit counters and the agent session registry live in `UNLOGGED` tables: a PostgreSQL crash, or a failover to a standby (standbys do not receive `UNLOGGED` data), empties them. That signs everyone out and resets the limits; nothing else is lost, and agents re-register within about 10 s.
+
+`store.driver: memory` needs no database but is for evaluation only: it runs one replica, and every restart signs everyone out, invalidates MCP tokens and loses threads. NOTES.txt and the UI warn about it.
+
+### 2. Install the hub (management cluster)
 
 Create the credentials Secret first (only what you use), so no secret goes into Helm values:
 
@@ -71,9 +122,9 @@ users:
     - username: bob
       passwordHash: "$argon2id$v=19$m=65536,t=3,p=4$...$..."
 
-persistence:
-  enabled: true
-  size: 1Gi
+store:
+  postgres:
+    dsnSecret: {name: eddy-db-app, key: uri}   # see step 1
 
 ingress:
   ui:
@@ -108,8 +159,9 @@ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \
 
 Things to know:
 
-- The hub runs **one replica** with SQLite on a PersistentVolumeClaim. Raising `replicaCount` is rejected at install time. The PVC carries `helm.sh/resource-policy: keep`, so `helm uninstall` leaves your data.
-- With `persistence.enabled: false` the database lives in an `emptyDir`. Every restart logs everyone out, invalidates all MCP tokens and loses threads. NOTES.txt and the UI both warn about it. Use it for demos only.
+- The hub runs **two replicas** by default, active/active (ADR-0004): each serves the UI, API, SSE, MCP and the agent endpoint. Agents connect to whichever replica the load balancer picks; the other replicas relay to it over the peer channel, a WebSocket on port 8444 between hub pods. The chart adds a headless Service `eddy-hub-peers` for discovery, `POD_NAME`/`POD_IP`, a PodDisruptionBudget (`maxUnavailable: 1`), a rolling update that never removes a replica before its replacement is ready (`maxSurge: 1`, `maxUnavailable: 0`), zone and host spreading and a preferred anti-affinity. With `networkPolicy.enabled`, port 8444 accepts only hub pods.
+- Replicas authenticate each other with a key derived from the hub key Secret, so every replica must mount the same one (the chart does). Each replica logs a `keyFingerprint` at start; a replica whose peer links fail authentication reports not ready.
+- A replica is ready when the store is reachable, the cluster registry has synced, it has a link to every peer that DNS lists (after a 30 s grace) and its relayed clusters have synced.
 - The session/pepper key is generated on first install and kept across upgrades. With `helm template` or Argo CD, `lookup` does not work, so create the Secret yourself and set `sessionKeySecret` (key name `key`, at least 32 random bytes). The same goes for agent tokens: use `clusters[].existingTokenSecret`.
 - Both Services (`eddy-hub`, `eddy-hub-agents`) are `ClusterIP`. The UI, API and MCP are on port 8080 and the agent endpoint is on 8443, with separate listeners so they can be exposed separately.
 
@@ -152,7 +204,7 @@ Agents in other VPCs or accounts reach the agents endpoint over VPC peering, Tra
 
 If you prefer no ingress for agents, put an internal NLB in front of the `eddy-hub-agents` Service with `service.agents.annotations`, and let the hub terminate TLS itself with `agentTLS.secretName` (a `kubernetes.io/tls` Secret).
 
-### 2. Register clusters
+### 3. Register clusters
 
 List every workload cluster in `clusters[]` and upgrade:
 
@@ -172,7 +224,7 @@ clusters:
 
 For each entry the chart creates a `Cluster` custom resource (`kubectl get clusters`, short name `ecl`) and a random token Secret `eddy-agent-<name>` in the hub namespace. Both are kept across upgrades.
 
-### 3. Install an agent in each workload cluster
+### 4. Install an agent in each workload cluster
 
 `helm upgrade` (or `helm install`) on the hub prints the exact command per cluster in NOTES.txt. It looks like this:
 
@@ -196,12 +248,15 @@ Options:
 | `impersonation.allowedGroupPrefixes` | Default `["eddy:"]`. `system:` is always refused |
 | `impersonation.groups` | Strictest: pin impersonation to an exact list of groups (RBAC `resourceNames`) |
 | `networkPolicy.enabled` | Egress-only policy (DNS, Kubernetes API, hub) |
+| `replicaCount` | Default `2`. Every replica connects; the hub uses the oldest and keeps the others as hot standbys, so a lost pod or node does not disconnect the cluster. Each replica runs its own watches |
+| `limits.qps`, `limits.burst` | client-go QPS/burst for the whole Deployment (default 20/40). The chart divides them by `replicaCount` |
+| `limits.concurrency`, `limits.logStreams`, `limits.sarConcurrency` | Requests, log streams and SubjectAccessReviews in flight for the whole Deployment (default 16/8/8), divided by `replicaCount` |
 
 The agent's ServiceAccount is read-only (Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Pods, events, Namespaces). It has no write access and cannot read Secrets or ConfigMaps. Its only extra powers are creating SubjectAccessReviews and impersonating users and `eddy:` groups.
 
 Within a minute the cluster shows as `Connected`: `kubectl get clusters`.
 
-### 4. Apply user RBAC
+### 5. Apply user RBAC
 
 Eddy shows what a person's own RBAC allows, so nobody sees anything until you grant it. Apply `deploy/rbac/eddy-user-rbac.yaml` in each workload cluster and adjust the subjects:
 
@@ -210,7 +265,7 @@ Eddy shows what a person's own RBAC allows, so nobody sees anything until you gr
 
 Local user `alice` with `groups: [platform]` is Kubernetes user `local:alice` in group `eddy:platform` (plus `eddy:authenticated`). Namespace-scoped RoleBindings work too.
 
-### 5. Optional: sign in through your identity provider
+### 6. Optional: sign in through your identity provider
 
 Local users work everywhere. To reuse your company login, run [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/) as a sidecar (Google, GitHub, Okta, Entra and the rest of its providers). Native OIDC and SAML in Eddy come later and plug into the same user and group mapping.
 
@@ -257,7 +312,7 @@ oauth2Proxy:
 
 The chart enables hub proxy auth, sets `trustedCIDRs` to `127.0.0.1/32`, and configures the proxy to send `X-Forwarded-Email`, `X-Forwarded-Groups` and `X-Eddy-Proxy-Secret` (read from the same `EDDY_PROXY_SECRET`). The chart's oauth2-proxy settings use its alpha configuration format, which can change between releases. Check a new version with `oauth2-proxy --config-test`. Users from the proxy get the Kubernetes user name from the email header, and PATs for proxy users live at most 30 days.
 
-### 6. Optional: Ask AI
+### 7. Optional: Ask AI
 
 Ask AI answers questions about a resource using only what the asking user can see. It is read-only and off by default.
 
@@ -343,7 +398,7 @@ and its permissions policy allows `InvokeModel` on only the inference profile an
 
 Drop the last statement if you do not set a guardrail. The condition keeps the foundation-model permission usable only through that profile. If Bedrock denies a call, compare the ARNs in the error message with the policy, because the regions behind a profile can change over time. Enable model access for the model in the Bedrock console first.
 
-### 7. Kill switches
+### 8. Kill switches
 
 Flip a feature off without a restart. The `eddy-runtime` ConfigMap is mounted into the hub and re-read continuously (Kubernetes propagates ConfigMap edits in about a minute):
 
@@ -361,9 +416,15 @@ kubectl -n eddy patch configmap eddy-runtime --type merge \
 
 A flag can only turn something off. It cannot enable what `config.*` disables. Set the same values under `runtimeFlags:` in your Helm values so an upgrade does not undo your change.
 
-### 8. Backup, upgrade, uninstall
+### 9. Backup, upgrade, uninstall
 
-**Backup.** All hub state is one SQLite file on the PVC (`/var/lib/eddy/eddy.db`): sessions, tokens, threads, audit and preferences. Cluster definitions and tokens live in Kubernetes (your Helm values) and are not in the file. The file holds emails and message text but no credentials. Back it up with volume snapshots from your CSI driver (a `VolumeSnapshot` of the `eddy-hub-data` PVC), ideally while the hub is scaled to 0 or idle, and encrypt the StorageClass at rest. Backups contain PII (emails, message text), so treat them accordingly. A built-in backup command and Litestream replication are not part of v0.1.
+**Backup.** All hub state is in the PostgreSQL database: tokens, threads, audit and preferences (sessions and counters too, but those are throwaway). Cluster definitions and agent tokens live in Kubernetes (your Helm values). The database holds emails and message text but no credentials: PAT secrets are stored only as HMACs. Back it up the way you back up any PostgreSQL:
+
+- CloudNativePG: a `ScheduledBackup` with barman to object storage, or volume snapshots, as its documentation describes.
+- RDS, Aurora, Cloud SQL: their automated backups and point-in-time recovery.
+- Anywhere: `pg_dump --format=custom "$DSN" > eddy.dump`, restored with `pg_restore`. `UNLOGGED` tables are dumped too; restoring them is harmless.
+
+Backups contain PII (emails, message text), so encrypt and restrict them. `eddy-hub admin backup` was removed together with SQLite.
 
 **Upgrade.**
 
@@ -381,7 +442,9 @@ kubectl apply -f /tmp/eddy/eddy-hub/crds/
 
  Upgrade the hub before the agents, then each agent with the same chart version.
 
-The hub restarts with `Recreate` (brief downtime; agents reconnect on their own). Sessions and tokens survive when persistence is on.
+The hub rolls one replica at a time, so the UI stays up: agents of the replica being replaced reconnect to another one within seconds, and with two agent replicas the standby keeps the cluster connected meanwhile. Migrations are forward-only and applied by the first new replica. Sessions and tokens survive, since they are in PostgreSQL.
+
+**Upgrading from a pre-release SQLite install.** There is no automatic migration of the SQLite file. Users sign in again and create new tokens; threads and in-database audit from v0.x are not carried over (stdout audit in your log pipeline is unaffected). Remove the old `persistence.*` values and the `eddy-hub-data` PVC once you no longer need the file.
 
 **Uninstall.**
 
@@ -390,10 +453,10 @@ helm uninstall eddy-agent -n eddy-system --kube-context prod-eu     # per worklo
 helm uninstall eddy-hub -n eddy
 ```
 
-The PVC, the signing-key Secret and the CRD remain on purpose. To remove everything:
+The database, the signing-key Secret and the CRD remain on purpose. To remove everything, drop the database (or delete the CNPG `Cluster`), then:
 
 ```sh
-kubectl -n eddy delete pvc eddy-hub-data secret eddy-hub-key
+kubectl -n eddy delete secret eddy-hub-key
 kubectl delete crd clusters.gitops.eddy.dev
 ```
 
@@ -402,4 +465,6 @@ kubectl delete crd clusters.gitops.eddy.dev
 - **Cluster stays `Disconnected`:** read the agent log (`kubectl -n eddy-system logs deploy/eddy-agent`). Usual causes are a wrong `hub.url`, a certificate the agent does not trust (set `hub.caBundle`), a token that does not match the `eddy-agent-<name>` Secret, or an ingress that closes idle WebSockets.
 - **Sign-in loops or fails with an Origin error:** `publicURL` must equal the address in the browser, including the scheme.
 - **The UI is empty:** the user has no RBAC in the cluster. Apply the example roles.
-- **Everyone got logged out:** the store is ephemeral, or the key Secret changed.
+- **Everyone got logged out:** the store is ephemeral (`store.driver: memory`), PostgreSQL crashed (its `UNLOGGED` session table is emptied on crash recovery), or the key Secret changed.
+- **A hub replica stays not ready:** read its `/readyz` on port 9090 (`kubectl -n eddy port-forward pod/<pod> 9090`, then `curl localhost:9090/readyz`). It names the missing peer link or unsynced cluster. Check that NetworkPolicies allow port 8444 between hub pods and that every replica logs the same `keyFingerprint`.
+- **Sign-in answers 503:** the hub cannot reach PostgreSQL. Reads of cluster data keep working; sign-in, token and thread writes and rate-limited actions fail closed until it is back.

@@ -25,7 +25,7 @@ flowchart LR
       MCP[MCP server]
       TH[threads.Service]
     end
-    DB[(SQLite on PVC<br/>sessions · PATs · threads · audit)]
+    DB[(PostgreSQL<br/>sessions · PATs · threads · audit · limits)]
     K8S[(Kubernetes API<br/>Cluster CRs · token Secrets<br/>users Secret · eddy-runtime CM)]
   end
 
@@ -86,7 +86,7 @@ flowchart TB
     KS[Hub key Secret: CSRF, PAT pepper]
     RT[eddy-runtime ConfigMap: kill switches]
   end
-  subgraph S[SQLite /var/lib/eddy/eddy.db]
+  subgraph S[PostgreSQL · LOGGED and UNLOGGED tables]
     SE[sessions: sha256 of id, 8h idle / 24h max]
     PT[api_tokens: HMAC, scopes, expiry ≤ 90d]
     THR[threads + messages: ResourceRef only]
@@ -264,7 +264,7 @@ sequenceDiagram
   participant M as Hub /mcp
   participant F as fleet.Service
   participant T as threads.Service
-  participant DB as SQLite
+  participant DB as PostgreSQL
   CC->>M: POST tools/call list_unhealthy<br/>Bearer eddy_pat_…
   M->>M: POST only · Origin/Host check · rate limit · kill switch
   M->>DB: token by id → HMAC compare, expiry, scopes
