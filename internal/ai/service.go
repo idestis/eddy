@@ -55,7 +55,26 @@ type AskRequest struct {
 	ResourceID string `json:"resourceId,omitempty"`
 	ThreadID   string `json:"threadId,omitempty"`
 	Question   string `json:"question"`
+	// Attachments are log lines the user selected in the UI. They are
+	// redacted, capped and wrapped as untrusted data, never treated as part
+	// of the question. Accepted only when ai.allowLogs is on.
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
+
+// Attachment is one block of user-selected log lines.
+type Attachment struct {
+	Kind   string   `json:"kind"`   // "logs"
+	Source string   `json:"source"` // e.g. "apps/podinfo-7d9f/podinfo"; shown to the model as a label
+	Lines  []string `json:"lines"`
+}
+
+// Attachment limits.
+const (
+	MaxAttachments         = 3
+	MaxAttachmentLines     = 500
+	MaxAttachmentBytes     = 32 << 10
+	maxAttachmentSourceLen = 200
+)
 
 // AskResponse is the reply to an ask.
 type AskResponse struct {
@@ -199,6 +218,9 @@ func (s *Service) Ask(ctx context.Context, p identity.Principal, r AskRequest) (
 		return AskResponse{}, fmt.Errorf("%w: question is required", ErrInvalid)
 	case len(r.Question) > MaxQuestionBytes:
 		return AskResponse{}, fmt.Errorf("%w: question exceeds %d bytes", ErrInvalid, MaxQuestionBytes)
+	}
+	if err := s.checkAttachments(r.Attachments); err != nil {
+		return AskResponse{}, err
 	}
 
 	human := p
@@ -532,9 +554,65 @@ func (a *askRun) userPrompt() string {
 		b.WriteString(Wrap(a.nonce, "thread", text))
 		b.WriteString("\n\n")
 	}
+	for _, att := range a.req.Attachments {
+		text, n := redact.Text(strings.Join(att.Lines, "\n"))
+		a.redactions += n
+		text, _ = truncate(text, MaxAttachmentBytes)
+		fmt.Fprintf(&b, "Log lines the user selected (%s):\n", sanitizeLabel(att.Source))
+		b.WriteString(Wrap(a.nonce, "attachment:logs", text))
+		b.WriteString("\n\n")
+	}
 	b.WriteString("Question from the signed-in user:\n")
 	b.WriteString(a.req.Question)
 	return b.String()
+}
+
+// checkAttachments enforces the attachment limits. Logs reach the model only
+// when the operator allowed it (ai.allowLogs), whether fetched by a tool or
+// selected by the user.
+func (s *Service) checkAttachments(atts []Attachment) error {
+	if len(atts) == 0 {
+		return nil
+	}
+	if !s.cfg.AllowLogs {
+		return fmt.Errorf("%w: log access for Ask AI is turned off on this hub (ai.allowLogs)", ErrInvalid)
+	}
+	if len(atts) > MaxAttachments {
+		return fmt.Errorf("%w: at most %d attachments", ErrInvalid, MaxAttachments)
+	}
+	lines, size := 0, 0
+	for _, a := range atts {
+		if a.Kind != "logs" {
+			return fmt.Errorf("%w: unsupported attachment kind %q", ErrInvalid, a.Kind)
+		}
+		lines += len(a.Lines)
+		for _, l := range a.Lines {
+			size += len(l) + 1
+		}
+	}
+	if lines > MaxAttachmentLines || size > MaxAttachmentBytes {
+		return fmt.Errorf("%w: attachments exceed %d lines or %d bytes", ErrInvalid, MaxAttachmentLines, MaxAttachmentBytes)
+	}
+	return nil
+}
+
+// sanitizeLabel keeps an attachment label to a short, printable string, since
+// it appears outside the data block.
+func sanitizeLabel(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '<' || r == '>' {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "no source"
+	}
+	if len(s) > maxAttachmentSourceLen {
+		s = s[:maxAttachmentSourceLen]
+	}
+	return s
 }
 
 func (a *askRun) auditDetail(err error) map[string]any {
