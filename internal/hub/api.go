@@ -45,6 +45,8 @@ type api struct {
 func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/v1/me", a.handleMe)
+	m.HandleFunc("GET /api/v1/prefs", a.handlePrefs)
+	m.HandleFunc("PUT /api/v1/prefs", a.handlePutPrefs)
 	m.HandleFunc("GET /api/v1/clusters", a.handleClusters)
 	m.HandleFunc("POST /api/v1/clusters", a.handleCreateCluster)
 	m.HandleFunc("GET /api/v1/clusters/permissions", a.handleClusterPermissions)

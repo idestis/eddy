@@ -1,11 +1,12 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
-import { useCluster, useClusters, useMe } from "../api/queries";
+import { useCluster, useMe } from "../api/queries";
 import { StreamProvider } from "../api/stream";
 import type { ClusterInfo } from "../api/types";
 import { AppStateProvider, useAppState } from "../lib/appState";
 import { applyClusterIdentity } from "../lib/clusterColor";
 import { BINDINGS, type Binding, installKeyboard, useKeys, usePendingSequence } from "../lib/keys";
+import { PrefsProvider, useOrderedClusters, useRecordVisits } from "../lib/prefs";
 import { AskAIProvider } from "./AskAI";
 import { ClusterMenu } from "./ClusterSwitch";
 import { CommandPalette } from "./CommandPalette";
@@ -63,9 +64,9 @@ function Banners({ cluster }: { cluster: ClusterInfo | undefined }) {
 function GlobalKeys() {
   const navigate = useNavigate();
   const toast = useToast();
-  const { data: clusters = [] } = useClusters();
+  const clusters = useOrderedClusters();
   const current = useRouteCluster();
-  const { palette, openPalette, closePalette, help, setHelp, ask } = useAppState();
+  const { palette, openPalette, closePalette, help, setHelp, ask, pane, setPane } = useAppState();
 
   const goCluster = (i: number) => {
     const c = clusters[(i + clusters.length) % clusters.length];
@@ -87,7 +88,10 @@ function GlobalKeys() {
     threads: () => void navigate({ to: "/threads" }),
     tokens: () => void navigate({ to: "/settings/tokens" }),
     audit: () => void navigate({ to: "/audit" }),
-    ask: () => (current ? ask() : toast("Open a cluster to ask AI about it.")),
+    // `a` toggles between Ask AI and Details; `d` goes straight back to Details.
+    ask: () =>
+      !current ? toast("Open a cluster to ask AI about it.") : pane === "ai" ? setPane("details") : ask(),
+    details: () => setPane("details"),
   });
   return null;
 }
@@ -122,8 +126,9 @@ function PendingSequence() {
 function Frame({ children }: { children: ReactNode }) {
   const current = useRouteCluster();
   const cluster = useCluster(current);
-  const { data: clusters = [] } = useClusters();
+  const clusters = useOrderedClusters();
   const { help, clusterMenu, palette } = useAppState();
+  useRecordVisits(current);
 
   useEffect(() => {
     applyClusterIdentity(cluster);
@@ -155,15 +160,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => installKeyboard(), []);
   return (
     <AppStateProvider>
-      <ToastProvider>
-        <ConfirmProvider>
-          <StreamProvider>
-            <AskAIProvider>
-              <Frame>{children}</Frame>
-            </AskAIProvider>
-          </StreamProvider>
-        </ConfirmProvider>
-      </ToastProvider>
+      <PrefsProvider>
+        <ToastProvider>
+          <ConfirmProvider>
+            <StreamProvider>
+              <AskAIProvider>
+                <Frame>{children}</Frame>
+              </AskAIProvider>
+            </StreamProvider>
+          </ConfirmProvider>
+        </ToastProvider>
+      </PrefsProvider>
     </AppStateProvider>
   );
 }

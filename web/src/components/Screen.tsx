@@ -133,7 +133,7 @@ export function Screen({
           <ClusterSwitch
             cluster={cluster}
             compact
-            className="hidden w-auto! max-[1180px]:grid max-[859px]:max-w-none max-[859px]:flex-1"
+            className="hidden w-auto! max-[1180px]:flex max-[859px]:max-w-none max-[859px]:flex-1"
           />
           <nav
             className="no-scrollbar flex min-w-0 flex-auto items-center gap-0.5 overflow-x-auto whitespace-nowrap text-15 text-ink-3 max-[859px]:hidden [&_a]:rounded-lg [&_a]:px-[7px] [&_a]:py-[5px] [&_a:hover]:bg-surface-sunken [&_a:hover]:text-ink"
@@ -171,7 +171,7 @@ export function Screen({
           {aside !== undefined && (
             <button
               type="button"
-              className="inline-flex h-[38px] shrink-0 items-center gap-2 rounded-tile border border-c/35 bg-linear-135 from-c/12 to-c2/12 px-3 text-13-5 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50 aria-pressed:border-c max-[859px]:hidden [&_svg]:text-c"
+              className="inline-flex h-[38px] shrink-0 items-center gap-2 rounded-tile border border-c/35 bg-linear-135 from-c/12 to-c2/12 px-3 text-13-5 font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50 aria-pressed:border-c min-[860px]:hidden [&_svg]:text-c"
               aria-pressed={pane === "ai"}
               disabled={!aiOn}
               title={aiOn ? "Ask AI" : "Ask AI is turned off on this hub"}
@@ -205,7 +205,12 @@ export function Screen({
       </main>
       {aside !== undefined && (
         <aside
-          className="relative flex min-h-0 min-w-0 shrink-0 flex-col border-l border-line bg-surface-side max-[859px]:hidden max-[1180px]:w-[380px]!"
+          className={`relative flex min-h-0 min-w-0 shrink-0 flex-col border-l border-line bg-surface-side max-[1180px]:w-[380px]! ${
+            // Narrow screens have no side column: Ask AI opens as a full-screen sheet instead.
+            pane === "ai"
+              ? "max-[859px]:fixed max-[859px]:inset-0 max-[859px]:z-40 max-[859px]:w-full!"
+              : "max-[859px]:hidden"
+          }`}
           style={{ width: asideWidth }}
           aria-label={pane === "ai" ? "Ask AI" : "Details"}
         >

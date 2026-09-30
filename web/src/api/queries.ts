@@ -16,6 +16,7 @@ import type { ClusterInfo, ConnectionInfo, Ref, Resource, ResourceSnapshot } fro
 export const keys = {
   me: ["me"] as const,
   providers: ["providers"] as const,
+  prefs: ["prefs"] as const,
   clusters: ["clusters"] as const,
   clusterPermissions: ["clusterPermissions"] as const,
   connection: (cluster: string) => ["connection", cluster] as const,
@@ -44,6 +45,14 @@ export const providersQuery = queryOptions({
   queryKey: keys.providers,
   queryFn: api.getProviders,
   staleTime: Number.POSITIVE_INFINITY,
+});
+
+/** The user's stored UI preferences; prefs.tsx merges and writes them back. */
+export const prefsQuery = queryOptions({
+  queryKey: keys.prefs,
+  queryFn: async () => (await api.getPrefs()).data,
+  staleTime: Number.POSITIVE_INFINITY,
+  retry: 1,
 });
 
 const byOrder = (a: ClusterInfo, b: ClusterInfo) => a.order - b.order || a.name.localeCompare(b.name);

@@ -18,12 +18,12 @@ import {
 } from "../lib/onboarding";
 import { ClusterTile } from "./ClusterSwitch";
 import { ConnectionChecklist, RejectedAttempts } from "./ConnectionStatus";
+import { EnvironmentPicker } from "./EnvironmentPicker";
 import { Icon } from "./Icon";
 import { InstallGuide } from "./InstallGuide";
 import { Modal } from "./Modal";
 
 const POLL_MS = 3_000;
-const ENVIRONMENTS = ["Production", "Staging", "Development", "Edge", "Sandbox"];
 
 function DialogHead({ title, sub, onClose }: { title: ReactNode; sub?: ReactNode; onClose: () => void }) {
   return (
@@ -49,7 +49,6 @@ function FieldError({ id, children }: { id: string; children?: string }) {
 }
 
 export interface ClusterFormProps {
-  defaultOrder: number;
   pending?: boolean;
   /** The last error from the hub, shown inline. */
   error?: Error | null;
@@ -58,7 +57,7 @@ export interface ClusterFormProps {
 }
 
 /** Step 1: the cluster's identity. Validation mirrors the hub; the hub has the last word. */
-export function ClusterForm({ defaultOrder, pending, error, onSubmit, onCancel }: ClusterFormProps) {
+export function ClusterForm({ pending, error, onSubmit, onCancel }: ClusterFormProps) {
   const [name, setName] = useState("");
   const [touched, setTouched] = useState(false);
   const [displayName, setDisplayName] = useState("");
@@ -66,7 +65,6 @@ export function ClusterForm({ defaultOrder, pending, error, onSubmit, onCancel }
   const [region, setRegion] = useState("");
   const [color, setColor] = useState<string | undefined>(undefined);
   const [isProtected, setProtected] = useState(false);
-  const [order, setOrder] = useState(String(defaultOrder));
   const id = useId();
 
   const errors = {
@@ -74,7 +72,6 @@ export function ClusterForm({ defaultOrder, pending, error, onSubmit, onCancel }
     displayName: labelError(displayName),
     environment: labelError(environment),
     region: labelError(region),
-    order: /^-?\d+$/.test(order.trim()) ? undefined : "Use a whole number.",
   };
   const valid = !Object.values(errors).some(Boolean);
   const conflict = isApiError(error, "conflict") && /exist/i.test(error.message);
@@ -91,7 +88,6 @@ export function ClusterForm({ defaultOrder, pending, error, onSubmit, onCancel }
       region: region.trim() || undefined,
       color,
       protected: isProtected,
-      order: Number.parseInt(order, 10),
       ttl: "1h",
     });
   };
@@ -101,7 +97,7 @@ export function ClusterForm({ defaultOrder, pending, error, onSubmit, onCancel }
     displayName: displayName || name,
     color,
     protected: isProtected,
-    order: Number.parseInt(order, 10) || 0,
+    order: 0,
     connected: false,
   };
 
@@ -140,38 +136,14 @@ export function ClusterForm({ defaultOrder, pending, error, onSubmit, onCancel }
             error={errors.displayName}
           />
           <TextField
-            label="Environment"
-            value={environment}
-            onChange={setEnvironment}
-            placeholder="Production"
-            error={errors.environment}
-            list={`${id}-envs`}
-          />
-          <datalist id={`${id}-envs`}>
-            {ENVIRONMENTS.map((e) => (
-              <option key={e} value={e} />
-            ))}
-          </datalist>
-          <TextField
             label="Region"
             value={region}
             onChange={setRegion}
             placeholder="us-east-1"
             error={errors.region}
           />
-          <label className="field">
-            Order
-            <input
-              type="number"
-              inputMode="numeric"
-              value={order}
-              onChange={(e) => setOrder(e.target.value)}
-              aria-invalid={Boolean(errors.order)}
-              aria-describedby={`${id}-order-err`}
-            />
-            <FieldError id={`${id}-order-err`}>{errors.order}</FieldError>
-          </label>
         </div>
+        <EnvironmentPicker value={environment} onChange={setEnvironment} error={errors.environment} />
         <fieldset className="m-0 flex flex-col gap-2 border-0 p-0">
           <legend className="mb-2 p-0 text-13 text-ink-2">Colour</legend>
           <div className="flex flex-wrap items-center gap-2.5">
@@ -180,7 +152,7 @@ export function ClusterForm({ defaultOrder, pending, error, onSubmit, onCancel }
               className="flex size-8 items-center justify-center rounded-full border border-dashed border-line-strong bg-surface-sunken text-ink-3 ring-ink ring-offset-2 ring-offset-surface aria-pressed:ring-2"
               aria-label="Automatic colour"
               aria-pressed={color === undefined}
-              title="Automatic: picked from the order"
+              title="Automatic: picked for you"
               onClick={() => setColor(undefined)}
             >
               <Icon name="sync" className="size-3.5" />
@@ -257,14 +229,12 @@ function TextField({
   onChange,
   placeholder,
   error,
-  list,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   error?: string;
-  list?: string;
 }) {
   const id = useId();
   return (
@@ -275,7 +245,6 @@ function TextField({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         maxLength={LABEL_MAX + 10}
-        list={list}
         autoComplete="off"
         aria-invalid={Boolean(error)}
         aria-describedby={`${id}-err`}
@@ -359,7 +328,7 @@ export function ConnectStep({ created, onFinish }: { created: CreatedCluster; on
 }
 
 /** The whole wizard in one dialog. Closing it at any step returns to the fleet page. */
-export function AddClusterDialog({ defaultOrder, onClose }: { defaultOrder: number; onClose: () => void }) {
+export function AddClusterDialog({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [created, setCreated] = useState<CreatedCluster | null>(null);
   const create = useMutation({
@@ -386,7 +355,6 @@ export function AddClusterDialog({ defaultOrder, onClose }: { defaultOrder: numb
             onClose={onClose}
           />
           <ClusterForm
-            defaultOrder={defaultOrder}
             pending={create.isPending}
             error={create.error}
             onSubmit={(input) => create.mutate(input)}

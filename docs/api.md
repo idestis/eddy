@@ -170,6 +170,18 @@ with no streaming in v1.0.
 | `POST /api/v1/tokens` | `{name, scopes: ["read"] or ["read","operate"], ttl: "720h" or "30d"}` | 201 `{token: "eddy_pat_…", item}`. The token is shown once. A TTL over the maximum gives 400; the per-user token limit gives 409. |
 | `DELETE /api/v1/tokens/{id}` | | 204 |
 
+## Preferences
+
+Per-user UI preferences (for example cluster pins and visit history). They belong to the
+signed-in user and are never shared.
+
+| Method and path | Body | Response |
+|---|---|---|
+| `GET /api/v1/prefs` | | `{data: object}`. `data` is `{}` when nothing is stored. |
+| `PUT /api/v1/prefs` | `{data: object}` | 200 `{data}`. Replaces the stored object. `data` must be a JSON object of at most 16 KiB, otherwise 400 (not an object) or 413. |
+
+The endpoints follow the usual `/api` rules: session cookie only (PATs get 401) and CSRF on `PUT`.
+
 ## Audit
 
 `GET /api/v1/audit?subject=&cluster=&cursor=&limit=`

@@ -419,3 +419,20 @@ func (c *client) errorCode(method, path string, body any) (int, string) {
 	_ = json.NewDecoder(resp.Body).Decode(&eb)
 	return resp.StatusCode, eb.Error.Code
 }
+
+// rawRequest sends a raw string body with the session's CSRF headers.
+func (c *client) rawRequest(method, path, body string) *http.Response {
+	c.t.Helper()
+	req, err := http.NewRequest(method, c.e.baseURL+path, strings.NewReader(body))
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Eddy-CSRF", c.csrf)
+	req.Header.Set("Origin", c.e.baseURL)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return resp
+}

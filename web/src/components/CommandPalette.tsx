@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { Command } from "cmdk";
 import { type KeyboardEvent, type ReactNode, useCallback, useMemo, useState } from "react";
-import { type FleetResource, useCluster, useClusters, useFleetResources, useMe } from "../api/queries";
+import { type FleetResource, useCluster, useFleetResources, useMe } from "../api/queries";
 import type { ClusterInfo } from "../api/types";
 import { useAppState } from "../lib/appState";
 import { clusterStyle } from "../lib/clusterColor";
@@ -10,6 +10,7 @@ import { highlightParts, type Match, type Ranges, rank } from "../lib/fuzzy";
 import type { KeyId } from "../lib/keys";
 import { flatNav, isFlux, kindInfo } from "../lib/kinds";
 import { detailLink } from "../lib/links";
+import { useOrderedClusters, usePrefs } from "../lib/prefs";
 import { toggleTheme } from "../lib/theme";
 import { useResourceActions } from "../lib/useResourceActions";
 import { ClusterTile } from "./ClusterSwitch";
@@ -27,6 +28,8 @@ interface PaletteCommand {
   cluster?: ClusterInfo;
   /** The digit that switches to this cluster. */
   digit?: number;
+  /** The cluster you are in: dimmed, badged and listed last. */
+  current?: boolean;
   keys?: KeyId;
   run: () => void;
 }
@@ -74,10 +77,11 @@ export function CommandPalette({
 }) {
   const [query, setQuery] = useState(initialQuery);
   const [scope, setScope] = useState<PaletteScope>(routeCluster ? "cluster" : "all");
-  const { closePalette, selection, setHelp, ask } = useAppState();
+  const { closePalette, selection, setHelp, ask, startNewChat } = useAppState();
+  const { clusters: clusterPrefs, togglePin } = usePrefs();
   const navigate = useNavigate();
   const { data: me } = useMe();
-  const { data: clusters = [] } = useClusters();
+  const clusters = useOrderedClusters();
   const { items: fleet } = useFleetResources();
   const selCluster = useCluster(selection?.cluster);
   const actions = useResourceActions(selCluster);
@@ -97,15 +101,23 @@ export function CommandPalette({
   );
 
   const commands = useMemo<PaletteCommand[]>(() => {
-    const out: PaletteCommand[] = clusters.map((c, i) => ({
+    // Digits follow the displayed order (the same as the 1-9 shortcuts); the current cluster goes last.
+    const switchTo: PaletteCommand[] = clusters.map((c, i) => ({
       id: `cluster:${c.name}`,
-      label: `Switch to ${c.displayName || c.name}`,
+      label: c.name === routeCluster ? c.displayName || c.name : `Switch to ${c.displayName || c.name}`,
       sub: [c.environment, c.region, c.connected ? "" : "disconnected"].filter(Boolean).join(", "),
       keywords: `ctx cluster switch ${c.name} ${c.environment ?? ""}`,
       cluster: c,
       digit: i < 9 ? i + 1 : undefined,
-      run: () => void navigate({ to: "/c/$cluster", params: { cluster: c.name } }),
+      current: c.name === routeCluster,
+      run: () => {
+        if (c.name !== routeCluster) void navigate({ to: "/c/$cluster", params: { cluster: c.name } });
+      },
     }));
+    const out: PaletteCommand[] = [
+      ...switchTo.filter((c) => !c.current),
+      ...switchTo.filter((c) => c.current),
+    ];
     if (selected && selection) {
       const info = kindInfo(selected.kind);
       const where = `${selected.kind} on ${selection.cluster}`;
@@ -188,6 +200,28 @@ export function CommandPalette({
     const navCluster = routeCluster ?? selection?.cluster;
     if (navCluster) {
       const params = { cluster: navCluster };
+      const navInfo = clusters.find((c) => c.name === navCluster);
+      if (navInfo) {
+        const pinned = clusterPrefs.pins.includes(navInfo.name);
+        out.push({
+          id: "pin",
+          label: pinned ? "Unpin cluster" : "Pin cluster",
+          sub: `${navInfo.name}: ${pinned ? "stop keeping it first" : "keep it first everywhere"}`,
+          keywords: "pin unpin star favorite favourite cluster top",
+          icon: "star",
+          run: () => togglePin(navInfo.name),
+        });
+      }
+      if (me?.features.ai && routeCluster) {
+        out.push({
+          id: "new-chat",
+          label: "New Ask AI chat",
+          sub: `Start a fresh conversation about ${selected?.name ?? routeCluster}`,
+          keywords: "ai ask new chat conversation clear reset",
+          icon: "plus",
+          run: () => startNewChat(),
+        });
+      }
       out.push({
         id: "attention",
         label: "Show what needs attention",
@@ -258,7 +292,20 @@ export function CommandPalette({
       },
     );
     return out;
-  }, [clusters, selected, selection, routeCluster, me, actions, navigate, ask, setHelp]);
+  }, [
+    clusters,
+    clusterPrefs.pins,
+    togglePin,
+    startNewChat,
+    selected,
+    selection,
+    routeCluster,
+    me,
+    actions,
+    navigate,
+    ask,
+    setHelp,
+  ]);
 
   const raw = query.trim();
   const commandsOnly = /^[:>]/.test(raw);
@@ -266,10 +313,14 @@ export function CommandPalette({
   const clusterByName = useMemo(() => new Map(clusters.map((c) => [c.name, c])), [clusters]);
   const toggleScope = useCallback(() => setScope((s) => (s === "cluster" ? "all" : "cluster")), []);
 
+  const digitsLive = query === "";
+
   const groups = useMemo(() => {
     const out: Array<{ heading: string; items: ReactNode[] }> = [];
     const cmdItems = (list: Array<{ item: PaletteCommand; match?: Match }>) =>
-      list.map(({ item: c, match }) => <CommandItem key={c.id} cmd={c} match={match} onRun={run(c.run)} />);
+      list.map(({ item: c, match }) => (
+        <CommandItem key={c.id} cmd={c} match={match} onRun={run(c.run)} digitsLive={digitsLive} />
+      ));
     const resItem = ({ item: fr, match }: { item: FleetResource; match?: Match }) => (
       <ResourceItem
         key={`${fr.cluster}/${fr.resource.id}`}
@@ -375,9 +426,22 @@ export function CommandPalette({
     navigate,
     ask,
     run,
+    digitsLive,
   ]);
 
   const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // With nothing typed yet, 1-9 jump straight to that cluster (same digits as the shortcuts).
+    if (query === "" && /^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const target = clusters[Number(e.key) - 1];
+      if (target) {
+        e.preventDefault();
+        e.stopPropagation();
+        closePalette();
+        if (target.name !== routeCluster)
+          void navigate({ to: "/c/$cluster", params: { cluster: target.name } });
+        return;
+      }
+    }
     // Tab toggles the scope instead of leaving the input.
     if (e.key === "Tab" && !e.shiftKey && routeCluster) {
       e.preventDefault();
@@ -457,6 +521,11 @@ export function CommandPalette({
           <span>
             <kbd>↵</kbd> open
           </span>
+          {digitsLive && clusters.length > 0 && (
+            <span>
+              <kbd>1–9</kbd> switch
+            </span>
+          )}
           {routeCluster && (
             <span>
               <kbd>Tab</kbd> {scoped ? "all clusters" : `only ${routeCluster}`}
@@ -478,9 +547,20 @@ const ITEM = "flex min-h-[46px] w-full items-center gap-[11px] rounded-control p
 const ICON_BOX =
   "flex size-[26px] shrink-0 items-center justify-center rounded-lg bg-surface-sunken text-ink-2";
 
-function CommandItem({ cmd, match, onRun }: { cmd: PaletteCommand; match?: Match; onRun: () => void }) {
+function CommandItem({
+  cmd,
+  match,
+  onRun,
+  digitsLive = false,
+}: {
+  cmd: PaletteCommand;
+  match?: Match;
+  onRun: () => void;
+  /** The search box is empty, so 1-9 switch clusters; the digit hints fade out once you type. */
+  digitsLive?: boolean;
+}) {
   return (
-    <Command.Item value={cmd.id} onSelect={onRun} className={ITEM}>
+    <Command.Item value={cmd.id} onSelect={onRun} className={`${ITEM} ${cmd.current ? "opacity-60" : ""}`}>
       {cmd.cluster ? (
         <ClusterTile cluster={cmd.cluster} size="sm" />
       ) : (
@@ -492,7 +572,18 @@ function CommandItem({ cmd, match, onRun }: { cmd: PaletteCommand; match?: Match
         </span>
         {cmd.sub && <span className="truncate text-12 text-ink-3">{cmd.sub}</span>}
       </span>
-      {cmd.digit ? <kbd>{cmd.digit}</kbd> : cmd.keys ? <KeyHint id={cmd.keys} /> : null}
+      {cmd.current ? (
+        <span className="badge">current</span>
+      ) : cmd.digit ? (
+        <kbd
+          className={`transition-opacity duration-150 ${digitsLive ? "opacity-100" : "opacity-0"}`}
+          aria-hidden={!digitsLive}
+        >
+          {cmd.digit}
+        </kbd>
+      ) : cmd.keys ? (
+        <KeyHint id={cmd.keys} />
+      ) : null}
     </Command.Item>
   );
 }

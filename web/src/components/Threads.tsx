@@ -108,12 +108,28 @@ function ThreadItem({ thread, showTarget }: { thread: Thread; showTarget?: boole
         aria-controls={bodyId}
         onClick={() => setOpen(!open)}
       >
-        <Icon name={thread.status === "resolved" ? "check" : "chat"} />
-        <span className="min-w-0 flex-1 truncate font-semibold">{thread.title}</span>
-        {thread.status === "resolved" && <span className="badge text-ok">Resolved</span>}
+        <Icon
+          name={thread.status === "resolved" ? "check" : "chat"}
+          className={`size-4 shrink-0 ${thread.status === "resolved" ? "text-ok" : "text-ink-3"}`}
+        />
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate font-semibold">{thread.title}</span>
+          {/* Open threads carry no badge: the status tabs already say so; only Resolved is marked. */}
+          {thread.status === "resolved" && <span className="badge shrink-0 text-ok">Resolved</span>}
+        </span>
         <AuthorBadges author={thread.createdBy} />
-        <span className="text-12 whitespace-nowrap text-ink-3">
-          {thread.createdBy.display} · {thread.messageCount} · {ago(thread.updatedAt)}
+        <span className="inline-flex shrink-0 items-center gap-3 text-12 whitespace-nowrap text-ink-3">
+          <span
+            className="inline-flex items-center gap-1 tabular-nums"
+            role="img"
+            aria-label={`${thread.messageCount} ${thread.messageCount === 1 ? "message" : "messages"}`}
+          >
+            <Icon name="chat" className="size-3.5" />
+            {thread.messageCount}
+          </span>
+          <span>
+            {thread.createdBy.display} · {ago(thread.updatedAt)}
+          </span>
         </span>
       </button>
       {open && (

@@ -31,14 +31,14 @@ export function SidePanel({
             aria-selected={pane === "details"}
             onClick={() => setPane("details")}
           >
-            Details
+            Details <KeyHint id="details" />
           </button>
           <button
             type="button"
             role="tab"
             className={SEG_BTN}
             aria-selected={pane === "ai"}
-            onClick={() => ask()}
+            onClick={() => (pane === "ai" ? undefined : ask())}
           >
             Ask AI <KeyHint id="ask" />
           </button>

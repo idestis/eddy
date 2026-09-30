@@ -275,6 +275,7 @@ export class MockHub {
       if (b === "pods") return error(400, "bad_request", "Logs are streamed over SSE.");
     }
 
+    if (root === "prefs") return this.prefsRoute(method, body);
     if (root === "threads") return this.threadsRoute(method, a, b, url, body);
     if (root === "ai" && a === "ask" && method === "POST") return this.ask(body);
     if (root === "tokens") return this.tokensRoute(method, a, body);
@@ -282,6 +283,20 @@ export class MockHub {
       return json({ items: this.audit.filter((x) => x.subject === me.user).slice(0, 50) });
 
     return error(404, "not_found", "No such route.");
+  }
+
+  // Per-user UI preferences (GET/PUT /prefs): one JSON object up to 16 KiB.
+  private prefs: Record<string, unknown> = {};
+
+  private prefsRoute(method: string, body: unknown): Response {
+    if (method === "GET") return json({ data: this.prefs });
+    if (method !== "PUT") return error(404, "not_found", "No such route.");
+    const data = (body as { data?: unknown } | undefined)?.data;
+    if (!data || typeof data !== "object" || Array.isArray(data))
+      return error(400, "bad_request", "data must be a JSON object");
+    if (JSON.stringify(data).length > 16 * 1024) return error(400, "bad_request", "request body too large");
+    this.prefs = data as Record<string, unknown>;
+    return json({ data: this.prefs });
   }
 
   // Cluster onboarding (ADR-0005)

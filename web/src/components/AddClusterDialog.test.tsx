@@ -6,7 +6,7 @@ import { ClusterForm } from "./AddClusterDialog";
 
 const setup = (error: Error | null = null) => {
   const onSubmit = vi.fn();
-  render(<ClusterForm defaultOrder={5} error={error} onSubmit={onSubmit} onCancel={() => {}} />);
+  render(<ClusterForm error={error} onSubmit={onSubmit} onCancel={() => {}} />);
   return { onSubmit, name: screen.getByRole("textbox", { name: /^Name/ }) };
 };
 
@@ -27,7 +27,7 @@ describe("ClusterForm", () => {
     const { name, onSubmit } = setup();
     await userEvent.type(name, "prod-us");
     await userEvent.type(screen.getByRole("textbox", { name: "Display name" }), "Prod US");
-    await userEvent.type(screen.getByRole("combobox", { name: "Environment" }), "Production");
+    await userEvent.click(screen.getByRole("radio", { name: "Production" }));
     const teal = screen.getByRole("button", { name: "Teal" });
     expect(teal).toHaveAttribute("aria-pressed", "false");
     await userEvent.click(teal);
@@ -42,7 +42,6 @@ describe("ClusterForm", () => {
       region: undefined,
       color: "#0f766e",
       protected: true,
-      order: 5,
       ttl: "1h",
     });
   });

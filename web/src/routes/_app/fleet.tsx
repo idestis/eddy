@@ -1,16 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import {
-  type FleetResource,
-  useCanAddCluster,
-  useClusters,
-  useFleetResources,
-  useMe,
-} from "../../api/queries";
+import { type FleetResource, useCanAddCluster, useFleetResources, useMe } from "../../api/queries";
 import type { ClusterInfo } from "../../api/types";
 import { AddClusterDialog } from "../../components/AddClusterDialog";
 import { FactList } from "../../components/ClusterCards";
-import { ClusterTile, LockBadge } from "../../components/ClusterSwitch";
+import { ClusterTile, LockBadge, PinButton } from "../../components/ClusterSwitch";
 import { ConnectionDialog, useConnection } from "../../components/ConnectionDialog";
 import { Empty } from "../../components/Empty";
 import { Icon } from "../../components/Icon";
@@ -22,6 +16,7 @@ import { age, ago, STATUS_RANK } from "../../lib/format";
 import { useKeys } from "../../lib/keys";
 import { isFlux, kindInfo } from "../../lib/kinds";
 import { detailLink } from "../../lib/links";
+import { useOrderedClusters } from "../../lib/prefs";
 
 export const Route = createFileRoute("/_app/fleet")({
   component: FleetPage,
@@ -37,34 +32,37 @@ function ClusterCard({ c, index, onboarding }: { c: ClusterInfo; index: number; 
       className={`relative flex min-w-0 flex-col gap-3 overflow-hidden rounded-card border border-line bg-surface p-4 has-[a:hover]:border-x-cc/45 has-[a:hover]:border-b-cc/45 ${c.protected ? "border-t-[5px] border-t-cc pt-3.5" : "border-t-[3px] border-t-cc pt-[15px]"}`}
       style={clusterStyle(c)}
     >
-      <Link
-        to="/c/$cluster"
-        params={{ cluster: c.name }}
-        className="flex min-w-0 flex-col gap-3 no-underline after:absolute after:inset-0 after:content-['']"
-        aria-label={`Open ${c.name}`}
-      >
-        <div className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-x-[11px]">
-          <span className="row-span-2">
-            <ClusterTile cluster={c} />
+      <div className="flex items-center gap-[11px]">
+        <Link
+          to="/c/$cluster"
+          params={{ cluster: c.name }}
+          className="flex min-w-0 flex-1 items-center gap-[11px] no-underline after:absolute after:inset-0 after:content-['']"
+          aria-label={`Open ${c.name}`}
+        >
+          <ClusterTile cluster={c} />
+          <span className="flex min-w-0 flex-1 flex-col justify-center">
+            <span className="flex min-w-0 items-center gap-1.5 text-15 font-semibold">
+              <span className="truncate">{c.displayName || c.name}</span>
+              {c.protected && <LockBadge />}
+            </span>
+            <span className="truncate text-12 text-ink-3">
+              {[c.environment, c.region].filter(Boolean).join(", ")}
+            </span>
           </span>
-          <span className="flex min-w-0 items-center gap-1.5 text-15 font-semibold">
-            <span className="truncate">{c.displayName || c.name}</span>
-            {c.protected && <LockBadge />}
-          </span>
-          <span className="col-start-3 row-span-2 row-start-1">{index < 9 && <kbd>{index + 1}</kbd>}</span>
-          <span className="col-start-2 truncate text-12 text-ink-3">
-            {[c.environment, c.region].filter(Boolean).join(", ")}
-          </span>
-        </div>
-        <FactList
-          rows={[
-            ["Health", <Health key="h" cluster={c} />],
-            ["Resources", c.connected ? total : "–"],
-            ["Flux", c.fluxVersion ?? "–"],
-            ["Kubernetes", c.kubernetesVersion ?? "–"],
-          ]}
-        />
-      </Link>
+        </Link>
+        <span className="relative z-[1] flex shrink-0 items-center gap-1">
+          {index < 9 && <kbd>{index + 1}</kbd>}
+          <PinButton cluster={c} />
+        </span>
+      </div>
+      <FactList
+        rows={[
+          ["Health", <Health key="h" cluster={c} />],
+          ["Resources", c.connected ? total : "–"],
+          ["Flux", c.fluxVersion ?? "–"],
+          ["Kubernetes", c.kubernetesVersion ?? "–"],
+        ]}
+      />
       <div className="flex min-h-8 items-center gap-2">
         <span
           className={`inline-flex min-w-0 items-center gap-1.5 text-12 ${c.connected ? "text-ink-3" : "text-bad"}`}
@@ -160,9 +158,10 @@ function UnhealthyTable({ items, clusters }: { items: FleetResource[]; clusters:
 }
 
 function FleetPage() {
-  const { data: clusters = [] } = useClusters();
+  const clusters = useOrderedClusters();
   const { items, loading } = useFleetResources();
   const byName = useMemo(() => new Map(clusters.map((c) => [c.name, c])), [clusters]);
+  const rank = useMemo(() => new Map(clusters.map((c, i) => [c.name, i])), [clusters]);
   const unhealthy = useMemo(
     () =>
       items
@@ -170,16 +169,15 @@ function FleetPage() {
         .sort(
           (a, b) =>
             STATUS_RANK[a.resource.status] - STATUS_RANK[b.resource.status] ||
-            (byName.get(a.cluster)?.order ?? 0) - (byName.get(b.cluster)?.order ?? 0),
+            (rank.get(a.cluster) ?? 0) - (rank.get(b.cluster) ?? 0),
         ),
-    [items, byName],
+    [items, rank],
   );
   const disconnected = clusters.filter((c) => !c.connected).length;
   const { data: me } = useMe();
   const onboarding = Boolean(me?.features.onboarding);
   const canAdd = useCanAddCluster();
   const [adding, setAdding] = useState(false);
-  const nextOrder = clusters.reduce((max, c) => Math.max(max, c.order), 0) + 1;
   useKeys({ addCluster: canAdd && (() => setAdding(true)) });
 
   return (
@@ -202,7 +200,7 @@ function FleetPage() {
           <ClusterCard key={c.name} c={c} index={i} onboarding={onboarding} />
         ))}
       </div>
-      {adding && <AddClusterDialog defaultOrder={nextOrder} onClose={() => setAdding(false)} />}
+      {adding && <AddClusterDialog onClose={() => setAdding(false)} />}
       <h3 className="mt-2 flex items-center gap-2 text-14 font-semibold">
         Needs attention across the fleet{" "}
         <span className="font-normal text-ink-3">{loading ? "loading…" : unhealthy.length}</span>

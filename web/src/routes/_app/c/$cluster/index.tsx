@@ -76,7 +76,7 @@ function StatusChip({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 whitespace-nowrap text-ink-2 hover:border-line-strong aria-pressed:text-ink ${CHIP_TONE[status]} ${count === 0 && !active ? "opacity-45" : ""}`}
+      className={`inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 whitespace-nowrap text-ink-2 hover:border-line-strong aria-pressed:text-ink ${CHIP_TONE[status]}`}
     >
       {status === "attention" ? <AttentionIcon /> : <StatusIcon status={status} />}
       {status === "attention" ? "Not ready" : STATUS_LABEL[status]}

@@ -53,3 +53,26 @@ describe("mock onboarding", () => {
     expect((await call(hub, "PATCH", "/api/v1/clusters/staging", { region: "us-east-1" })).status).toBe(200);
   });
 });
+
+describe("mock prefs", () => {
+  it("stores one object per session and guards the body", async () => {
+    const hub = new MockHub();
+    expect((await call<{ data: object }>(hub, "GET", "/api/v1/prefs")).data).toEqual({ data: {} });
+    const put = await call<{ data: object }>(hub, "PUT", "/api/v1/prefs", {
+      data: { clusters: { pins: ["a"] } },
+    });
+    expect(put.status).toBe(200);
+    expect((await call<{ data: object }>(hub, "GET", "/api/v1/prefs")).data).toEqual({
+      data: { clusters: { pins: ["a"] } },
+    });
+    expect((await call(hub, "PUT", "/api/v1/prefs", { data: [1] })).status).toBe(400);
+    expect((await call(hub, "PUT", "/api/v1/prefs", {})).status).toBe(400);
+    const noCsrf = hub.handle(
+      "PUT",
+      new URL("/api/v1/prefs", "http://localhost"),
+      { data: {} },
+      new Headers(),
+    );
+    expect(noCsrf.status).toBe(403);
+  });
+});

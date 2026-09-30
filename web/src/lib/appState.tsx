@@ -35,6 +35,10 @@ interface AppState {
   pendingQuestion: string | null;
   ask: (question?: string) => void;
   clearPendingQuestion: () => void;
+  /** Opens Ask AI on an empty conversation (the palette's "New Ask AI chat"). */
+  startNewChat: () => void;
+  /** True once per startNewChat call: the panel calls it, then clears its conversation. */
+  takeNewChat: () => boolean;
 }
 
 const AppStateContext = createContext<AppState | null>(null);
@@ -56,6 +60,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [clusterMenu, setClusterMenu] = useState<HTMLElement | null>(null);
   const [askFocus, setAskFocus] = useState(0);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const chatRequested = useRef(0);
+  const chatConsumed = useRef(0);
   const consumed = useRef(0);
   const requested = useRef(0);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -96,6 +102,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  const startNewChat = useCallback(() => {
+    chatRequested.current += 1;
+    ask();
+  }, [ask]);
+
+  const takeNewChat = useCallback(() => {
+    if (chatRequested.current <= chatConsumed.current) return false;
+    chatConsumed.current = chatRequested.current;
+    return true;
+  }, []);
+
   const clearPendingQuestion = useCallback(() => setPendingQuestion(null), []);
 
   const value = useMemo<AppState>(
@@ -117,6 +134,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       pendingQuestion,
       ask,
       clearPendingQuestion,
+      startNewChat,
+      takeNewChat,
     }),
     [
       selection,
@@ -134,6 +153,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       pendingQuestion,
       ask,
       clearPendingQuestion,
+      startNewChat,
+      takeNewChat,
     ],
   );
 

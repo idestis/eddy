@@ -1,13 +1,13 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FleetResource } from "../api/queries";
 import type { ClusterInfo } from "../api/types";
 import { AppStateProvider } from "../lib/appState";
 import { resource } from "../test/fixtures";
 import { CommandPalette } from "./CommandPalette";
 
-const clusters: ClusterInfo[] = ["staging", "prod-eu"].map((name, i) => ({
+const clusters: ClusterInfo[] = ["staging", "prod-eu", "dev"].map((name, i) => ({
   name,
   displayName: name,
   protected: false,
@@ -22,7 +22,8 @@ const fleet: FleetResource[] = [
   { cluster: "prod-eu", resource: resource("payments") },
 ];
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 vi.mock("../api/queries", () => ({
   useMe: () => ({ data: { features: { ai: false, logs: true } } }),
   useClusters: () => ({ data: clusters }),
@@ -105,5 +106,76 @@ describe("CommandPalette scope", () => {
     open("staging", "flux-sy");
     const marks = document.querySelectorAll("mark");
     expect([...marks].some((m) => m.textContent === "flux-sy")).toBe(true);
+  });
+});
+
+describe("CommandPalette cluster digits", () => {
+  const input = () => screen.getByPlaceholderText(/^Search/);
+  beforeEach(() => navigate.mockClear());
+
+  const clusterRows = () => {
+    const group = screen.getByText("Clusters").closest("[cmdk-group]") as HTMLElement;
+    return within(group).getAllByRole("option");
+  };
+
+  it("switches immediately on a digit while the input is empty", async () => {
+    const user = userEvent.setup();
+    open("staging");
+    await user.keyboard("2");
+    expect(navigate).toHaveBeenCalledWith({ to: "/c/$cluster", params: { cluster: "prod-eu" } });
+    expect(input()).toHaveValue("");
+  });
+
+  it("types digits normally once something has been typed", async () => {
+    const user = userEvent.setup();
+    open("staging");
+    await user.keyboard("a2");
+    expect(navigate).not.toHaveBeenCalled();
+    expect(input()).toHaveValue("a2");
+    // The digit hints fade out and the footer stops offering 1–9.
+    expect(screen.queryByText("switch")).toBeNull();
+  });
+
+  it("ignores a digit with no cluster and types it", async () => {
+    const user = userEvent.setup();
+    open("staging");
+    await user.keyboard("9");
+    expect(navigate).not.toHaveBeenCalled();
+    expect(input()).toHaveValue("9");
+  });
+
+  it("hints 1–9 in the footer while empty and fades the row digits when typing", async () => {
+    const user = userEvent.setup();
+    open("staging");
+    expect(screen.getByText("switch")).toBeInTheDocument();
+    const digit = within(clusterRows()[0] as HTMLElement).getByText("2");
+    expect(digit).toHaveClass("opacity-100");
+    await user.type(input(), "x");
+    expect(input()).toHaveValue("x");
+    expect(document.querySelector("kbd.opacity-0")).not.toBeNull();
+  });
+
+  it("lists the current cluster last with a badge, dimmed, and no 'Switch to'", () => {
+    open("staging");
+    const rows = clusterRows();
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining("Switch to prod-eu"),
+      expect.stringContaining("Switch to dev"),
+      expect.stringContaining("staging"),
+    ]);
+    const current = rows[2] as HTMLElement;
+    expect(current).toHaveTextContent("current");
+    expect(current.textContent).not.toContain("Switch to");
+    expect(current).toHaveClass("opacity-60");
+    // Digits keep following the displayed order: staging is 1, even though it is listed last.
+    expect(within(rows[0] as HTMLElement).getByText("2")).toBeInTheDocument();
+    expect(within(rows[1] as HTMLElement).getByText("3")).toBeInTheDocument();
+  });
+
+  it("does nothing for the current cluster's digit except close", async () => {
+    const user = userEvent.setup();
+    open("staging");
+    await user.keyboard("1");
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

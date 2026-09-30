@@ -1,17 +1,18 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { isApiError } from "../api/client";
-import { askAI } from "../api/endpoints";
-import { useMe } from "../api/queries";
-import type { AskStep, ClusterInfo, Message, Resource } from "../api/types";
+import { askAI, getThread } from "../api/endpoints";
+import { threadsQuery, useMe } from "../api/queries";
+import type { AskStep, ClusterInfo, Message, Resource, Thread } from "../api/types";
 import { ASK_PANEL_ATTR, useAppState } from "../lib/appState";
-import { bytes } from "../lib/format";
+import { ago, bytes } from "../lib/format";
 import { kindInfo } from "../lib/kinds";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { StatusIcon } from "./Status";
 
-type Turn =
+export type Turn =
   | { kind: "user"; text: string }
   | { kind: "ai"; message: Message; steps: AskStep[] }
   | { kind: "error"; text: string };
@@ -26,6 +27,8 @@ interface AskAIStore {
   get: (key: string) => Conversation | undefined;
   send: (key: string, req: { cluster: string; resourceId?: string; question: string }) => Promise<void>;
   reset: (key: string) => void;
+  /** Replaces a conversation with a stored ask thread, so the next question continues it. */
+  load: (key: string, threadId: string, turns: Turn[]) => void;
 }
 
 const AskAIContext = createContext<AskAIStore | null>(null);
@@ -83,9 +86,13 @@ export function AskAIProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const load = useCallback((key: string, threadId: string, turns: Turn[]) => {
+    setConversations((prev) => new Map(prev).set(key, { threadId, turns, busy: false }));
+  }, []);
+
   const get = useCallback((key: string) => conversations.get(key), [conversations]);
 
-  return <AskAIContext.Provider value={{ get, send, reset }}>{children}</AskAIContext.Provider>;
+  return <AskAIContext.Provider value={{ get, send, reset, load }}>{children}</AskAIContext.Provider>;
 }
 
 function useAskAI(): AskAIStore {
@@ -124,6 +131,114 @@ function stepLabel(s: AskStep): string {
   return args ? `${s.tool} ${args}` : s.tool;
 }
 
+/** Rebuilds a conversation from a stored ask thread. */
+export function turnsFromMessages(messages: readonly Message[]): Turn[] {
+  return messages.map((m): Turn => {
+    if (m.author.type !== "ai") return { kind: "user", text: m.body };
+    const steps = (m.meta as { steps?: AskStep[] } | undefined)?.steps;
+    return { kind: "ai", message: m, steps: Array.isArray(steps) ? steps : [] };
+  });
+}
+
+/** The earlier private chats about this cluster or resource, newest first. */
+function AskHistory({
+  cluster,
+  target,
+  onOpen,
+}: {
+  cluster: string;
+  target: Resource | undefined;
+  onOpen: (t: Thread) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const { data, isPending, isError } = useQuery({
+    ...threadsQuery({
+      type: "ask",
+      cluster,
+      kind: target?.kind,
+      namespace: target?.namespace,
+      name: target?.name,
+      limit: 20,
+    }),
+    enabled: open,
+  });
+  // The API treats an empty kind as "any": keep the exact context only.
+  const items = (data?.items ?? []).filter((t) =>
+    target
+      ? t.ref.kind === target.kind && t.ref.namespace === target.namespace && t.ref.name === target.name
+      : t.ref.kind === "",
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && !root.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Esc closes the menu; the buttons inside are the controls
+    <div
+      className="relative"
+      ref={root}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && open) {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          trigger.current?.focus();
+        }
+      }}
+    >
+      <button
+        ref={trigger}
+        type="button"
+        className="btn btn-sm"
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name="clock" />
+        History
+      </button>
+      {open && (
+        <div
+          className="absolute top-full right-0 z-20 mt-1.5 flex max-h-72 w-[min(320px,calc(100vw-32px))] flex-col overflow-auto rounded-xl border border-line-strong bg-surface p-1.5 shadow-window"
+          role="menu"
+          aria-label="Previous chats"
+        >
+          {isPending && <div className="px-2.5 py-2 text-12-5 text-ink-3">Loading…</div>}
+          {isError && <div className="px-2.5 py-2 text-12-5 text-bad">Couldn't load your chats.</div>}
+          {!isPending && !isError && items.length === 0 && (
+            <div className="px-2.5 py-2 text-12-5 text-ink-3">No earlier chats about this yet.</div>
+          )}
+          {items.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="menuitem"
+              className="flex min-w-0 flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left hover:bg-surface-sunken"
+              onClick={() => {
+                setOpen(false);
+                onOpen(t);
+              }}
+            >
+              <span className="w-full truncate text-13 font-medium">{t.title}</span>
+              <span className="text-11-5 text-ink-3">
+                {ago(t.updatedAt)} · {t.messageCount} {t.messageCount === 1 ? "message" : "messages"}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AIMessage({ turn, provider }: { turn: Extract<Turn, { kind: "ai" }>; provider?: string }) {
   const model = turn.message.author.client;
   return (
@@ -160,7 +275,9 @@ interface AskAIPanelProps {
 export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
   const { data: me } = useMe();
   const store = useAskAI();
-  const { askFocus, takeAskFocus, pendingQuestion, clearPendingQuestion, setPane } = useAppState();
+  const { askFocus, takeAskFocus, takeNewChat, pendingQuestion, clearPendingQuestion, setPane } =
+    useAppState();
+  const qc = useQueryClient();
   const [wholeCluster, setWholeCluster] = useState(false);
   const [draft, setDraft] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
@@ -182,6 +299,35 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
     },
     [enabled, store, key, cluster.name, target?.id],
   );
+
+  const newChat = useCallback(() => {
+    store.reset(key);
+    setDraft("");
+    input.current?.focus();
+  }, [store, key]);
+
+  const openThread = useCallback(
+    async (t: Thread) => {
+      try {
+        const detail = await qc.fetchQuery({
+          queryKey: ["threads", "detail", t.id],
+          queryFn: () => getThread(t.id),
+          staleTime: 0,
+        });
+        store.load(key, t.id, turnsFromMessages(detail.messages));
+        input.current?.focus();
+      } catch {
+        store.load(key, t.id, [{ kind: "error", text: "Couldn't open that chat. Try again." }]);
+      }
+    },
+    [qc, store, key],
+  );
+
+  // "New Ask AI chat" from the palette arrives as a signal, possibly before this panel mounted.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: askFocus is the trigger
+  useEffect(() => {
+    if (takeNewChat()) store.reset(key);
+  }, [askFocus, takeNewChat, store, key]);
 
   // Focus the question box when Ask AI was opened (tab, `a`, header button, palette), but
   // not merely because the panel re-mounted on another page.
@@ -213,7 +359,18 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
   const subject = target ? target.name : `all of ${cluster.name}`;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" {...{ [ASK_PANEL_ATTR]: "" }}>
+    // biome-ignore lint/a11y/noStaticElementInteractions: Esc anywhere in the panel returns to Details
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      {...{ [ASK_PANEL_ATTR]: "" }}
+      onKeyDown={(e) => {
+        // Esc anywhere in the panel goes back to Details (the question box handles its own Esc).
+        if (e.key === "Escape" && e.target !== input.current && !e.defaultPrevented) {
+          e.stopPropagation();
+          setPane("details");
+        }
+      }}
+    >
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3 text-12-5 text-ink-3">
         About
         <span className="inline-flex min-h-[30px] max-w-full items-center gap-[7px] rounded-full border border-line-strong bg-surface py-1 pr-1.5 pl-[9px] font-mono text-12 text-ink">
@@ -235,11 +392,18 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
             </button>
           )}
         </span>
-        {turns.length > 0 && (
-          <button type="button" className="btn btn-sm ml-auto" onClick={() => store.reset(key)}>
+        <span className="ml-auto flex items-center gap-1.5">
+          <AskHistory cluster={cluster.name} target={target} onOpen={(t) => void openThread(t)} />
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={newChat}
+            disabled={turns.length === 0 && !convo?.threadId}
+          >
+            <Icon name="plus" />
             New chat
           </button>
-        )}
+        </span>
       </div>
       {/* The conversation sits at the bottom, like a chat, and grows upwards. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4" ref={log} aria-live="polite">
@@ -316,8 +480,14 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
                 send(draft);
               } else if (e.key === "Escape") {
                 e.preventDefault();
-                input.current?.blur();
-                setPane("details");
+                e.stopPropagation();
+                // A draft goes first; Esc on an empty box returns to Details.
+                if (draft) {
+                  setDraft("");
+                } else {
+                  input.current?.blur();
+                  setPane("details");
+                }
               }
             }}
           />
@@ -338,7 +508,7 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
             AI can be wrong. Check before acting.
           </span>
           <span className="ml-auto inline-flex shrink-0 items-center gap-1">
-            <kbd>↵</kbd> send <span aria-hidden="true">·</span> <kbd>esc</kbd> close
+            <kbd>↵</kbd> send <span aria-hidden="true">·</span> <kbd>esc</kbd> {draft ? "clear" : "details"}
           </span>
         </div>
       </form>

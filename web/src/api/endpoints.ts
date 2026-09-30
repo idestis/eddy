@@ -49,6 +49,14 @@ export const login = (body: { username: string; password: string; returnTo?: str
 export const logout = () => request<void>("/auth/logout", { method: "POST" });
 export const getMe = () => request<Me>(`${V1}/me`);
 
+// Preferences
+
+export type Prefs = Record<string, unknown>;
+
+export const getPrefs = () => request<{ data: Prefs }>(`${V1}/prefs`);
+export const putPrefs = (data: Prefs) =>
+  request<{ data: Prefs }>(`${V1}/prefs`, { method: "PUT", body: { data } });
+
 // Clusters and resources
 
 export const getClusters = () => request<List<ClusterInfo>>(`${V1}/clusters`);
