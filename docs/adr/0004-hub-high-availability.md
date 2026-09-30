@@ -230,3 +230,21 @@ sequenceDiagram
 - Non-graceful node shutdown force-detaches volumes after a 6 min timeout, or sooner once an operator applies the `node.kubernetes.io/out-of-service` taint. https://kubernetes.io/docs/concepts/cluster-administration/node-shutdown/
 - PostgreSQL `INTEGER` is 4 bytes. Unix-millisecond times need `BIGINT`.
 
+
+## Implementation notes (store, 2026-09-30)
+
+- **`rate_limits(key, window_start, reset_at, count)`:** a window starts at a key's first
+  hit, not on clock boundaries. That makes exact-length lockouts possible. A hit is still
+  one statement: `INSERT … ON CONFLICT DO UPDATE … RETURNING count`.
+- **`agent_sessions` rows are keyed by `(cluster, agent_instance)` and carry `seq`.** A
+  higher `seq` from the same instance replaces the row, wherever it is. `Heartbeat`
+  returns `ErrNotFound` once another replica has taken over, and the caller then drops
+  its socket.
+- **Events** carry kinds `thread`, `revoke`, `agent` and `resync`, with payloads of at
+  most 1 KiB. Delivery is best effort: 256 buffered events per subscriber. After the
+  LISTEN connection reconnects, subscribers get `resync`.
+- **Per-user PAT limit:** not yet atomic. The HA phase adds
+  `Tokens.Create(ctx, t, maxActive)` under
+  `pg_advisory_xact_lock(hashtext(subject))`.
+- **Migrations** take a database-wide advisory lock, so hubs using different schemas of
+  one database migrate one after another. This is harmless.
