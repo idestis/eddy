@@ -1,6 +1,6 @@
 # ADR-0002: Hub storage layer
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0004](0004-hub-high-availability.md) (PostgreSQL store). Kept for the reasoning about what stays in Kubernetes.
 - **Date:** 2026-09-30
 - **Scope:** `eddy-hub` only. Agents stay stateless apart from their informer caches.
 
