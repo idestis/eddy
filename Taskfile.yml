@@ -1,0 +1,99 @@
+version: "3"
+
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  LDFLAGS: -s -w -X github.com/eddy-gitops/eddy/internal/version.Version={{.VERSION}}
+  STATICCHECK: honnef.co/go/tools/cmd/staticcheck@2026.1
+
+tasks:
+  default:
+    cmds: [task --list]
+
+  check:
+    desc: Lint, test and build everything (run before opening a PR)
+    cmds:
+      - task: lint
+      - task: test
+      - task: ui
+      - task: build
+
+  build:
+    desc: Build hub and agent binaries into bin/
+    cmds:
+      - CGO_ENABLED=0 go build -trimpath -ldflags '{{.LDFLAGS}}' -o bin/eddy-hub ./cmd/hub
+      - CGO_ENABLED=0 go build -trimpath -ldflags '{{.LDFLAGS}}' -o bin/eddy-agent ./cmd/agent
+
+  test:
+    desc: Go tests with the race detector
+    cmds:
+      - go test -race -count=1 ./...
+
+  lint:
+    desc: gofmt, go vet, staticcheck and Biome
+    cmds:
+      - test -z "$(gofmt -l cmd internal api)" || (gofmt -l cmd internal api && exit 1)
+      - go vet ./...
+      - go run {{.STATICCHECK}} ./...
+      - task: ui:lint
+
+  ui:install:
+    dir: web
+    sources: [package.json, pnpm-lock.yaml]
+    cmds: [pnpm install --frozen-lockfile]
+
+  ui:
+    desc: Build the SPA into internal/ui/dist (embedded by the hub)
+    deps: [ui:install]
+    dir: web
+    cmds: [pnpm run build]
+
+  ui:lint:
+    deps: [ui:install]
+    dir: web
+    cmds: [pnpm run lint, pnpm run typecheck, pnpm run test]
+
+  ui:dev:
+    desc: Vite dev server on :5173, proxying /api, /auth and /mcp to :8080
+    deps: [ui:install]
+    dir: web
+    cmds: [pnpm run dev]
+
+  dev:hub:
+    desc: Run the hub locally with the memory store and fake login
+    env:
+      EDDY_DEV_MODE: "1"
+      EDDY_DEV_AGENT_TOKEN: dev-token-please-change-0000000000
+    cmds:
+      - go run -tags dev ./cmd/hub --config hack/hub.dev.yaml
+
+  dev:agent:
+    desc: Run an agent against the current kubecontext, connecting to dev:hub
+    env:
+      EDDY_CLUSTER: dev
+      EDDY_HUB_URL: ws://127.0.0.1:8443/agent/v1/connect
+      EDDY_AGENT_TOKEN: dev-token-please-change-0000000000
+      EDDY_ALLOW_INSECURE: "1"
+      EDDY_HEALTH_ADDR: 127.0.0.1:8081
+    cmds:
+      - go run ./cmd/agent
+
+  images:
+    desc: Build the hub and agent container images
+    cmds:
+      - docker build --target hub -t ghcr.io/eddy-gitops/eddy-hub:{{.VERSION}} .
+      - docker build --target agent -t ghcr.io/eddy-gitops/eddy-agent:{{.VERSION}} .
+
+  charts:
+    desc: Lint and template the Helm charts
+    cmds:
+      - helm lint deploy/charts/eddy-hub deploy/charts/eddy-agent
+      - helm template eddy deploy/charts/eddy-hub > /dev/null
+      - helm template eddy deploy/charts/eddy-agent --set cluster.name=test --set hub.url=wss://hub.example.com/agent/v1/connect --set token.value=x > /dev/null
+
+  kind:up:
+    desc: Create a kind cluster with Flux, the hub and an agent
+    cmds: [./deploy/kind/up.sh]
+
+  kind:down:
+    cmds: [kind delete cluster --name eddy]
