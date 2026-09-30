@@ -23,6 +23,12 @@ type Hub struct {
 	PublicURL string `json:"publicURL"`
 	// Namespace is where Cluster CRs' token Secrets live. Defaults to POD_NAMESPACE.
 	Namespace string `json:"namespace"`
+	// AgentsPublicURL is the base URL agents in workload clusters dial, e.g.
+	// https://eddy-agents.internal.example.com. The install guide turns it
+	// into wss://<host>/agent/v1/connect. Empty leaves a placeholder.
+	AgentsPublicURL string `json:"agentsPublicURL,omitempty"`
+	// Onboarding configures adding clusters from the UI (ADR-0005).
+	Onboarding Onboarding `json:"onboarding"`
 
 	Listen  Listen  `json:"listen"`
 	Auth    Auth    `json:"auth"`
@@ -209,6 +215,29 @@ type Peer struct {
 	Advertise string `json:"advertise"`
 }
 
+// Onboarding configures the add-cluster wizard and join tokens. It needs
+// Cluster CRs (it is off with staticClusters) and the hub's extra RBAC
+// (the eddy-hub chart's onboarding.enabled).
+type Onboarding struct {
+	Enabled bool `json:"enabled"`
+	// JoinTokenTTL is the default lifetime of a join token, default 1h. A
+	// request may ask for up to MaxJoinTokenTTL.
+	JoinTokenTTL Duration `json:"joinTokenTTL"`
+	// AgentChart is the eddy-agent chart reference used in the install
+	// guide, default oci://ghcr.io/idestis/charts/eddy-agent.
+	AgentChart string `json:"agentChart"`
+	// AgentChartVersion defaults to the hub's version.
+	AgentChartVersion string `json:"agentChartVersion"`
+	// AgentImage is the agent image for plain manifests, default
+	// ghcr.io/idestis/eddy-agent:<AgentChartVersion>.
+	AgentImage string `json:"agentImage"`
+	// AgentNamespace is where the guide installs the agent, default eddy-system.
+	AgentNamespace string `json:"agentNamespace"`
+}
+
+// MaxJoinTokenTTL caps a join token's lifetime (ADR-0005).
+const MaxJoinTokenTTL = 24 * time.Hour
+
 // Runtime points at the hot-reloaded kill-switch file (eddy-runtime ConfigMap).
 type Runtime struct {
 	FlagsFile string `json:"flagsFile"` // default /etc/eddy/runtime/flags.yaml
@@ -340,6 +369,10 @@ func (h *Hub) applyDefaults() {
 
 	def(&h.Runtime.FlagsFile, "/etc/eddy/runtime/flags.yaml")
 
+	defD(&h.Onboarding.JoinTokenTTL, time.Hour)
+	def(&h.Onboarding.AgentChart, "oci://ghcr.io/idestis/charts/eddy-agent")
+	def(&h.Onboarding.AgentNamespace, "eddy-system")
+
 	def(&h.Peer.PodName, os.Getenv("POD_NAME"))
 	if h.Peer.PodName == "" {
 		if n, err := os.Hostname(); err == nil {
@@ -424,6 +457,15 @@ func (h *Hub) Validate() error {
 		default:
 			errs = append(errs, fmt.Errorf("ai.provider %q is not supported (anthropic, bedrock)", h.AI.Provider))
 		}
+	}
+	if h.AgentsPublicURL != "" {
+		u, err := url.Parse(h.AgentsPublicURL)
+		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "wss" && u.Scheme != "ws") {
+			errs = append(errs, fmt.Errorf("agentsPublicURL must be an absolute https:// (or wss://) URL, got %q", h.AgentsPublicURL))
+		}
+	}
+	if d := h.Onboarding.JoinTokenTTL.Duration; d < time.Minute || d > MaxJoinTokenTTL {
+		errs = append(errs, fmt.Errorf("onboarding.joinTokenTTL must be between 1m and %s", MaxJoinTokenTTL))
 	}
 	switch h.MCP.ProtectedClusters {
 	case "confirm", "deny":

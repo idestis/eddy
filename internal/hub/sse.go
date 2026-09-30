@@ -199,6 +199,9 @@ func (c *streamClient) send(ctx context.Context, e event) error {
 	switch e.kind {
 	case evResync:
 		return c.sw.event("resync", clusterEvent{Cluster: e.cluster})
+	case evConnection:
+		// Only the name travels; GET …/connection checks access.
+		return c.sw.event("connection", clusterEvent{Cluster: e.cluster})
 	case evChange:
 		fctx, cancel := context.WithTimeout(ctx, sseFilterTimeout)
 		ups, dels, err := c.a.fleet.filterChange(fctx, c.p, e)

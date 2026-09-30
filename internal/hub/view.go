@@ -68,10 +68,11 @@ func (v *clusterView) replace(rs []model.Resource) {
 	v.mu.Unlock()
 }
 
-// apply patches the view and returns what actually changed.
-func (v *clusterView) apply(d protocol.Delta) ([]model.Resource, []string) {
-	upserts := make([]model.Resource, 0, len(d.Upserts))
-	var deletes []string
+// apply patches the view and returns what actually changed. parents maps
+// the id of every deleted inventory-only row to its owner, so SSE can
+// filter the delete by the parent's visibility.
+func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes []string, parents map[string]model.Ref) {
+	upserts = make([]model.Resource, 0, len(d.Upserts))
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	for _, r := range d.Upserts {
@@ -86,15 +87,21 @@ func (v *clusterView) apply(d protocol.Delta) ([]model.Resource, []string) {
 		upserts = append(upserts, r)
 	}
 	for _, id := range d.Deletes {
-		if _, ok := v.resources[id]; ok {
+		if old, ok := v.resources[id]; ok {
 			delete(v.resources, id)
 			deletes = append(deletes, id)
+			if old.InventoryOnly && old.Owner != nil {
+				if parents == nil {
+					parents = map[string]model.Ref{}
+				}
+				parents[id] = *old.Owner
+			}
 		}
 	}
 	if len(upserts) > 0 || len(deletes) > 0 {
 		v.rv = v.rvSeq.Add(1)
 	}
-	return upserts, deletes
+	return upserts, deletes, parents
 }
 
 func (v *clusterView) isSynced() bool {
@@ -144,6 +151,9 @@ func (v *clusterView) tupleCounts() map[accessTuple]map[model.Status]int {
 	}
 	c := map[accessTuple]map[model.Status]int{}
 	for _, r := range v.resources {
+		if r.InventoryOnly {
+			continue // not counted: its status is always unknown
+		}
 		t, ok := tupleOf(r.Ref)
 		if !ok {
 			continue

@@ -86,6 +86,19 @@ type Resource struct {
 	Chart string `json:"chart,omitempty"`
 	// Inventory counts entries in a Kustomization's status.inventory.
 	Inventory int `json:"inventory,omitempty"`
+	// Ports lists a Service's ports as "<port>/<protocol>", with " → <targetPort>"
+	// when the target differs, e.g. "80/TCP → 8080".
+	Ports []string `json:"ports,omitempty"`
+	// Hosts lists an Ingress's rule hosts, without duplicates.
+	Hosts []string `json:"hosts,omitempty"`
+	// Schedule is a CronJob's cron schedule, e.g. "0 2 * * *".
+	Schedule string `json:"schedule,omitempty"`
+	// InventoryOnly marks an object known only from a Kustomization's
+	// status.inventory, whose kind Eddy does not watch (ConfigMap, Secret,
+	// ServiceAccount, RBAC, CRDs…). Such a summary carries the Ref, Version,
+	// Owner (the Kustomization) and Status "unknown", and nothing else: the
+	// agent never reads the object itself.
+	InventoryOnly bool `json:"inventoryOnly,omitempty"`
 	// Labels holds a small allowlisted subset of labels (app.kubernetes.io/*, Flux ownership).
 	Labels map[string]string `json:"labels,omitempty"`
 

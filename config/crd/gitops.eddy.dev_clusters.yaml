@@ -100,7 +100,8 @@ spec:
               properties:
                 phase:
                   type: string
-                  enum: [Connected, Disconnected]
+                  enum: [Pending, Connected, Disconnected]
+                  description: Pending until the first agent of a cluster added in the UI connects.
                 lastSeen:
                   type: string
                   format: date-time

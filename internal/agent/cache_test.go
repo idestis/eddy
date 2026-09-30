@@ -107,7 +107,7 @@ func TestCacheSnapshotOwnershipAndDeltas(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	podGVR := flux.All()[len(flux.All())-1].GVR("v1")
+	podGVR, _ := testServed.GVR(flux.KindPod)
 	if err := dyn.Resource(podGVR).Namespace("apps").Delete(ctx, "web-abc-1", metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +127,74 @@ func TestCacheSnapshotOwnershipAndDeltas(t *testing.T) {
 	if dels[0] != "/Pod/apps/web-abc-1" || ups[0].ID != ksRef.ID() || ups[0].Interval != "1m" {
 		t.Fatalf("delta upserts %v deletes %v", ups, dels)
 	}
+}
+
+func TestCacheInventoryOnlyRows(t *testing.T) {
+	inv := func(ids ...string) map[string]any {
+		var entries []any
+		for _, id := range ids {
+			entries = append(entries, map[string]any{"id": id, "v": "v1"})
+		}
+		return map[string]any{"inventory": map[string]any{"entries": entries}}
+	}
+	ks := u("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "flux-system", "apps", map[string]any{"interval": "5m"})
+	ks.Object["status"] = inv(
+		"apps_web_apps_Deployment", // watched: no inventory-only row
+		"apps_web-config__ConfigMap",
+		"apps_web-db__Secret",
+		"_apps__Namespace",
+		"_my_role_rbac.authorization.k8s.io_ClusterRole",
+	)
+	other := u("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "flux-system", "other", nil)
+	other.Object["status"] = inv("apps_web-config__ConfigMap") // already owned by apps
+	c, dyn := startCache(t, testServed, nil, ks, other)
+
+	snap := byID(c.Snapshot())
+	wantIDs := []string{"/ConfigMap/apps/web-config", "/Secret/apps/web-db", "/Namespace//apps", "rbac.authorization.k8s.io/ClusterRole//my_role"}
+	for _, id := range wantIDs {
+		r, ok := snap[id]
+		if !ok {
+			t.Fatalf("missing inventory-only row %s in %v", id, snap)
+		}
+		if !r.InventoryOnly || r.Status != model.StatusUnknown || r.Owner == nil || r.Owner.Name != "apps" || r.Version != "v1" {
+			t.Fatalf("row %s = %+v", id, r)
+		}
+	}
+	if _, ok := snap["apps/Deployment/apps/web"]; ok {
+		t.Fatal("a watched kind from the inventory must not be synthesised")
+	}
+	if len(snap) != 2+len(wantIDs) {
+		t.Fatalf("snapshot has %d rows: %v", len(snap), snap)
+	}
+
+	// Dropping an entry deletes its row; deleting the Kustomization deletes the rest.
+	ksGVR, _ := testServed.GVR("Kustomization")
+	ks2, err := dyn.Resource(ksGVR).Namespace("flux-system").Get(t.Context(), "apps", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ks2.Object["status"] = inv("apps_web-config__ConfigMap", "_apps__Namespace")
+	if _, err := dyn.Resource(ksGVR).Namespace("flux-system").Update(t.Context(), ks2, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var dels []string
+	waitFor(t, "inventory shrink", func() bool {
+		_, d := c.Drain()
+		dels = append(dels, d...)
+		return len(dels) >= 2
+	})
+	if strings.Join(dels, ",") != "/Secret/apps/web-db,rbac.authorization.k8s.io/ClusterRole//my_role" {
+		t.Fatalf("deletes %v", dels)
+	}
+	if err := dyn.Resource(ksGVR).Namespace("flux-system").Delete(t.Context(), "apps", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "kustomization delete", func() bool {
+		snap := byID(c.Snapshot())
+		_, cm := snap["/ConfigMap/apps/web-config"]
+		_, ns := snap["/Namespace//apps"]
+		return !cm && !ns && len(snap) == 1
+	})
 }
 
 func TestCacheReplicaSetArrivingLate(t *testing.T) {

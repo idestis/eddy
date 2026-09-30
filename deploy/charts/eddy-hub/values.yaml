@@ -4,10 +4,21 @@
 # Change this: the default is a placeholder.
 publicURL: https://eddy.internal.example.com
 
-# URL that agents in workload clusters use to reach the hub's agent listener. Only used to
-# print the `helm install eddy-agent` command in NOTES.txt. If empty, the first
-# ingress.agents host is used, then the in-cluster Service address.
+# URL that agents in workload clusters use to reach the hub's agent listener. Used in the
+# `helm install eddy-agent` command in NOTES.txt and in the UI's install guide. If empty, the
+# first ingress.agents host is used, then the in-cluster Service address.
 agentsPublicURL: ""
+
+# Add clusters from the UI (ADR-0005): "Add cluster" creates the Cluster resource, a token
+# Secret and a one-time join token, and shows the agent install command. Who may do it is
+# decided by the management cluster's RBAC on clusters.gitops.eddy.dev (create, update,
+# delete), checked with a SubjectAccessReview as the signed-in user.
+# enabled: true grants the hub create/update/delete on Cluster resources, on Secrets in its
+# own namespace, and create on subjectaccessreviews. false keeps the read-only RBAC and hides
+# the wizard. Clusters in `clusters:` below work either way.
+onboarding:
+  enabled: true
+  joinTokenTTL: 1h                 # default lifetime of a join token; at most 24h
 
 nameOverride: ""
 fullnameOverride: ""

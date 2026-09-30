@@ -22,7 +22,16 @@ rules:
     resources: [deployments, statefulsets, daemonsets, replicasets]
     verbs: [get, list, watch]
   - apiGroups: [""]
-    resources: [pods, events, namespaces]
+    resources: [pods, events, namespaces, services, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
     verbs: [get, list, watch]
   - apiGroups: [authorization.k8s.io]
     resources: [subjectaccessreviews]
@@ -48,6 +57,39 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ include "eddy-agent.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "eddy-agent.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if and .Values.rbac.create .Values.joinToken (not .Values.token.existingSecret) }}
+---
+# The agent's only write permission (ADR-0005): get and update its own token Secret, where it
+# stores the permanent token it receives when it joins. resourceNames pins it to that Secret.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "eddy-agent.fullname" . }}-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ include "eddy-agent.tokenSecretName" . }}]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "eddy-agent.fullname" . }}-token
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eddy-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "eddy-agent.fullname" . }}-token
 subjects:
   - kind: ServiceAccount
     name: {{ include "eddy-agent.serviceAccountName" . }}

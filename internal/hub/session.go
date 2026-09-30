@@ -302,7 +302,14 @@ func decodeResponse(payload json.RawMessage, from string) protocol.Response {
 // sanitizeResource accepts only surfaced kinds from the kind table and
 // recomputes the id, so an agent cannot inject other kinds (Secrets) or
 // mislabel an object.
+//
+// Inventory-only rows are the exception: any valid Kind name is accepted,
+// but the row is reduced to its Ref, version, owner (which must be a
+// Kustomization) and resourceVersion, with Status "unknown".
 func sanitizeResource(r model.Resource) (model.Resource, bool) {
+	if r.InventoryOnly {
+		return sanitizeInventoryRow(r)
+	}
 	k, ok := flux.KindByName(r.Kind)
 	if !ok || !k.Surfaced || r.Group != k.Group || r.Name == "" || (k.Namespaced && r.Namespace == "") {
 		return model.Resource{}, false
@@ -312,6 +319,25 @@ func sanitizeResource(r model.Resource) (model.Resource, bool) {
 	return r, true
 }
 
+func sanitizeInventoryRow(r model.Resource) (model.Resource, bool) {
+	o := r.Owner
+	if r.Name == "" || len(r.Name) > 253 || len(r.Namespace) > 63 || len(r.Group) > 253 || !flux.ValidKindName(r.Kind) ||
+		o == nil || o.Group != flux.GroupKustomize || o.Kind != flux.KindKustomization || o.Name == "" || o.Namespace == "" {
+		return model.Resource{}, false
+	}
+	owner := *o
+	out := model.Resource{
+		Ref:             r.Ref,
+		ID:              r.Ref.ID(),
+		Version:         truncate(r.Version, 32),
+		Status:          model.StatusUnknown,
+		InventoryOnly:   true,
+		Owner:           &owner,
+		ResourceVersion: truncate(r.ResourceVersion, 64),
+	}
+	return out, true
+}
+
 func (s *agentSession) applySnapshot(snap protocol.Snapshot) {
 	s.replace(snap.Resources)
 	s.emit(s, event{kind: evResync, cluster: s.cluster})
@@ -319,11 +345,11 @@ func (s *agentSession) applySnapshot(snap protocol.Snapshot) {
 }
 
 func (s *agentSession) applyDelta(d protocol.Delta) {
-	upserts, deletes := s.apply(d)
+	upserts, deletes, parents := s.apply(d)
 	if len(upserts) == 0 && len(deletes) == 0 {
 		return
 	}
-	s.emit(s, event{kind: evChange, cluster: s.cluster, upserts: upserts, deletes: deletes})
+	s.emit(s, event{kind: evChange, cluster: s.cluster, upserts: upserts, deletes: deletes, parents: parents})
 	s.emit(s, event{kind: evClusters})
 }
 

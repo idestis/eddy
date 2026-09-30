@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -65,6 +66,9 @@ type Session struct {
 	URL     string // hub endpoint, e.g. wss://hub.example.com/agent/v1/connect
 	Cluster string
 	Token   string
+	// Creds, when set, replaces Token: it may hold a join token that the
+	// hub trades for a permanent token (ADR-0005).
+	Creds   *Credentials
 	TLS     *tls.Config // nil uses the system roots
 	Hello   protocol.Hello
 	Source  Source
@@ -98,6 +102,17 @@ func newInstanceID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// errRejoin ends a join connection after the hub sent credentials, so the
+// session reconnects at once with the new token.
+var errRejoin = errors.New("agent: received credentials from the hub; reconnecting with them")
+
+func (s *Session) token() string {
+	if s.Creds != nil {
+		return s.Creds.Current()
+	}
+	return s.Token
+}
+
 // Connected reports whether a hub connection is up and its snapshot was sent.
 func (s *Session) Connected() bool { return s.connected.Load() }
 
@@ -106,9 +121,26 @@ func (s *Session) Run(ctx context.Context) error {
 	attempt := 0
 	for {
 		start := time.Now()
+		joining := s.Creds != nil && s.Creds.Joining()
 		err := s.connectOnce(ctx)
 		if ctx.Err() != nil {
 			return nil
+		}
+		if errors.Is(err, errRejoin) {
+			s.Logger.Info("agent: joined the hub; reconnecting with the permanent token")
+			attempt = 0
+			continue
+		}
+		if joining {
+			// Another replica may have joined with the same join token and
+			// stored the permanent token in the Secret.
+			if changed, rerr := s.Creds.Refresh(ctx); rerr != nil {
+				s.Logger.Warn("agent: re-read token secret", "error", rerr)
+			} else if changed {
+				s.Logger.Info("agent: found a permanent token in the token secret; using it")
+				attempt = 0
+				continue
+			}
 		}
 		if time.Since(start) > backoffResetAfter {
 			attempt = 0
@@ -154,10 +186,12 @@ func (s *Session) connectOnce(ctx context.Context) error {
 	if s.TLS != nil {
 		transport.TLSClientConfig = s.TLS.Clone()
 	}
+	token := s.token()
+	joining := isJoinToken(token)
 	dialCtx, cancelDial := context.WithTimeout(ctx, dialTimeout)
 	conn, resp, err := websocket.Dial(dialCtx, target, &websocket.DialOptions{
 		HTTPClient: &http.Client{Transport: transport},
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + s.Token}},
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}},
 	})
 	cancelDial()
 	if err != nil {
@@ -180,7 +214,24 @@ func (s *Session) connectOnce(ctx context.Context) error {
 		hello.Instance = processInstance
 	}
 	hello.Seq = s.seq.Add(1)
+	if s.Creds != nil && hello.Diagnostics != nil {
+		d := *hello.Diagnostics
+		d.CredentialsError = s.Creds.LastError()
+		hello.Diagnostics = &d
+	}
 	if err := c.send(ctx, protocol.TypeHello, "", hello); err != nil {
+		return err
+	}
+	if joining {
+		// A join connection only trades the join token for credentials: no
+		// snapshot, no deltas and no requests.
+		s.Logger.Info("agent: joining the hub with a join token", "url", s.URL, "cluster", s.Cluster)
+		errc := make(chan error, 2)
+		go func() { errc <- s.joinLoop(ctx, c) }()
+		go func() { errc <- s.pingLoop(ctx, c) }()
+		err := <-errc
+		cancel()
+		conn.CloseNow()
 		return err
 	}
 	if err := s.sendSnapshot(ctx, c); err != nil {
@@ -200,6 +251,42 @@ func (s *Session) connectOnce(ctx context.Context) error {
 	conn.CloseNow()
 	inflight.Wait()
 	return err
+}
+
+// joinLoop waits for the hub's credentials frame, stores the token and
+// answers. It returns errRejoin once the credentials are answered.
+func (s *Session) joinLoop(ctx context.Context, c *sessionConn) error {
+	for {
+		typ, data, err := c.conn.Read(ctx)
+		if err != nil {
+			return fmt.Errorf("agent: join: read from hub: %w", err)
+		}
+		if typ != websocket.MessageText {
+			continue
+		}
+		var f protocol.Frame
+		if err := json.Unmarshal(data, &f); err != nil || f.Type != protocol.TypeCredentials {
+			continue
+		}
+		var cr protocol.Credentials
+		res := protocol.CredentialsResult{Error: "invalid credentials frame"}
+		if err := json.Unmarshal(f.Payload, &cr); err == nil && s.Creds != nil {
+			res = s.Creds.Accept(ctx, cr.Token)
+		}
+		if res.Error != "" {
+			s.Logger.Warn("agent: could not store the token from the hub; keeping it in memory", "error", res.Error)
+		}
+		b, err := json.Marshal(res)
+		if err != nil {
+			return fmt.Errorf("agent: encode credentials result: %w", err)
+		}
+		if err := c.send(ctx, protocol.TypeResponse, f.ID, protocol.Response{Result: b}); err != nil {
+			return err
+		}
+		if s.Creds != nil && !s.Creds.Joining() {
+			return errRejoin
+		}
+	}
 }
 
 func (s *Session) sendSnapshot(ctx context.Context, c *sessionConn) error {

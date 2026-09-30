@@ -14,6 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/idestis/eddy/internal/ai"
 	"github.com/idestis/eddy/internal/audit"
 	"github.com/idestis/eddy/internal/auth"
@@ -60,6 +63,16 @@ type Options struct {
 	PeerAddr string
 	// PeerLookup replaces DNS resolution of peer.service (tests).
 	PeerLookup func(ctx context.Context, host string) ([]string, error)
+	// Kube replaces the management-cluster clients built from the
+	// in-cluster config or kubeconfig (tests pass fakes). Ignored with
+	// staticClusters.
+	Kube *KubeClients
+}
+
+// KubeClients are the hub's clients for the management cluster.
+type KubeClients struct {
+	Dynamic dynamic.Interface
+	Kube    kubernetes.Interface
 }
 
 // Hub is a configured hub. Create it with New, then call Run.
@@ -81,6 +94,7 @@ type Hub struct {
 	bus       *bus
 	registry  *sessionRegistry
 	peers     *peerNode // nil without peer.listen
+	onboard   *onboarding
 
 	recentThreads recentSet
 
@@ -175,6 +189,12 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 	})
 	if len(cfg.StaticClusters) > 0 {
 		loadStatic(h.reg, cfg.StaticClusters, log)
+	} else if o.Kube != nil {
+		if h.kube, err = newKubeSourceClients(h.reg, o.Kube.Dynamic, o.Kube.Kube, cfg.Namespace, log); err != nil {
+			return nil, err
+		}
+		h.status = newStatusWriter(h.statusSnapshot(), h.kube.patchStatus, log)
+		h.agents.onChange = h.status.kick
 	} else {
 		rc, err := kubeRestConfig()
 		if err != nil {
@@ -185,6 +205,11 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 		}
 		h.status = newStatusWriter(h.statusSnapshot(), h.kube.patchStatus, log)
 		h.agents.onChange = h.status.kick
+	}
+
+	h.onboard = newOnboarding(cfg, h.store, h.reg, h.kube, h.auth, rec, b, h.fleet, pod, log)
+	if cfg.Onboarding.Enabled && h.kube == nil {
+		log.Info("cluster onboarding is off: it needs Cluster resources, not staticClusters")
 	}
 
 	h.threads = threads.New(h.store.Threads(), h.fleet, rec, h.threadChanged)
@@ -223,12 +248,13 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 		streams: newConcurrencyLimiter(maxStreamsPerUser), logStreams: newConcurrencyLimiter(maxLogStreamsUser),
 		shutdown:  h.shutdown,
 		ephemeral: cfg.EphemeralStore(),
+		onboard:   h.onboard,
 	}
 	h.ui = ap.routes(mcpH, spa)
 	h.agentH = (&agentServer{
 		reg: h.reg, agents: h.agents, failures: newWindowLimiter(agentAuthFailures, agentAuthWindow),
 		metrics: h.metrics, log: log.With("component", "agents"), base: h.base, timeout: o.RequestTimeout,
-		registry: h.registry,
+		registry: h.registry, onboarding: h.onboard,
 	}).handler()
 	h.metricH = h.metricsHandler()
 	ok = true
@@ -273,6 +299,9 @@ func (h *Hub) statusSnapshot() func() map[string]clusterStatus {
 			}
 			st := last[spec.Name]
 			st.Phase = "Disconnected"
+			if m, _ := h.reg.meta(spec.Name); m.phase == phasePending && st.LastSeen.IsZero() {
+				st.Phase = phasePending // added in the UI and never connected
+			}
 			out[spec.Name] = st
 		}
 		return out

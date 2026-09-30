@@ -58,6 +58,17 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-peers.%s.svc" (include "eddy-hub.fullname" .) .Release.Namespace -}}
 {{- end -}}
 
+{{/* Base URL agents dial (https://host), for hub.yaml's agentsPublicURL. */}}
+{{- define "eddy-hub.agentsBaseURL" -}}
+{{- if .Values.agentsPublicURL -}}
+{{- trimSuffix "/" .Values.agentsPublicURL -}}
+{{- else if .Values.ingress.agents.hosts -}}
+{{- printf "https://%s" (first .Values.ingress.agents.hosts) -}}
+{{- else -}}
+{{- printf "https://%s-agents.%s.svc:%d" (include "eddy-hub.fullname" .) .Release.Namespace (int .Values.service.agents.httpsPort) -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Validation: fail early with a clear message. */}}
 {{- define "eddy-hub.validate" -}}
 {{- if not (has .Values.store.driver (list "postgres" "memory")) -}}
@@ -107,6 +118,8 @@ hub.yaml as YAML. User config first, then the values the chart owns.
 {{/* podName and advertise default to $POD_NAME and $POD_IP (set in the Deployment). */}}
 {{- $_ := set $owned "peer" (dict "listen" (printf ":%d" (int .Values.peer.port)) "service" (include "eddy-hub.peerService" .)) -}}
 {{- end -}}
+{{- $_ := set $owned "agentsPublicURL" (include "eddy-hub.agentsBaseURL" .) -}}
+{{- $_ := set $owned "onboarding" (dict "enabled" (and .Values.onboarding.enabled .Values.rbac.create) "joinTokenTTL" .Values.onboarding.joinTokenTTL "agentChartVersion" .Chart.Version "agentImage" (printf "ghcr.io/idestis/eddy-agent:%s" .Chart.AppVersion)) -}}
 {{- $cfg := mustMergeOverwrite (deepCopy .Values.config) $owned -}}
 {{- toYaml $cfg -}}
 {{- end -}}

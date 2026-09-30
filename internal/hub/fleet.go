@@ -297,6 +297,9 @@ func (f *fleetService) Get(ctx context.Context, p identity.Principal, cluster st
 	if err := f.validPrincipal(p); err != nil {
 		return model.Resource{}, err
 	}
+	if _, known := flux.KindByName(ref.Kind); !known {
+		return f.getInventoryRow(ctx, p, cluster, ref)
+	}
 	ref, _, err := canonicalRef(ref)
 	if err != nil {
 		return model.Resource{}, err
@@ -309,10 +312,57 @@ func (f *fleetService) Get(ctx context.Context, p identity.Principal, cluster st
 	if !ok {
 		return model.Resource{}, fmt.Errorf("%w: %s", fleet.ErrNotFound, ref.ID())
 	}
+	if r.InventoryOnly {
+		return f.visibleInventoryRow(ctx, p, cluster, r)
+	}
 	if err := f.requireVisible(ctx, p, cluster, ref); err != nil {
 		return model.Resource{}, err
 	}
 	return r, nil
+}
+
+// getInventoryRow finds the inventory-only row of a kind outside the kind
+// table (exact Kind spelling; any group unless ref.Group is set).
+func (f *fleetService) getInventoryRow(ctx context.Context, p identity.Principal, cluster string, ref model.Ref) (model.Resource, error) {
+	notFound := fmt.Errorf("%w: unknown kind %q", fleet.ErrNotFound, truncate(ref.Kind, 64))
+	if ref.Name == "" || !flux.ValidKindName(ref.Kind) {
+		return model.Resource{}, notFound
+	}
+	_, s, err := f.session(cluster)
+	if err != nil {
+		return model.Resource{}, err
+	}
+	if ref.Group != "" {
+		if r, ok := s.lookup(ref.ID()); ok && r.InventoryOnly {
+			return f.visibleInventoryRow(ctx, p, cluster, r)
+		}
+		return model.Resource{}, notFound
+	}
+	all, _ := s.view()
+	for _, r := range all {
+		if r.InventoryOnly && r.Kind == ref.Kind && r.Namespace == ref.Namespace && r.Name == ref.Name {
+			return f.visibleInventoryRow(ctx, p, cluster, r)
+		}
+	}
+	return model.Resource{}, notFound
+}
+
+// visibleInventoryRow returns r when p may see it (the list rule), and
+// ErrNotFound otherwise so that names do not leak.
+func (f *fleetService) visibleInventoryRow(ctx context.Context, p identity.Principal, cluster string, r model.Resource) (model.Resource, error) {
+	vis, err := f.authz.filter(ctx, p, cluster, []model.Resource{r})
+	if err != nil {
+		return model.Resource{}, err
+	}
+	if len(vis) == 0 {
+		return model.Resource{}, fmt.Errorf("%w: %s", fleet.ErrNotFound, r.ID)
+	}
+	return r, nil
+}
+
+// errInventoryOnly refuses yaml and events for objects Eddy knows only by name.
+func errInventoryOnly(kind string) error {
+	return fmt.Errorf("%w: Eddy does not read %s objects; it knows only their names from a Flux inventory", fleet.ErrForbidden, truncate(kind, 64))
 }
 
 // Children returns the visible resources whose Owner is ref (inventory,
@@ -349,6 +399,11 @@ func (f *fleetService) read(ctx context.Context, p identity.Principal, cluster s
 	if err := f.validPrincipal(p); err != nil {
 		return nil, err
 	}
+	if _, known := flux.KindByName(ref.Kind); !known && flux.ValidKindName(ref.Kind) {
+		// Kinds outside the table are never read; they appear only as
+		// inventory-only rows. The answer does not depend on existence.
+		return nil, errInventoryOnly(ref.Kind)
+	}
 	ref, _, err := canonicalRef(ref)
 	if err != nil {
 		return nil, err
@@ -356,6 +411,12 @@ func (f *fleetService) read(ctx context.Context, p identity.Principal, cluster s
 	_, s, err := f.session(cluster)
 	if err != nil {
 		return nil, err
+	}
+	if r, ok := s.lookup(ref.ID()); ok && r.InventoryOnly {
+		if _, err := f.visibleInventoryRow(ctx, p, cluster, r); err != nil {
+			return nil, err
+		}
+		return nil, errInventoryOnly(ref.Kind)
 	}
 	if err := f.requireVisible(ctx, p, cluster, ref); err != nil {
 		return nil, err
@@ -366,6 +427,9 @@ func (f *fleetService) read(ctx context.Context, p identity.Principal, cluster s
 // YAML returns the sanitised, redacted manifest of an allowlisted kind.
 func (f *fleetService) YAML(ctx context.Context, p identity.Principal, cluster string, ref model.Ref) (string, error) {
 	if !flux.YAMLAllowed(ref.Kind) {
+		if flux.ValidKindName(ref.Kind) {
+			return "", errInventoryOnly(ref.Kind)
+		}
 		return "", fmt.Errorf("%w: yaml is not available for kind %q", fleet.ErrNotFound, truncate(ref.Kind, 64))
 	}
 	raw, err := f.read(ctx, p, cluster, ref, protocol.OpYAML)
@@ -540,20 +604,26 @@ func (f *fleetService) filterChange(ctx context.Context, p identity.Principal, e
 	}
 	seen := map[accessTuple]bool{}
 	var tuples []accessTuple
-	byID := make(map[string]accessTuple, len(e.deletes))
+	byID := make(map[string][]accessTuple, len(e.deletes))
 	for _, id := range e.deletes {
 		ref, err := model.ParseRef(id)
 		if err != nil {
 			continue
 		}
-		t, ok := tupleOf(ref)
+		r := model.Resource{Ref: ref}
+		if parent, ok := e.parents[id]; ok {
+			r.InventoryOnly, r.Owner = true, &parent
+		}
+		ts, ok := requiredTuples(r)
 		if !ok {
 			continue
 		}
-		byID[id] = t
-		if !seen[t] {
-			seen[t] = true
-			tuples = append(tuples, t)
+		byID[id] = ts
+		for _, t := range ts {
+			if !seen[t] {
+				seen[t] = true
+				tuples = append(tuples, t)
+			}
 		}
 	}
 	allowed, err := f.authz.allowedTuples(ctx, p, e.cluster, "list", tuples)
@@ -562,7 +632,15 @@ func (f *fleetService) filterChange(ctx context.Context, p identity.Principal, e
 	}
 	var dels []string
 	for _, id := range e.deletes {
-		if t, ok := byID[id]; ok && allowed[t] {
+		ts, ok := byID[id]
+		if !ok {
+			continue
+		}
+		visible := true
+		for _, t := range ts {
+			visible = visible && allowed[t]
+		}
+		if visible {
 			dels = append(dels, id)
 		}
 	}

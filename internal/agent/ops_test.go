@@ -29,6 +29,8 @@ var testServed = flux.Served{
 	"Kustomization": "v1", "HelmRelease": "v2", "GitRepository": "v1", "OCIRepository": "v1",
 	"HelmRepository": "v1", "HelmChart": "v1", "Bucket": "v1",
 	"Deployment": "v1", "StatefulSet": "v1", "DaemonSet": "v1", "ReplicaSet": "v1", "Pod": "v1",
+	"Job": "v1", "CronJob": "v1", "HorizontalPodAutoscaler": "v2", "Service": "v1", "Ingress": "v1",
+	"PersistentVolumeClaim": "v1",
 }
 
 func listKinds() map[schema.GroupVersionResource]string {

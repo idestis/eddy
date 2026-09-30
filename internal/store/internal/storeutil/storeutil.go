@@ -367,7 +367,7 @@ func PrepareAgentSession(s store.AgentSession) (store.AgentSession, error) {
 // EncodeEvent validates e for Events.Publish and returns its JSON form.
 func EncodeEvent(e store.Event) ([]byte, error) {
 	switch e.Kind {
-	case store.EventThread, store.EventRevoke, store.EventAgent:
+	case store.EventThread, store.EventRevoke, store.EventAgent, store.EventConnection:
 	default:
 		return nil, fmt.Errorf("%w: event kind %q", store.ErrInvalid, e.Kind)
 	}
@@ -391,4 +391,52 @@ func DecodeEvent(b []byte) (store.Event, error) {
 		return store.Event{}, errors.New("store: decode event: kind is missing")
 	}
 	return e, nil
+}
+
+// Limits on onboarding rows.
+const (
+	MaxClusterNameLen   = 63
+	MaxAttemptDetailLen = 300
+	MaxAttemptPeerLen   = 64
+)
+
+// PrepareJoinToken validates t and normalises its times.
+func PrepareJoinToken(t store.JoinToken) (store.JoinToken, error) {
+	if t.ID == "" || t.Cluster == "" || len(t.Hash) == 0 || t.ExpiresAt.IsZero() {
+		return store.JoinToken{}, fmt.Errorf("%w: join token needs an id, cluster, hash and expiry", store.ErrInvalid)
+	}
+	if len(t.Cluster) > MaxClusterNameLen || len(t.ID) > 64 || len(t.CreatedBy) > 512 {
+		return store.JoinToken{}, fmt.Errorf("%w: join token field too long", store.ErrLimit)
+	}
+	t.CreatedAt = Norm(NowIfZero(t.CreatedAt))
+	t.ExpiresAt = Norm(t.ExpiresAt)
+	t.UsedAt, t.RevokedAt = NormPtr(t.UsedAt), NormPtr(t.RevokedAt)
+	t.Hash = Bytes(t.Hash)
+	return t, nil
+}
+
+// PrepareAttempt validates a and truncates its free text.
+func PrepareAttempt(a store.ConnectionAttempt) (store.ConnectionAttempt, error) {
+	if a.Cluster == "" || a.Reason == "" {
+		return store.ConnectionAttempt{}, fmt.Errorf("%w: connection attempt needs a cluster and a reason", store.ErrInvalid)
+	}
+	if len(a.Cluster) > MaxClusterNameLen || len(a.Reason) > 64 {
+		return store.ConnectionAttempt{}, fmt.Errorf("%w: connection attempt field too long", store.ErrLimit)
+	}
+	a.At = Norm(NowIfZero(a.At))
+	a.Detail = truncateUTF8(strings.ToValidUTF8(a.Detail, ""), MaxAttemptDetailLen)
+	a.Peer = truncateUTF8(strings.ToValidUTF8(a.Peer, ""), MaxAttemptPeerLen)
+	a.HubPod = truncateUTF8(strings.ToValidUTF8(a.HubPod, ""), MaxAttemptPeerLen)
+	return a, nil
+}
+
+func truncateUTF8(s string, n int) string {
+	s = strings.ReplaceAll(s, "\x00", "")
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

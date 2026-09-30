@@ -100,10 +100,24 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 		Logger:      logger,
 		MaxSAR:      cfg.MaxSARConcurrent,
 	}
+	var secrets secretStore
+	if cfg.TokenSecret != "" && cfg.Namespace != "" {
+		secrets = kubeSecretStore{kube: kube, namespace: cfg.Namespace, name: cfg.TokenSecret, key: cfg.TokenSecretKey}
+	}
+	creds := NewCredentials(cfg.Token, cfg.JoinToken, secrets)
+	if creds.Joining() {
+		// A permanent token stored by an earlier run or another replica
+		// wins over the join token.
+		if changed, err := creds.Refresh(ctx); err != nil {
+			logger.Warn("agent: read token secret", "error", err)
+		} else if changed {
+			logger.Info("agent: using the permanent token from the token secret")
+		}
+	}
 	sess := &Session{
 		URL:     cfg.HubURL,
 		Cluster: cfg.Cluster,
-		Token:   cfg.Token,
+		Creds:   creds,
 		TLS:     tlsCfg,
 		Hello: protocol.Hello{
 			AgentVersion:      version.Version,
@@ -138,6 +152,7 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 	c.Start(runCtx)
 	if c.WaitForSync(runCtx) {
 		logger.Info("agent: informers synced")
+		sess.Hello.Diagnostics = diagnose(runCtx, kube, served, c, logger)
 		if err := sess.Run(runCtx); err != nil {
 			cancel(err)
 		}

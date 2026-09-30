@@ -24,6 +24,7 @@
         "value": {"type": "string"}
       }
     },
+    "joinToken": {"type": "string", "pattern": "^(eddy_join_[0-9A-Za-z]{50})?$"},
     "watch": {
       "type": "object",
       "properties": {"namespaces": {"type": "array", "items": {"type": "string"}}}

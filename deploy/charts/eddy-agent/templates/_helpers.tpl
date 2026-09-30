@@ -53,4 +53,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.token.existingSecret .Values.token.value -}}
 {{- fail "set either token.existingSecret or token.value, not both" -}}
 {{- end -}}
+{{- if and .Values.joinToken (or .Values.token.existingSecret .Values.token.value) -}}
+{{- fail "joinToken replaces token.existingSecret and token.value: set only one of them" -}}
+{{- end -}}
 {{- end -}}

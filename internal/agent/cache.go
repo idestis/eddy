@@ -38,6 +38,14 @@ type Cache struct {
 	pending   map[string]struct{}
 	// rsOwners maps "<namespace>/<name>" of a ReplicaSet to its controller.
 	rsOwners map[string]model.Ref
+
+	// served decides which inventory entries are watched kinds.
+	served flux.Served
+	// invByOwner maps a Kustomization id to the inventory-only rows it
+	// contributed; invOwner is the reverse. A row listed by two
+	// Kustomizations belongs to the first one.
+	invByOwner map[string][]string
+	invOwner   map[string]string
 }
 
 // NewCache creates informers for every served kind, in each of namespaces
@@ -48,6 +56,10 @@ func NewCache(dyn dynamic.Interface, served flux.Served, namespaces []string, lo
 		resources: map[string]model.Resource{},
 		pending:   map[string]struct{}{},
 		rsOwners:  map[string]model.Ref{},
+
+		served:     served,
+		invByOwner: map[string][]string{},
+		invOwner:   map[string]string{},
 	}
 	if len(namespaces) == 0 {
 		namespaces = []string{metav1.NamespaceAll}
@@ -99,6 +111,16 @@ func (c *Cache) Synced() bool {
 		}
 	}
 	return true
+}
+
+// SyncProgress returns how many informers have listed once, of all of them.
+func (c *Cache) SyncProgress() (synced, total int) {
+	for _, s := range c.synced {
+		if s() {
+			synced++
+		}
+	}
+	return synced, len(c.synced)
 }
 
 // Snapshot returns every summary, sorted by id, and clears pending changes:
@@ -164,7 +186,11 @@ func (c *Cache) handler(k flux.Kind) cache.ResourceEventHandlerFuncs {
 			c.setReplicaSetOwnerLocked(u.GetNamespace()+"/"+u.GetName(), controllerOf(u))
 			return
 		}
-		c.putLocked(flux.Summarize(k, u, c.lookupLocked))
+		r := flux.Summarize(k, u, c.lookupLocked)
+		c.putLocked(r)
+		if k.Kind == flux.KindKustomization {
+			c.setInventoryLocked(r.ID, flux.InventoryOnly(u, c.served.Watches))
+		}
 	}
 	return cache.ResourceEventHandlerFuncs{
 		AddFunc:    upsert,
@@ -188,8 +214,47 @@ func (c *Cache) handler(k flux.Kind) cache.ResourceEventHandlerFuncs {
 				delete(c.resources, id)
 				c.pending[id] = struct{}{}
 			}
+			if k.Kind == flux.KindKustomization {
+				c.setInventoryLocked(id, nil)
+			}
 		},
 	}
+}
+
+// setInventoryLocked replaces the inventory-only rows of the Kustomization
+// owner with rows: new ones are added, rows it no longer lists are deleted.
+// A row another Kustomization already contributed, or a real summary with
+// the same id, is left alone.
+func (c *Cache) setInventoryLocked(owner string, rows []model.Resource) {
+	keep := make(map[string]bool, len(rows))
+	var mine []string
+	for _, r := range rows {
+		if o, ok := c.invOwner[r.ID]; ok && o != owner {
+			continue
+		}
+		if cur, ok := c.resources[r.ID]; ok && !cur.InventoryOnly {
+			continue
+		}
+		keep[r.ID] = true
+		mine = append(mine, r.ID)
+		c.invOwner[r.ID] = owner
+		c.putLocked(r)
+	}
+	for _, id := range c.invByOwner[owner] {
+		if keep[id] || c.invOwner[id] != owner {
+			continue
+		}
+		delete(c.invOwner, id)
+		if cur, ok := c.resources[id]; ok && cur.InventoryOnly {
+			delete(c.resources, id)
+			c.pending[id] = struct{}{}
+		}
+	}
+	if len(mine) == 0 {
+		delete(c.invByOwner, owner)
+		return
+	}
+	c.invByOwner[owner] = mine
 }
 
 // putLocked stores r and marks it changed unless only its resourceVersion

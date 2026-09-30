@@ -28,6 +28,12 @@ const (
 	TypeStreamEnd FrameType = "streamEnd" // agent → hub, stream finished (payload may hold an Error)
 	TypeCancel    FrameType = "cancel"    // hub → agent, stop a streamed request
 	TypePing      FrameType = "ping"      // either way, application keepalive
+	// TypeCredentials is hub → agent on a join connection (ADR-0005): the
+	// payload is Credentials, and the agent answers with a TypeResponse of
+	// the same ID whose Result is CredentialsResult. The hub then closes
+	// the connection and the agent reconnects with the new token. Agents
+	// that do not know the frame ignore it.
+	TypeCredentials FrameType = "credentials"
 )
 
 // Frame is the envelope of every message. ID correlates request, response,
@@ -65,6 +71,30 @@ type Hello struct {
 	// replica. Agents that send no Instance are treated as one instance
 	// whose newest connection wins.
 	Seq int64 `json:"seq,omitempty"`
+	// Diagnostics are the agent's self-checks for the hub's connection
+	// checklist (ADR-0005). Absent from older agents.
+	Diagnostics *Diagnostics `json:"diagnostics,omitempty"`
+}
+
+// Diagnostics is what an agent found out about itself before connecting.
+type Diagnostics struct {
+	// ServedKinds lists the kinds from the kind table the cluster serves.
+	ServedKinds []string `json:"servedKinds,omitempty"`
+	// SAROK reports whether the agent may create SubjectAccessReviews;
+	// SARError explains a failure.
+	SAROK    bool   `json:"sarOK"`
+	SARError string `json:"sarError,omitempty"`
+	// ImpersonationPinned is false when the agent may impersonate the
+	// group system:masters (a SelfSubjectAccessReview said yes), which
+	// means impersonation.groups is not pinned. Nil when the check failed.
+	ImpersonationPinned *bool `json:"impersonationPinned,omitempty"`
+	// InformersSynced of InformersTotal informers have listed once.
+	InformersSynced int `json:"informersSynced"`
+	InformersTotal  int `json:"informersTotal"`
+	// CredentialsError is set when the agent could not store the token it
+	// received in a credentials frame in its token Secret; it then uses
+	// the token from memory until it restarts.
+	CredentialsError string `json:"credentialsError,omitempty"`
 }
 
 // ModeLocal is the Hello.Mode of a local-mode agent.
@@ -175,6 +205,19 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return e.Message }
+
+// Credentials is the payload of a TypeCredentials frame: the permanent
+// agent token that replaces the join token.
+type Credentials struct {
+	Token string `json:"token"`
+}
+
+// CredentialsResult answers Credentials. Stored is false when the agent
+// could not write its token Secret; Error says why.
+type CredentialsResult struct {
+	Stored bool   `json:"stored"`
+	Error  string `json:"error,omitempty"`
+}
 
 // ---- hub peer channel (peer/v1, ADR-0004) ----
 

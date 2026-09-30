@@ -29,6 +29,7 @@ type api struct {
 	logStreams *concurrencyLimiter
 	shutdown   <-chan struct{}
 	ephemeral  bool
+	onboard    *onboarding
 }
 
 // routes builds the UI listener's handler:
@@ -45,6 +46,12 @@ func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/v1/me", a.handleMe)
 	m.HandleFunc("GET /api/v1/clusters", a.handleClusters)
+	m.HandleFunc("POST /api/v1/clusters", a.handleCreateCluster)
+	m.HandleFunc("GET /api/v1/clusters/permissions", a.handleClusterPermissions)
+	m.HandleFunc("PATCH /api/v1/clusters/{cluster}", a.handleUpdateCluster)
+	m.HandleFunc("DELETE /api/v1/clusters/{cluster}", a.handleDeleteCluster)
+	m.HandleFunc("POST /api/v1/clusters/{cluster}/join-token", a.handleJoinToken)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/connection", a.handleConnection)
 	m.HandleFunc("GET /api/v1/clusters/{cluster}/resources", a.handleResources)
 	m.HandleFunc("GET /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}", a.handleObject)
 	m.HandleFunc("GET /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}/children", a.handleChildren)

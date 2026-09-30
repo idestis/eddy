@@ -18,6 +18,9 @@ type features struct {
 	Logs           bool   `json:"logs"`
 	EphemeralStore bool   `json:"ephemeralStore"`
 	DevMode        bool   `json:"devMode"`
+	// Onboarding: clusters can be added from the UI (ADR-0005). Whether
+	// this user may is GET /api/v1/clusters/permissions.
+	Onboarding bool `json:"onboarding"`
 }
 
 type meResponse struct {
@@ -37,6 +40,7 @@ func (a *api) features() features {
 		Logs:           true,
 		EphemeralStore: a.ephemeral,
 		DevMode:        a.auth.DevMode(),
+		Onboarding:     a.onboard.enabled(),
 	}
 	f.MCPWrites = f.MCP && a.cfg.MCP.Writes && fl.MCPWrites
 	if a.ai != nil && a.ai.Enabled() {

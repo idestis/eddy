@@ -12,6 +12,16 @@ rules:
   - apiGroups: [gitops.eddy.dev]
     resources: [clusters/status]
     verbs: [patch]
+  {{- if .Values.onboarding.enabled }}
+  # Onboarding (ADR-0005): add, change and remove clusters from the UI. Each request is
+  # checked first with a SubjectAccessReview as the signed-in user.
+  - apiGroups: [gitops.eddy.dev]
+    resources: [clusters]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -40,6 +50,13 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get, list, watch]
+  {{- if .Values.onboarding.enabled }}
+  # Onboarding: token Secrets of clusters added in the UI, and the permanent agent token
+  # minted when an agent joins. This namespace only.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, update, delete]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

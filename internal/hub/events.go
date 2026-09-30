@@ -44,7 +44,14 @@ func (h *Hub) onEvent(ctx context.Context, e store.Event) {
 		h.threadEvent(ctx, e.ID)
 	case store.EventRevoke:
 		h.auth.Invalidate(e.ID)
+	case store.EventConnection:
+		if e.Cluster != "" {
+			h.bus.publish(event{kind: evConnection, cluster: e.Cluster})
+		}
 	case store.EventAgent:
+		if e.Cluster != "" {
+			h.bus.publish(event{kind: evConnection, cluster: e.Cluster})
+		}
 		go h.registry.checkTakeover(ctx, e.Cluster)
 		if h.peers != nil {
 			h.peers.kick()

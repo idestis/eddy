@@ -32,6 +32,23 @@ type ClusterSpec struct {
 type clusterEntry struct {
 	spec   ClusterSpec
 	tokens [][32]byte
+	meta   clusterMeta
+}
+
+// clusterMeta is what onboarding needs to know about a Cluster CR beyond
+// its spec. Static clusters have none.
+type clusterMeta struct {
+	// secretName and secretKey locate the agent token Secret in the hub
+	// namespace (spec.agentTokenSecretRef).
+	secretName, secretKey string
+	// phase is the CR's status.phase as last read ("Pending" until the
+	// first agent connects to a cluster added in the UI).
+	phase string
+	// helm is set for CRs managed by Helm (the chart's clusters[]), which
+	// the UI must not change or delete: the next upgrade would undo it.
+	helm bool
+	// uid is the CR's metadata.uid, for Secret ownerReferences.
+	uid string
 }
 
 // Registry is the set of clusters whose agents may connect. It is filled by
@@ -57,6 +74,14 @@ func (r *Registry) Get(name string) (ClusterSpec, bool) {
 	defer r.mu.RUnlock()
 	e, ok := r.clusters[name]
 	return e.spec, ok
+}
+
+// meta returns the onboarding metadata of a registered cluster.
+func (r *Registry) meta(name string) (clusterMeta, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.clusters[name]
+	return e.meta, ok
 }
 
 // List returns every registered cluster ordered by Order, then Name.

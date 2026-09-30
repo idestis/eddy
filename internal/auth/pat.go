@@ -27,7 +27,6 @@ const (
 	patSecretLen = 32
 	patCRCLen    = 6
 	patBodyLen   = patIDLen + patSecretLen + patCRCLen
-	patLen       = len(patPrefix) + patBodyLen
 
 	markUsedEvery   = 5 * time.Minute
 	maxTokenNameLen = 64
@@ -78,11 +77,15 @@ func isBase62(s string) bool {
 
 // parsePAT splits a token into id and secret after the cheap offline checks
 // (prefix, length, alphabet, checksum).
-func parsePAT(tok string) (id, secret string, ok bool) {
-	if len(tok) != patLen || !strings.HasPrefix(tok, patPrefix) {
+func parsePAT(tok string) (id, secret string, ok bool) { return parsePrefixed(tok, patPrefix) }
+
+// parsePrefixed parses <prefix><id:12><secret:32><crc:6>, the scheme shared
+// by PATs and join tokens.
+func parsePrefixed(tok, prefix string) (id, secret string, ok bool) {
+	if len(tok) != len(prefix)+patBodyLen || !strings.HasPrefix(tok, prefix) {
 		return "", "", false
 	}
-	body := tok[len(patPrefix):]
+	body := tok[len(prefix):]
 	if !isBase62(body) {
 		return "", "", false
 	}
@@ -93,14 +96,16 @@ func parsePAT(tok string) (id, secret string, ok bool) {
 	return payload[:patIDLen], payload[patIDLen:], true
 }
 
-func newPAT() (tok, id, secret string, err error) {
+func newPAT() (tok, id, secret string, err error) { return newPrefixed(patPrefix) }
+
+func newPrefixed(prefix string) (tok, id, secret string, err error) {
 	if id, err = randomBase62(patIDLen); err != nil {
 		return
 	}
 	if secret, err = randomBase62(patSecretLen); err != nil {
 		return
 	}
-	return patPrefix + id + secret + patChecksum(id+secret), id, secret, nil
+	return prefix + id + secret + patChecksum(id+secret), id, secret, nil
 }
 
 func (s *Service) patHash(secret string) []byte { return hmacSHA256(s.keys.patPepper, secret) }

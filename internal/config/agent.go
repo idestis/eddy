@@ -11,9 +11,20 @@ import (
 // Agent is configured entirely from environment variables (set by the
 // eddy-agent chart), so no file mount is needed.
 type Agent struct {
-	Cluster              string   // EDDY_CLUSTER, must match the Cluster CR name
-	HubURL               string   // EDDY_HUB_URL, e.g. wss://eddy-agents.internal.example.com/agent/v1/connect
-	Token                string   // EDDY_AGENT_TOKEN
+	Cluster string // EDDY_CLUSTER, must match the Cluster CR name
+	HubURL  string // EDDY_HUB_URL, e.g. wss://eddy-agents.internal.example.com/agent/v1/connect
+	Token   string // EDDY_AGENT_TOKEN
+	// JoinToken is a one-time eddy_join_ token (EDDY_JOIN_TOKEN, ADR-0005).
+	// The agent trades it for a permanent token on its first connection
+	// and stores that in TokenSecret. Token may then be empty.
+	JoinToken string
+	// TokenSecret names the agent's own token Secret in Namespace
+	// (EDDY_TOKEN_SECRET); TokenSecretKey is its key (EDDY_TOKEN_SECRET_KEY,
+	// default "token"). The agent reads it for a token it stored earlier
+	// and writes the token it receives at join time.
+	TokenSecret          string
+	TokenSecretKey       string
+	Namespace            string   // POD_NAMESPACE
 	CAFile               string   // EDDY_HUB_CA_FILE, optional
 	Namespaces           []string // EDDY_WATCH_NAMESPACES, comma-separated; empty = all
 	AllowedGroupPrefixes []string // EDDY_ALLOWED_GROUP_PREFIXES, default "eddy:"
@@ -75,7 +86,11 @@ func LoadAgent() (*Agent, error) {
 	a := &Agent{
 		Cluster:              os.Getenv("EDDY_CLUSTER"),
 		HubURL:               os.Getenv("EDDY_HUB_URL"),
-		Token:                os.Getenv("EDDY_AGENT_TOKEN"),
+		Token:                strings.TrimSpace(os.Getenv("EDDY_AGENT_TOKEN")),
+		JoinToken:            strings.TrimSpace(os.Getenv("EDDY_JOIN_TOKEN")),
+		TokenSecret:          os.Getenv("EDDY_TOKEN_SECRET"),
+		TokenSecretKey:       os.Getenv("EDDY_TOKEN_SECRET_KEY"),
+		Namespace:            os.Getenv("POD_NAMESPACE"),
 		CAFile:               os.Getenv("EDDY_HUB_CA_FILE"),
 		Namespaces:           list("EDDY_WATCH_NAMESPACES"),
 		AllowedGroupPrefixes: list("EDDY_ALLOWED_GROUP_PREFIXES"),
@@ -120,8 +135,19 @@ func LoadAgent() (*Agent, error) {
 	if a.Cluster == "" {
 		errs = append(errs, errors.New("EDDY_CLUSTER is required"))
 	}
-	if a.Token == "" {
-		errs = append(errs, errors.New("EDDY_AGENT_TOKEN is required"))
+	if a.TokenSecretKey == "" {
+		a.TokenSecretKey = "token"
+	}
+	if a.Token == "" && a.JoinToken == "" {
+		errs = append(errs, errors.New("EDDY_AGENT_TOKEN (or EDDY_JOIN_TOKEN) is required"))
+	}
+	if a.JoinToken != "" {
+		if !strings.HasPrefix(a.JoinToken, "eddy_join_") {
+			errs = append(errs, errors.New("EDDY_JOIN_TOKEN must be an eddy_join_ token"))
+		}
+		if a.TokenSecret == "" || a.Namespace == "" {
+			errs = append(errs, errors.New("EDDY_JOIN_TOKEN needs EDDY_TOKEN_SECRET and POD_NAMESPACE, where the agent stores its permanent token"))
+		}
 	}
 	switch {
 	case strings.HasPrefix(a.HubURL, "wss://"):

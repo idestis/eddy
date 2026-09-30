@@ -352,3 +352,39 @@ func TestParseTTL(t *testing.T) {
 		}
 	}
 }
+
+func TestJoinTokenFormat(t *testing.T) {
+	tok, id, secret, err := NewJoinToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsJoinToken(tok) || len(tok) != len(JoinTokenPrefix)+50 {
+		t.Fatalf("token %q", tok)
+	}
+	gid, gsecret, ok := ParseJoinToken(tok)
+	if !ok || gid != id || gsecret != secret {
+		t.Fatalf("parse = %q %q %v", gid, gsecret, ok)
+	}
+	if _, _, ok := ParseJoinToken(tok[:len(tok)-1] + "x"); ok && tok[len(tok)-1] != 'x' {
+		t.Fatal("bad checksum accepted")
+	}
+	if _, _, ok := parsePAT(tok); ok {
+		t.Fatal("a join token must not parse as a PAT")
+	}
+	pat, _, _, _ := newPAT()
+	if _, _, ok := ParseJoinToken(pat); ok {
+		t.Fatal("a PAT must not parse as a join token")
+	}
+	s := &Service{keys: keys{patPepper: []byte("pepper-pepper-pepper-pepper-1234")}}
+	h := s.JoinTokenHash(secret)
+	if !s.VerifyJoinTokenHash(secret, h) || s.VerifyJoinTokenHash(secret+"x", h) {
+		t.Fatal("verify")
+	}
+	if string(h) == string(s.patHash(secret)) {
+		t.Fatal("join token hash equals PAT hash")
+	}
+	a, err := NewAgentToken()
+	if err != nil || len(a) != 48 || !isBase62(a) {
+		t.Fatalf("agent token %q %v", a, err)
+	}
+}

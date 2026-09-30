@@ -7,9 +7,16 @@ WARNING: cluster.name is not set. It must equal the Cluster CR name in the hub.
 
 WARNING: hub.url is not set (wss://<hub agent endpoint>/agent/v1/connect).
 {{- end }}
-{{- if not (or .Values.token.existingSecret .Values.token.value) }}
+{{- if not (or .Values.token.existingSecret .Values.token.value .Values.joinToken) }}
 
-WARNING: no token. Set token.existingSecret or token.value (the hub chart's NOTES print how).
+WARNING: no token. Set joinToken (from the hub's "Add cluster" wizard), token.existingSecret or
+token.value (the hub chart's NOTES print how).
+{{- end }}
+{{- if .Values.joinToken }}
+
+Join token set: on its first connection the agent trades it for a permanent token and stores
+that in Secret {{ include "eddy-agent.tokenSecretName" . }} (its only write permission). Watch the
+hub's Connection panel for the checklist.
 {{- end }}
 
 {{- $n := max 1 (int .Values.replicaCount) }}

@@ -154,6 +154,18 @@ jobs:
           --set token.existingSecret=agent-token
           --set replicaCount=3 --set limits.qps=30
           --set 'impersonation.groups={eddy:authenticated,eddy:platform}' > /dev/null
+      - name: Agent chart with a join token (ADR-0005)
+        run: >
+          helm template eddy deploy/charts/eddy-agent
+          --set cluster.name=test
+          --set hub.url=wss://hub.example.com/agent/v1/connect
+          --set joinToken=eddy_join_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > /dev/null
+      - name: Agent chart with a join token and a token must fail
+        run: >
+          ! helm template eddy deploy/charts/eddy-agent --set cluster.name=test
+          --set joinToken=eddy_join_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          --set token.value=x > /dev/null 2>&1
+      - run: helm template eddy deploy/charts/eddy-hub --set store.postgres.dsnSecret.name=eddy-db --set onboarding.enabled=false > /dev/null
       - name: Hub chart with every optional block enabled
         run: >
           helm template eddy deploy/charts/eddy-hub

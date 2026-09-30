@@ -35,6 +35,10 @@ func (f *fakeStore) Prefs() store.Prefs                 { return nil }
 func (f *fakeStore) RateLimits() store.RateLimits       { return f.limits }
 func (f *fakeStore) AgentSessions() store.AgentSessions { return nil }
 func (f *fakeStore) Events() store.Events               { return f.events }
+func (f *fakeStore) JoinTokens() store.JoinTokens       { return nil }
+func (f *fakeStore) ConnectionAttempts() store.ConnectionAttempts {
+	return nil
+}
 func (f *fakeStore) Prune(context.Context, time.Time, store.Retention) (store.PruneStats, error) {
 	return store.PruneStats{}, nil
 }

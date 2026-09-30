@@ -40,8 +40,14 @@ type Store interface {
 	AgentSessions() AgentSessions
 	// Events returns the cross-replica notification channel.
 	Events() Events
+	// JoinTokens returns the one-time cluster join tokens (ADR-0005).
+	JoinTokens() JoinTokens
+	// ConnectionAttempts returns the recent rejected agent connections per
+	// cluster, shared by every replica.
+	ConnectionAttempts() ConnectionAttempts
 	// Prune deletes expired sessions, old tokens, old audit rows, expired
-	// threads, ended rate-limit windows and stale agent sessions.
+	// threads, ended rate-limit windows, stale agent sessions and join
+	// tokens that ended more than JoinTokenPruneAfter ago.
 	Prune(ctx context.Context, now time.Time, r Retention) (PruneStats, error)
 	Ping(ctx context.Context) error
 	Close() error
@@ -269,6 +275,9 @@ type PruneStats struct {
 	// RateLimits counts ended rate-limit windows; AgentSessions counts agent
 	// sessions whose heartbeat is older than AgentSessionPruneAfter.
 	RateLimits, AgentSessions int64
+	// JoinTokens counts join tokens that expired, were used or were revoked
+	// more than JoinTokenPruneAfter ago.
+	JoinTokens int64
 }
 
 // ---- rate limits ----
@@ -352,7 +361,8 @@ type AgentSessions interface {
 
 // ---- events ----
 
-// Event kinds. Publishers use EventThread, EventRevoke and EventAgent.
+// Event kinds. Publishers use EventThread, EventRevoke, EventAgent and
+// EventConnection.
 // EventResync is sent only by the store, to tell subscribers that events may
 // have been missed (for example after the listener reconnected) and that
 // they should re-read what they cache.
@@ -360,7 +370,10 @@ const (
 	EventThread = "thread" // ID is a thread id
 	EventRevoke = "revoke" // ID is a subject or token id whose credentials were revoked
 	EventAgent  = "agent"  // Cluster's agent sessions changed
-	EventResync = "resync"
+	// EventConnection: Cluster's onboarding state changed (a join token was
+	// issued or used, or an agent connection was rejected).
+	EventConnection = "connection"
+	EventResync     = "resync"
 )
 
 // MaxEventBytes caps the JSON encoding of one Event.
@@ -381,11 +394,98 @@ type Event struct {
 // EventResync.
 type Events interface {
 	// Publish sends e to every subscriber on every replica. e.Kind must be
-	// EventThread, EventRevoke or EventAgent (ErrInvalid otherwise), and its
+	// EventThread, EventRevoke, EventAgent or EventConnection (ErrInvalid
+	// otherwise), and its
 	// JSON encoding at most MaxEventBytes (ErrLimit otherwise).
 	Publish(ctx context.Context, e Event) error
 	// Subscribe returns a channel of events. Events published after
 	// Subscribe returns are delivered. The channel is closed when ctx is
 	// done or the store is closed.
 	Subscribe(ctx context.Context) (<-chan Event, error)
+}
+
+// ---- join tokens ----
+
+// JoinToken is a one-time token that lets an agent claim Cluster once
+// (ADR-0005). Hash is HMAC-SHA256(pepper, secret); the raw token is shown
+// once and never stored. A token is usable while UsedAt and RevokedAt are
+// nil and ExpiresAt is after now.
+type JoinToken struct {
+	ID        string // public id, the <id12> part of eddy_join_<id12><secret32><crc6>
+	Cluster   string
+	Hash      []byte
+	CreatedBy string // subject of the user who issued it
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	RevokedAt *time.Time
+}
+
+// JoinTokenPruneAfter is how long Prune keeps a join token after it
+// expired, was used or was revoked, for the audit trail.
+const JoinTokenPruneAfter = 30 * 24 * time.Hour
+
+// JoinTokens stores join tokens. Rows are durable (a LOGGED table) so the
+// issue and use of every token can be traced.
+type JoinTokens interface {
+	// Create inserts t and, atomically with it, revokes (RevokedAt =
+	// t.CreatedAt) every other token of t.Cluster that is neither used
+	// nor revoked yet, so a cluster has at most one live join token. A
+	// duplicate id or hash returns ErrConflict. ID, Cluster, Hash and
+	// ExpiresAt are required (ErrInvalid).
+	Create(ctx context.Context, t JoinToken) error
+	// Get returns a token by id, with its hash, whatever its state.
+	// ErrNotFound if there is none.
+	Get(ctx context.Context, id string) (JoinToken, error)
+	// Consume marks the token used at now, only if it is still unused,
+	// unrevoked and unexpired, and returns it. Exactly one of several
+	// concurrent Consume calls for a token succeeds, on every replica; the
+	// others get ErrNotFound (as do calls for an unusable or unknown id).
+	Consume(ctx context.Context, id string, now time.Time) (JoinToken, error)
+	// List returns the tokens of cluster without hashes, newest first.
+	List(ctx context.Context, cluster string) ([]JoinToken, error)
+	// RevokeByCluster revokes every live token of cluster, for example when
+	// the cluster is deleted. Idempotent.
+	RevokeByCluster(ctx context.Context, cluster string, at time.Time) error
+}
+
+// ---- connection attempts ----
+
+// Reasons of rejected agent connections.
+const (
+	AttemptBadToken        = "bad_token"         // unknown, rotated or mistyped agent token
+	AttemptJoinExpired     = "join_expired"      // the join token expired or was replaced
+	AttemptJoinUsed        = "join_used"         // the join token was already used
+	AttemptWrongCluster    = "wrong_cluster"     // the token belongs to another cluster
+	AttemptProtocol        = "protocol_mismatch" // the agent speaks another protocol version
+	AttemptHelloRejected   = "hello_rejected"    // any other invalid hello
+	AttemptCredentialsFail = "credentials_failed"
+)
+
+// MaxAttemptsPerCluster is how many rejected attempts are kept per cluster.
+const MaxAttemptsPerCluster = 20
+
+// ConnectionAttempt is one rejected agent connection. Detail and Peer are
+// short free text; neither ever contains a token.
+type ConnectionAttempt struct {
+	Cluster string    `json:"-"`
+	At      time.Time `json:"at"`
+	Reason  string    `json:"reason"`
+	Detail  string    `json:"detail,omitempty"`
+	Peer    string    `json:"peer,omitempty"`
+	HubPod  string    `json:"hubPod,omitempty"`
+}
+
+// ConnectionAttempts keeps the last MaxAttemptsPerCluster rejected
+// connections of every cluster. It is throwaway state (an UNLOGGED table):
+// callers record attempts only for registered clusters, so unknown names
+// cannot fill it.
+type ConnectionAttempts interface {
+	// Record stores a and deletes the cluster's attempts beyond the newest
+	// MaxAttemptsPerCluster. Cluster and Reason are required (ErrInvalid).
+	Record(ctx context.Context, a ConnectionAttempt) error
+	// List returns the cluster's attempts, newest first.
+	List(ctx context.Context, cluster string) ([]ConnectionAttempt, error)
+	// DeleteByCluster forgets a cluster's attempts. Idempotent.
+	DeleteByCluster(ctx context.Context, cluster string) error
 }

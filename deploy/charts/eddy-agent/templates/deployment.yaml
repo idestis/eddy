@@ -50,6 +50,24 @@ spec:
                 secretKeyRef:
                   name: {{ include "eddy-agent.tokenSecretName" . }}
                   key: {{ .Values.token.key }}
+                  {{- if .Values.joinToken }}
+                  optional: true
+                  {{- end }}
+            {{- if .Values.joinToken }}
+            - name: EDDY_JOIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "eddy-agent.tokenSecretName" . }}
+                  key: joinToken
+                  optional: true
+            - name: EDDY_TOKEN_SECRET
+              value: {{ include "eddy-agent.tokenSecretName" . | quote }}
+            - name: EDDY_TOKEN_SECRET_KEY
+              value: {{ .Values.token.key | quote }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+            {{- end }}
             {{- if .Values.hub.caBundle }}
             - name: EDDY_HUB_CA_FILE
               value: /etc/eddy/hub-ca/ca.crt

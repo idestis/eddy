@@ -85,6 +85,11 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Events/PublishSubscribe", testEventsPublishSubscribe},
 		{"Events/Unsubscribe", testEventsUnsubscribe},
 		{"Events/Validation", testEventsValidation},
+		{"JoinTokens/CreateGetList", testJoinCreateGetList},
+		{"JoinTokens/Consume", testJoinConsume},
+		{"JoinTokens/ConsumeConcurrent", testJoinConsumeConcurrent},
+		{"JoinTokens/RevokeAndPrune", testJoinRevokePrune},
+		{"ConnectionAttempts", testConnectionAttempts},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1576,4 +1581,212 @@ func testEventsValidation(t *testing.T, s store.Store) {
 	wantErr(t, s.Events().Publish(ctx(t), store.Event{Kind: "bogus"}), store.ErrInvalid, "unknown kind")
 	wantErr(t, s.Events().Publish(ctx(t), store.Event{Kind: store.EventThread, ID: strings.Repeat("x", store.MaxEventBytes)}),
 		store.ErrLimit, "oversized event")
+}
+
+// ---- join tokens ----
+
+func joinToken(id, cluster string, created time.Time) store.JoinToken {
+	return store.JoinToken{
+		ID: id, Cluster: cluster, Hash: []byte("hash-" + id), CreatedBy: "local:alice",
+		CreatedAt: created, ExpiresAt: created.Add(time.Hour),
+	}
+}
+
+func testJoinCreateGetList(t *testing.T, s store.Store) {
+	ctx := t.Context()
+	j := s.JoinTokens()
+	t0 := time.UnixMilli(1_700_000_000_000).UTC()
+	a := joinToken("aaaaaaaaaaaa", "prod", t0)
+	if err := j.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	got, err := j.Get(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, a) {
+		t.Fatalf("Get = %+v, want %+v", got, a)
+	}
+	if err := j.Create(ctx, a); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate id: %v", err)
+	}
+	dupHash := joinToken("bbbbbbbbbbbb", "prod", t0)
+	dupHash.Hash = a.Hash
+	if err := j.Create(ctx, dupHash); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate hash: %v", err)
+	}
+	// A new token revokes the cluster's unused predecessor, not other clusters'.
+	other := joinToken("cccccccccccc", "staging", t0)
+	if err := j.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	b := joinToken("dddddddddddd", "prod", t0.Add(time.Minute))
+	if err := j.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := j.Get(ctx, a.ID); got.RevokedAt == nil || !got.RevokedAt.Equal(b.CreatedAt) {
+		t.Fatalf("predecessor not revoked: %+v", got)
+	}
+	if got, _ := j.Get(ctx, other.ID); got.RevokedAt != nil {
+		t.Fatal("another cluster's token was revoked")
+	}
+	list, err := j.List(ctx, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != b.ID || list[1].ID != a.ID || list[0].Hash != nil {
+		t.Fatalf("List = %+v", list)
+	}
+	if _, err := j.Get(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Get unknown: %v", err)
+	}
+	for _, bad := range []store.JoinToken{{Cluster: "x", Hash: []byte("h"), ExpiresAt: t0}, {ID: "x", Hash: []byte("h"), ExpiresAt: t0}, {ID: "x", Cluster: "x", ExpiresAt: t0}, {ID: "x", Cluster: "x", Hash: []byte("h")}} {
+		if err := j.Create(ctx, bad); !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("Create(%+v) = %v, want ErrInvalid", bad, err)
+		}
+	}
+}
+
+func testJoinConsume(t *testing.T, s store.Store) {
+	ctx := t.Context()
+	j := s.JoinTokens()
+	t0 := time.UnixMilli(1_700_000_000_000).UTC()
+	a := joinToken("aaaaaaaaaaaa", "prod", t0)
+	if err := j.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.Consume(ctx, a.ID, a.ExpiresAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("consume at expiry: %v", err)
+	}
+	now := t0.Add(time.Minute)
+	got, err := j.Consume(ctx, a.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UsedAt == nil || !got.UsedAt.Equal(now) || got.Cluster != "prod" || string(got.Hash) != string(a.Hash) {
+		t.Fatalf("Consume = %+v", got)
+	}
+	if _, err := j.Consume(ctx, a.ID, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second consume: %v", err)
+	}
+	if _, err := j.Consume(ctx, "unknown", now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown consume: %v", err)
+	}
+	// A used token is not revoked by its successor.
+	b := joinToken("bbbbbbbbbbbb", "prod", now)
+	if err := j.Create(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := j.Get(ctx, a.ID); got.RevokedAt != nil {
+		t.Fatal("used token revoked")
+	}
+	c := joinToken("cccccccccccc", "prod", now.Add(time.Second))
+	if err := j.Create(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.Consume(ctx, b.ID, now.Add(2*time.Second)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("revoked consume: %v", err)
+	}
+}
+
+func testJoinConsumeConcurrent(t *testing.T, s store.Store) {
+	ctx := t.Context()
+	j := s.JoinTokens()
+	t0 := time.UnixMilli(1_700_000_000_000).UTC()
+	if err := j.Create(ctx, joinToken("aaaaaaaaaaaa", "prod", t0)); err != nil {
+		t.Fatal(err)
+	}
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+		ok int
+	)
+	for range 8 {
+		wg.Go(func() {
+			if _, err := j.Consume(ctx, "aaaaaaaaaaaa", t0.Add(time.Second)); err == nil {
+				mu.Lock()
+				ok++
+				mu.Unlock()
+			} else if !errors.Is(err, store.ErrNotFound) {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	if ok != 1 {
+		t.Fatalf("%d concurrent consumes succeeded, want 1", ok)
+	}
+}
+
+func testJoinRevokePrune(t *testing.T, s store.Store) {
+	ctx := t.Context()
+	j := s.JoinTokens()
+	t0 := time.UnixMilli(1_700_000_000_000).UTC()
+	if err := j.Create(ctx, joinToken("aaaaaaaaaaaa", "prod", t0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RevokeByCluster(ctx, "prod", t0.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RevokeByCluster(ctx, "prod", t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := j.Get(ctx, "aaaaaaaaaaaa")
+	if err != nil || got.RevokedAt == nil || !got.RevokedAt.Equal(t0.Add(time.Second)) {
+		t.Fatalf("revoked %+v %v", got, err)
+	}
+	if err := j.Create(ctx, joinToken("bbbbbbbbbbbb", "prod", t0.Add(2*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.Prune(ctx, t0.Add(time.Second).Add(store.JoinTokenPruneAfter), store.Retention{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.JoinTokens != 1 {
+		t.Fatalf("pruned %d join tokens, want 1", st.JoinTokens)
+	}
+	if _, err := j.Get(ctx, "aaaaaaaaaaaa"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("old token kept")
+	}
+	if _, err := j.Get(ctx, "bbbbbbbbbbbb"); err != nil {
+		t.Fatal("live token pruned")
+	}
+}
+
+func testConnectionAttempts(t *testing.T, s store.Store) {
+	ctx := t.Context()
+	c := s.ConnectionAttempts()
+	t0 := time.UnixMilli(1_700_000_000_000).UTC()
+	for i := range store.MaxAttemptsPerCluster + 5 {
+		a := store.ConnectionAttempt{Cluster: "prod", At: t0.Add(time.Duration(i) * time.Second), Reason: store.AttemptBadToken, Detail: fmt.Sprint(i), Peer: "10.0.0.1"}
+		if err := c.Record(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.Record(ctx, store.ConnectionAttempt{Cluster: "staging", At: t0, Reason: store.AttemptJoinUsed, Detail: strings.Repeat("x", 1000)}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := c.List(ctx, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != store.MaxAttemptsPerCluster || list[0].Detail != fmt.Sprint(store.MaxAttemptsPerCluster+4) || list[len(list)-1].Detail != "5" {
+		t.Fatalf("List kept %d, first %+v", len(list), list[0])
+	}
+	if !list[0].At.Equal(t0.Add(time.Duration(store.MaxAttemptsPerCluster+4)*time.Second)) || list[0].Peer != "10.0.0.1" || list[0].Reason != store.AttemptBadToken {
+		t.Fatalf("attempt %+v", list[0])
+	}
+	st, _ := c.List(ctx, "staging")
+	if len(st) != 1 || len(st[0].Detail) > 300 {
+		t.Fatalf("staging %+v", st)
+	}
+	if err := c.DeleteByCluster(ctx, "prod"); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := c.List(ctx, "prod"); len(list) != 0 {
+		t.Fatalf("after delete: %+v", list)
+	}
+	if err := c.Record(ctx, store.ConnectionAttempt{Cluster: "prod"}); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("no reason: %v", err)
+	}
 }

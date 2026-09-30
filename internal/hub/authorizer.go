@@ -42,6 +42,46 @@ func tupleOf(r model.Ref) (accessTuple, bool) {
 	return accessTuple{Group: k.Group, Resource: k.Plural, Namespace: r.Namespace}, true
 }
 
+// inventoryTuple is the access tuple of an inventory-only row's own kind:
+// the kind table when (group, kind) is in it, else the known plural of an
+// unwatched kind. It reports false when the plural is unknown; such a row
+// is visible to whoever can see its parent.
+func inventoryTuple(r model.Ref) (accessTuple, bool) {
+	if k, ok := flux.KindByName(r.Kind); ok && k.Matches(r.Group, r.Kind) {
+		return accessTuple{Group: k.Group, Resource: k.Plural, Namespace: r.Namespace}, true
+	}
+	if plural, ok := flux.InventoryPlural(r.Group, r.Kind); ok {
+		return accessTuple{Group: r.Group, Resource: plural, Namespace: r.Namespace}, true
+	}
+	return accessTuple{}, false
+}
+
+// requiredTuples returns every tuple p must be allowed to list for r to be
+// visible: the kind's own tuple for a watched resource; for an
+// inventory-only row, its parent Kustomization's tuple plus the row's own
+// tuple when its plural is known. ok is false when r can never be shown.
+func requiredTuples(r model.Resource) (ts []accessTuple, ok bool) {
+	if !r.InventoryOnly {
+		t, ok := tupleOf(r.Ref)
+		if !ok {
+			return nil, false
+		}
+		return []accessTuple{t}, true
+	}
+	if r.Owner == nil {
+		return nil, false
+	}
+	parent, ok := tupleOf(*r.Owner)
+	if !ok {
+		return nil, false
+	}
+	ts = []accessTuple{parent}
+	if own, ok := inventoryTuple(r.Ref); ok {
+		ts = append(ts, own)
+	}
+	return ts, true
+}
+
 func (t accessTuple) check(verb string) protocol.AccessCheck {
 	return protocol.AccessCheck{Verb: verb, Group: t.Group, Resource: t.Resource, Namespace: t.Namespace}
 }
@@ -241,7 +281,9 @@ func (a *authorizer) allowedTuples(ctx context.Context, p identity.Principal, cl
 }
 
 // filter returns the resources whose (group, resource, namespace) p may
-// list, keeping their order. Unknown kinds are dropped.
+// list, keeping their order. Unknown kinds are dropped. An inventory-only
+// row needs its parent Kustomization to be listable and, when Eddy knows
+// the plural of the row's kind, list on that kind in its namespace too.
 func (a *authorizer) filter(ctx context.Context, p identity.Principal, cluster string, rs []model.Resource) ([]model.Resource, error) {
 	if len(rs) == 0 {
 		return rs, nil
@@ -249,9 +291,12 @@ func (a *authorizer) filter(ctx context.Context, p identity.Principal, cluster s
 	seen := map[accessTuple]bool{}
 	var tuples []accessTuple
 	for _, r := range rs {
-		if t, ok := tupleOf(r.Ref); ok && !seen[t] {
-			seen[t] = true
-			tuples = append(tuples, t)
+		ts, _ := requiredTuples(r)
+		for _, t := range ts {
+			if !seen[t] {
+				seen[t] = true
+				tuples = append(tuples, t)
+			}
 		}
 	}
 	allowed, err := a.allowedTuples(ctx, p, cluster, "list", tuples)
@@ -260,11 +305,24 @@ func (a *authorizer) filter(ctx context.Context, p identity.Principal, cluster s
 	}
 	out := rs[:0:0]
 	for _, r := range rs {
-		if t, ok := tupleOf(r.Ref); ok && allowed[t] {
+		if allTuplesAllowed(r, allowed) {
 			out = append(out, r)
 		}
 	}
 	return out, nil
+}
+
+func allTuplesAllowed(r model.Resource, allowed map[accessTuple]bool) bool {
+	ts, ok := requiredTuples(r)
+	if !ok {
+		return false
+	}
+	for _, t := range ts {
+		if !allowed[t] {
+			return false
+		}
+	}
+	return true
 }
 
 // size is the number of cached answers (tests).

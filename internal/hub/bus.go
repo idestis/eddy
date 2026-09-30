@@ -12,10 +12,11 @@ import (
 type eventKind int
 
 const (
-	evChange   eventKind = iota // resource upserts and deletes on one cluster
-	evResync                    // a cluster's view was replaced (snapshot or reconnect)
-	evClusters                  // connection state or counts may have changed
-	evThread                    // a thread changed
+	evChange     eventKind = iota // resource upserts and deletes on one cluster
+	evResync                      // a cluster's view was replaced (snapshot or reconnect)
+	evClusters                    // connection state or counts may have changed
+	evThread                      // a thread changed
+	evConnection                  // a cluster's onboarding state changed (ADR-0005)
 )
 
 // event is published unfiltered; each subscriber filters it for its own
@@ -25,6 +26,8 @@ type event struct {
 	cluster string
 	upserts []model.Resource
 	deletes []string
+	// parents maps deleted inventory-only row ids to their owners.
+	parents map[string]model.Ref
 	thread  store.Thread
 }
 

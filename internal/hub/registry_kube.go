@@ -53,6 +53,7 @@ func kubeRestConfig() (*rest.Config, error) {
 type kubeSource struct {
 	reg       *Registry
 	dyn       dynamic.Interface
+	kube      kubernetes.Interface
 	namespace string
 	log       *slog.Logger
 
@@ -75,7 +76,15 @@ func newKubeSource(reg *Registry, rc *rest.Config, namespace string, log *slog.L
 	if err != nil {
 		return nil, fmt.Errorf("hub: kubernetes client: %w", err)
 	}
-	s := &kubeSource{reg: reg, dyn: dyn, namespace: namespace, log: log.With("component", "registry"), changed: make(chan struct{}, 1)}
+	return newKubeSourceClients(reg, dyn, kube, namespace, log)
+}
+
+// newKubeSourceClients is newKubeSource with ready clients (tests pass fakes).
+func newKubeSourceClients(reg *Registry, dyn dynamic.Interface, kube kubernetes.Interface, namespace string, log *slog.Logger) (*kubeSource, error) {
+	if namespace == "" {
+		return nil, errors.New("hub: namespace (or POD_NAMESPACE) is required to read agent token Secrets")
+	}
+	s := &kubeSource{reg: reg, dyn: dyn, kube: kube, namespace: namespace, log: log.With("component", "registry"), changed: make(chan struct{}, 1)}
 
 	df := dynamicinformer.NewDynamicSharedInformerFactory(dyn, 0)
 	s.clusters = df.ForResource(ClusterGVR).Informer()
@@ -155,7 +164,11 @@ func (s *kubeSource) rebuild() {
 			continue
 		}
 		spec, ref, key := parseCluster(u)
-		e := clusterEntry{spec: spec}
+		phase, _, _ := unstructured.NestedString(u.Object, "status", "phase")
+		e := clusterEntry{spec: spec, meta: clusterMeta{
+			secretName: ref, secretKey: key, phase: phase, uid: string(u.GetUID()),
+			helm: u.GetLabels()["app.kubernetes.io/managed-by"] == "Helm",
+		}}
 		if ref == "" {
 			s.log.Warn("cluster has no agentTokenSecretRef; its agent cannot connect", "cluster", spec.Name)
 		} else if item, exists, _ := s.secrets.GetStore().GetByKey(s.namespace + "/" + ref); exists {

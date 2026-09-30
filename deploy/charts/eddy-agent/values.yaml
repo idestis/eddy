@@ -18,6 +18,13 @@ token:
   key: token
   value: ""           # or pass the token inline; the chart stores it in a Secret
 
+# One-time join token from the hub's "Add cluster" wizard (eddy_join_…, ADR-0005). The
+# chart stores it in the token Secret (<fullname>-token, kept on uninstall). On its first
+# connection the agent trades it for a permanent token, which it writes to the same Secret
+# under token.key: a Role lets it get and update that one Secret and nothing else. Leave
+# empty when you use token.existingSecret or token.value.
+joinToken: ""
+
 watch:
   namespaces: []      # empty = whole cluster. Sets EDDY_WATCH_NAMESPACES.
 

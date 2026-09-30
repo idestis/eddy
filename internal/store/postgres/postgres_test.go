@@ -63,15 +63,17 @@ WHERE n.nspname = current_schema() AND c.relkind = 'r' ORDER BY c.relname`)
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"schema_migrations": "p",
-		"api_tokens":        "p",
-		"threads":           "p",
-		"messages":          "p",
-		"audit_events":      "p",
-		"user_prefs":        "p",
-		"sessions":          "u",
-		"rate_limits":       "u",
-		"agent_sessions":    "u",
+		"schema_migrations":   "p",
+		"api_tokens":          "p",
+		"threads":             "p",
+		"messages":            "p",
+		"audit_events":        "p",
+		"user_prefs":          "p",
+		"sessions":            "u",
+		"rate_limits":         "u",
+		"agent_sessions":      "u",
+		"join_tokens":         "p",
+		"connection_attempts": "u",
 	}
 	for name, p := range want {
 		if got[name] != p {
@@ -148,9 +150,14 @@ func TestMigrateAppliesLaterMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	onboarding, err := embedded.ReadFile("migrations/0002_onboarding.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	migrationFS = fstest.MapFS{
-		"migrations/0001_init.sql":  {Data: init},
-		"migrations/0002_extra.sql": {Data: []byte(`CREATE TABLE extra (id BIGINT PRIMARY KEY); CREATE INDEX extra_id ON extra (id);`)},
+		"migrations/0001_init.sql":       {Data: init},
+		"migrations/0002_onboarding.sql": {Data: onboarding},
+		"migrations/0003_extra.sql":      {Data: []byte(`CREATE TABLE extra (id BIGINT PRIMARY KEY); CREATE INDEX extra_id ON extra (id);`)},
 	}
 	t.Cleanup(func() { migrationFS = embedded })
 	s := open(t, dsn)
@@ -158,11 +165,11 @@ func TestMigrateAppliesLaterMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 2 {
-		t.Fatalf("schema version %d, want 2", v)
+	if v != 3 {
+		t.Fatalf("schema version %d, want 3", v)
 	}
 	if _, err := s.db.ExecContext(t.Context(), `INSERT INTO extra (id) VALUES (1)`); err != nil {
-		t.Fatalf("migration 0002 not applied: %v", err)
+		t.Fatalf("migration 0003 not applied: %v", err)
 	}
 }
 

@@ -17,7 +17,9 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/idestis/eddy/internal/auth"
 	"github.com/idestis/eddy/internal/protocol"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // Agent endpoint limits.
@@ -394,6 +396,9 @@ type agentServer struct {
 	// registry records local agent sessions in agent_sessions so other
 	// replicas can relay to them; nil (tests) records nothing.
 	registry *sessionRegistry
+	// onboarding handles join tokens and records rejected attempts; nil
+	// (tests) turns both off.
+	onboarding *onboarding
 }
 
 func (a *agentServer) handler() http.Handler {
@@ -443,11 +448,20 @@ func (a *agentServer) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	cluster := r.URL.Query().Get("cluster")
 	tok, ok := bearerToken(r)
+	if ok && auth.IsJoinToken(tok) && a.onboarding.enabled() {
+		a.join(w, r, cluster, tok, ip)
+		return
+	}
 	h, valid := a.reg.Verify(cluster, tok)
 	if !ok || !valid {
 		a.failures.add(ip)
 		a.metrics.agentAuthFailures.Add(1)
 		a.log.Warn("agent authentication failed", "cluster", truncate(cluster, 64), "peer", ip)
+		detail := "the agent token is not accepted: it does not match the cluster's token Secret"
+		if !ok {
+			detail = "no bearer token"
+		}
+		a.onboarding.reject(cluster, store.AttemptBadToken, detail, ip)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -461,6 +475,7 @@ func (a *agentServer) connect(w http.ResponseWriter, r *http.Request) {
 	hello, err := readHello(a.base, conn, cluster)
 	if err != nil {
 		a.log.Warn("agent hello rejected", "cluster", cluster, "peer", ip, "err", err)
+		a.onboarding.reject(cluster, helloReason(err), err.Error(), ip)
 		_ = conn.Close(websocket.StatusPolicyViolation, truncate(err.Error(), 120))
 		return
 	}
@@ -500,6 +515,121 @@ func (a *agentServer) connect(w http.ResponseWriter, r *http.Request) {
 		a.registry.unregister(s)
 	}
 	a.log.Info("agent disconnected", "cluster", cluster, "instance", s.instance, "reason", closeReason(err))
+}
+
+// errProtocol marks a hello with an unsupported protocol version.
+var errProtocol = errors.New("unsupported protocol version")
+
+func helloReason(err error) string {
+	if errors.Is(err, errProtocol) {
+		return store.AttemptProtocol
+	}
+	return store.AttemptHelloRejected
+}
+
+// join serves a connection that presents a join token (ADR-0005): it
+// checks the token, reads the hello, consumes the token, mints the
+// permanent agent token into the cluster's token Secret, sends it in a
+// credentials frame and closes. The agent reconnects with the new token.
+func (a *agentServer) join(w http.ResponseWriter, r *http.Request, cluster, tok, ip string) {
+	o := a.onboarding
+	refuse := func(reason, detail string) {
+		a.failures.add(ip)
+		a.metrics.agentAuthFailures.Add(1)
+		a.log.Warn("agent join refused", "cluster", truncate(cluster, 64), "peer", ip, "reason", reason)
+		o.reject(cluster, reason, detail, ip)
+	}
+	ctx, cancel := context.WithTimeout(a.base, storeTimeout)
+	jt, reason, detail := o.joinCheck(ctx, cluster, tok)
+	cancel()
+	if reason == store.AttemptWrongCluster {
+		o.reject(jt.Cluster, reason, fmt.Sprintf("the join token was presented for cluster %q", truncate(cluster, 64)), ip)
+	}
+	if _, known := a.reg.Get(cluster); reason == "" && !known {
+		reason, detail = store.AttemptBadToken, "unknown cluster"
+	}
+	if reason != "" {
+		refuse(reason, detail)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		a.log.Warn("agent websocket upgrade failed", "cluster", cluster, "err", err)
+		return
+	}
+	defer conn.CloseNow()
+	conn.SetReadLimit(protocol.MaxFrameBytes)
+	hello, err := readHello(a.base, conn, cluster)
+	if err != nil {
+		// The token is not used up by a bad hello.
+		refuse(helloReason(err), err.Error())
+		_ = conn.Close(websocket.StatusPolicyViolation, truncate(err.Error(), 120))
+		return
+	}
+	ctx, cancel = context.WithTimeout(a.base, credsTimeout)
+	defer cancel()
+	token, err := o.mint(ctx, cluster, jt)
+	if err != nil {
+		var je *joinError
+		if errors.As(err, &je) {
+			refuse(je.reason, je.detail)
+		} else {
+			a.log.Error("agent join failed", "cluster", cluster, "err", err)
+			o.reject(cluster, store.AttemptCredentialsFail, "internal error while issuing the agent token", ip)
+		}
+		_ = conn.Close(websocket.StatusPolicyViolation, "join refused")
+		return
+	}
+	res, err := sendCredentials(ctx, conn, token)
+	switch {
+	case err != nil:
+		a.log.Warn("agent join: credentials not acknowledged", "cluster", cluster, "err", err)
+		o.reject(cluster, store.AttemptCredentialsFail, "the agent did not acknowledge its new token: "+err.Error(), ip)
+	case !res.Stored:
+		a.log.Warn("agent join: the agent keeps its token in memory only", "cluster", cluster, "error", res.Error)
+	}
+	a.log.Info("agent joined", "cluster", cluster, "instance", hello.Instance, "agentVersion", hello.AgentVersion, "peer", ip)
+	o.notify(cluster)
+	_ = conn.Close(websocket.StatusNormalClosure, "credentials delivered; reconnect with them")
+}
+
+// sendCredentials sends the credentials frame and waits for the agent's
+// response, ignoring any other frame.
+func sendCredentials(ctx context.Context, conn *websocket.Conn, token string) (protocol.CredentialsResult, error) {
+	payload, err := json.Marshal(protocol.Credentials{Token: token})
+	if err != nil {
+		return protocol.CredentialsResult{}, err
+	}
+	b, err := json.Marshal(protocol.Frame{Type: protocol.TypeCredentials, ID: "credentials-1", Payload: payload})
+	if err != nil {
+		return protocol.CredentialsResult{}, err
+	}
+	if err := conn.Write(ctx, websocket.MessageText, b); err != nil {
+		return protocol.CredentialsResult{}, fmt.Errorf("send credentials: %w", err)
+	}
+	for {
+		typ, data, err := conn.Read(ctx)
+		if err != nil {
+			return protocol.CredentialsResult{}, fmt.Errorf("read credentials response: %w", err)
+		}
+		if typ != websocket.MessageText {
+			continue
+		}
+		var f protocol.Frame
+		if json.Unmarshal(data, &f) != nil || f.Type != protocol.TypeResponse || f.ID != "credentials-1" {
+			continue
+		}
+		resp := decodeResponse(f.Payload, "agent")
+		if resp.Error != nil {
+			return protocol.CredentialsResult{}, errors.New(resp.Error.Message)
+		}
+		var res protocol.CredentialsResult
+		if err := json.Unmarshal(resp.Result, &res); err != nil {
+			return protocol.CredentialsResult{}, fmt.Errorf("decode credentials result: %w", err)
+		}
+		return res, nil
+	}
 }
 
 func closeReason(err error) string {
@@ -543,7 +673,7 @@ func validateHello(h *protocol.Hello, cluster string) error {
 	major, _, _ := strings.Cut(h.Protocol, ".")
 	want, _, _ := strings.Cut(protocol.Version, ".")
 	if major != want {
-		return fmt.Errorf("unsupported protocol version %q (hub speaks %s)", truncate(h.Protocol, 16), protocol.Version)
+		return fmt.Errorf("%w %q (hub speaks %s)", errProtocol, truncate(h.Protocol, 16), protocol.Version)
 	}
 	if h.Cluster != cluster {
 		return fmt.Errorf("hello names cluster %q but the connection is for %q", truncate(h.Cluster, 64), cluster)
@@ -564,6 +694,16 @@ func validateHello(h *protocol.Hello, cluster string) error {
 	}
 	if len(h.Namespaces) > 1000 {
 		h.Namespaces = h.Namespaces[:1000]
+	}
+	if d := h.Diagnostics; d != nil {
+		if len(d.ServedKinds) > 64 {
+			d.ServedKinds = d.ServedKinds[:64]
+		}
+		for i := range d.ServedKinds {
+			d.ServedKinds[i] = cleanText(d.ServedKinds[i], 64)
+		}
+		d.SARError = cleanText(d.SARError, 256)
+		d.CredentialsError = cleanText(d.CredentialsError, 256)
 	}
 	return nil
 }

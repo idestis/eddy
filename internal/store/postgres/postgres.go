@@ -148,6 +148,9 @@ func (s *Store) RateLimits() store.RateLimits       { return rateLimits{s} }
 func (s *Store) AgentSessions() store.AgentSessions { return agentSessions{s} }
 func (s *Store) Events() store.Events               { return events{s} }
 
+func (s *Store) JoinTokens() store.JoinTokens                 { return joinTokens{s} }
+func (s *Store) ConnectionAttempts() store.ConnectionAttempts { return attempts{s} }
+
 // Ping checks that the database answers.
 func (s *Store) Ping(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
@@ -186,6 +189,11 @@ func (s *Store) Prune(ctx context.Context, now time.Time, r store.Retention) (st
 	agentCut := storeutil.Ms(now.Add(-store.AgentSessionPruneAfter))
 	if st.AgentSessions, err = s.deleteBatched(ctx, "agent_sessions", "(cluster, agent_instance)",
 		"heartbeat_at <= $1", agentCut); err != nil {
+		return st, err
+	}
+	joinCut := storeutil.Ms(now.Add(-store.JoinTokenPruneAfter))
+	if st.JoinTokens, err = s.deleteBatched(ctx, "join_tokens", "id",
+		"expires_at <= $1 OR used_at <= $1 OR revoked_at <= $1", joinCut); err != nil {
 		return st, err
 	}
 	if r.TokenPurgeAfter > 0 {

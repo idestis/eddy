@@ -112,11 +112,11 @@ func (r *remoteSession) handle(f protocol.Frame) error {
 		if err := json.Unmarshal(f.Payload, &d); err != nil {
 			return fmt.Errorf("decode relayed delta: %w", err)
 		}
-		ups, dels := r.apply(d)
+		ups, dels, parents := r.apply(d)
 		if len(ups) == 0 && len(dels) == 0 {
 			return nil
 		}
-		r.agents.emit(r, event{kind: evChange, cluster: r.cluster, upserts: ups, deletes: dels})
+		r.agents.emit(r, event{kind: evChange, cluster: r.cluster, upserts: ups, deletes: dels, parents: parents})
 		r.agents.emit(r, event{kind: evClusters})
 	}
 	return nil

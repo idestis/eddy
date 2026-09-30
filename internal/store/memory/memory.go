@@ -32,6 +32,8 @@ type Store struct {
 	audit    []store.AuditEvent // ascending by ID
 	auditSeq int64
 	prefs    map[string]json.RawMessage
+	joins    map[string]store.JoinToken           // keyed by ID
+	attempts map[string][]store.ConnectionAttempt // keyed by cluster, oldest first
 	closed   bool
 
 	limits *inproc.RateLimits
@@ -54,6 +56,8 @@ func New() *Store {
 		threads:  map[string]*threadRec{},
 		msgIDs:   map[string]string{},
 		prefs:    map[string]json.RawMessage{},
+		joins:    map[string]store.JoinToken{},
+		attempts: map[string][]store.ConnectionAttempt{},
 		limits:   inproc.NewRateLimits(),
 		agents:   inproc.NewAgentSessions(),
 		events:   inproc.NewEvents(),
@@ -69,6 +73,9 @@ func (s *Store) Prefs() store.Prefs       { return prefs{s} }
 func (s *Store) RateLimits() store.RateLimits       { return s.limits }
 func (s *Store) AgentSessions() store.AgentSessions { return s.agents }
 func (s *Store) Events() store.Events               { return s.events }
+
+func (s *Store) JoinTokens() store.JoinTokens                 { return joinTokens{s} }
+func (s *Store) ConnectionAttempts() store.ConnectionAttempts { return attempts{s} }
 
 // Ping reports whether the store is open.
 func (s *Store) Ping(context.Context) error {
@@ -102,6 +109,20 @@ func (s *Store) Prune(_ context.Context, now time.Time, r store.Retention) (stor
 	nowMs := storeutil.Ms(now)
 
 	st.RateLimits = s.limits.Prune(now)
+	joinCut := storeutil.Ms(now.Add(-store.JoinTokenPruneAfter))
+	for id, t := range s.joins {
+		end := storeutil.Ms(t.ExpiresAt)
+		if t.UsedAt != nil {
+			end = min(end, storeutil.Ms(*t.UsedAt))
+		}
+		if t.RevokedAt != nil {
+			end = min(end, storeutil.Ms(*t.RevokedAt))
+		}
+		if end <= joinCut {
+			delete(s.joins, id)
+			st.JoinTokens++
+		}
+	}
 	st.AgentSessions = s.agents.Prune(now.Add(-store.AgentSessionPruneAfter))
 	for k, v := range s.sessions {
 		if storeutil.Ms(v.ExpiresAt) <= nowMs {
@@ -668,5 +689,140 @@ func (x prefs) Put(_ context.Context, subject string, data json.RawMessage) erro
 	x.s.mu.Lock()
 	defer x.s.mu.Unlock()
 	x.s.prefs[subject] = storeutil.Raw(data)
+	return nil
+}
+
+// ---- join tokens ----
+
+type joinTokens struct{ s *Store }
+
+func copyJoin(t store.JoinToken) store.JoinToken {
+	t.Hash = storeutil.Bytes(t.Hash)
+	t.UsedAt = storeutil.NormPtr(t.UsedAt)
+	t.RevokedAt = storeutil.NormPtr(t.RevokedAt)
+	return t
+}
+
+func (x joinTokens) Create(_ context.Context, t store.JoinToken) error {
+	t, err := storeutil.PrepareJoinToken(t)
+	if err != nil {
+		return err
+	}
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	if x.s.closed {
+		return errClosed
+	}
+	if _, ok := x.s.joins[t.ID]; ok {
+		return store.ErrConflict
+	}
+	for _, o := range x.s.joins {
+		if string(o.Hash) == string(t.Hash) {
+			return store.ErrConflict
+		}
+	}
+	for id, o := range x.s.joins {
+		if o.Cluster == t.Cluster && o.UsedAt == nil && o.RevokedAt == nil {
+			at := t.CreatedAt
+			o.RevokedAt = &at
+			x.s.joins[id] = o
+		}
+	}
+	x.s.joins[t.ID] = copyJoin(t)
+	return nil
+}
+
+func (x joinTokens) Get(_ context.Context, id string) (store.JoinToken, error) {
+	x.s.mu.RLock()
+	defer x.s.mu.RUnlock()
+	t, ok := x.s.joins[id]
+	if !ok {
+		return store.JoinToken{}, store.ErrNotFound
+	}
+	return copyJoin(t), nil
+}
+
+func (x joinTokens) Consume(_ context.Context, id string, now time.Time) (store.JoinToken, error) {
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	t, ok := x.s.joins[id]
+	if !ok || t.UsedAt != nil || t.RevokedAt != nil || storeutil.Ms(t.ExpiresAt) <= storeutil.Ms(now) {
+		return store.JoinToken{}, store.ErrNotFound
+	}
+	at := storeutil.Norm(now)
+	t.UsedAt = &at
+	x.s.joins[id] = t
+	return copyJoin(t), nil
+}
+
+func (x joinTokens) List(_ context.Context, cluster string) ([]store.JoinToken, error) {
+	x.s.mu.RLock()
+	defer x.s.mu.RUnlock()
+	var out []store.JoinToken
+	for _, t := range x.s.joins {
+		if t.Cluster == cluster {
+			t = copyJoin(t)
+			t.Hash = nil
+			out = append(out, t)
+		}
+	}
+	slices.SortFunc(out, func(a, b store.JoinToken) int {
+		return cmp.Or(b.CreatedAt.Compare(a.CreatedAt), cmp.Compare(b.ID, a.ID))
+	})
+	return out, nil
+}
+
+func (x joinTokens) RevokeByCluster(_ context.Context, cluster string, at time.Time) error {
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	at = storeutil.Norm(at)
+	for id, t := range x.s.joins {
+		if t.Cluster == cluster && t.UsedAt == nil && t.RevokedAt == nil {
+			a := at
+			t.RevokedAt = &a
+			x.s.joins[id] = t
+		}
+	}
+	return nil
+}
+
+// ---- connection attempts ----
+
+type attempts struct{ s *Store }
+
+func (x attempts) Record(_ context.Context, a store.ConnectionAttempt) error {
+	a, err := storeutil.PrepareAttempt(a)
+	if err != nil {
+		return err
+	}
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	if x.s.closed {
+		return errClosed
+	}
+	list := append(x.s.attempts[a.Cluster], a)
+	slices.SortStableFunc(list, func(p, q store.ConnectionAttempt) int { return p.At.Compare(q.At) })
+	if n := len(list) - store.MaxAttemptsPerCluster; n > 0 {
+		list = slices.Clone(list[n:])
+	}
+	x.s.attempts[a.Cluster] = list
+	return nil
+}
+
+func (x attempts) List(_ context.Context, cluster string) ([]store.ConnectionAttempt, error) {
+	x.s.mu.RLock()
+	defer x.s.mu.RUnlock()
+	list := x.s.attempts[cluster]
+	out := make([]store.ConnectionAttempt, 0, len(list))
+	for i := len(list) - 1; i >= 0; i-- {
+		out = append(out, list[i])
+	}
+	return out, nil
+}
+
+func (x attempts) DeleteByCluster(_ context.Context, cluster string) error {
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	delete(x.s.attempts, cluster)
 	return nil
 }
