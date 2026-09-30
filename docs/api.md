@@ -62,7 +62,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 
 | Method and path | Response |
 |---|---|
-| `GET /api/v1/clusters` | `{items: ClusterInfo[]}`, counts filtered by RBAC |
+| `GET /api/v1/clusters` | `{items: ClusterInfo[]}`, counts filtered by RBAC. Agents in dev local mode add `mode: "local"`, `readOnly` and `context`. Writes to a `readOnly` cluster return 403. |
 | `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot. `kind` may repeat or be comma-separated. An unknown kind or status gives 400. `resourceVersion` is an opaque hub counter. |
 | `GET /api/v1/clusters/{c}/objects/{kind}/{ns}/{name}` | `Resource` |
 | `GET …/objects/{kind}/{ns}/{name}/children` | `{items: Resource[]}`. Mainly for MCP. The UI builds trees from each summary's `owner`, which is filled from ownerReferences, Flux labels and inventory when known. |

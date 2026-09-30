@@ -20,7 +20,8 @@ every file is written for outside contributors.
   - `internal/agent`: informers, impersonated actions and the WebSocket client.
   - `internal/hub`: the HTTP API, SSE, the agent registry, the SAR authorizer and the threads service.
   - `internal/auth`: local users, proxy auth, sessions, CSRF and PATs.
-  - `internal/store/{sqlite,memory,storetest}`: the store backends and their shared tests.
+  - `internal/store/{postgres,memory,storetest}`: the store backends and their shared tests. PostgreSQL is the production store (ADR-0004). `sqlite` remains only until the HA phase removes it.
+  - `internal/devlocal`: local-mode helpers (dev builds only).
   - `internal/ai`: the Anthropic and Bedrock providers, the redactor and the tool loop.
   - `internal/mcp`: the MCP server.
   - `internal/audit`: the audit recorder.
@@ -40,9 +41,12 @@ every file is written for outside contributors.
 - `task check`: lint, test and build the UI. Run it before you say you are done.
 - `task test` / `task lint`: Go tests with `-race` / `go vet` and staticcheck.
 - `task ui` / `task ui:dev`: build the SPA / run Vite on :5173, proxying to the hub on :8080.
-- `task dev:hub`: run the hub with `hack/hub.dev.yaml`, the memory store and fake login
-  (`-tags dev`).
-- `task dev:agent`: run an agent against your current kubecontext.
+- `task dev [CONTEXTS=a,b]`: hub, agent and web with air hot reload, using local mode
+  against your kube contexts. Read-only unless `ALLOW_WRITES=1`. Settings come from `.env`
+  (see `docs/development.md`).
+- `task dev:hub` / `task dev:agent` / `task dev:web` / `task dev:mock`: the pieces on
+  their own. `dev:mock` is the UI only, with mock data. `LOCAL=0` runs the real
+  impersonating agent, for example against kind.
 - `task kind:up`: a kind cluster with Flux, the hub and an agent (see `docs/install.md`).
 - `task images` / `task charts`: build the container images / lint and package the charts.
 
@@ -77,6 +81,14 @@ every file is written for outside contributors.
   `mcp.enabled`, `mcp.writes`.
 - Dev fake login needs all of: the `-tags dev` build, `EDDY_DEV_MODE=1` and a loopback
   listener. It never appears in release images or in Helm.
+- Agent local mode (`--local` / `EDDY_AGENT_LOCAL=1`) needs all of: `-tags dev`,
+  `EDDY_DEV_MODE=1` and a loopback hub URL.
+  - It acts as the kubeconfig identity: no impersonation; access checks are
+    SelfSubjectAccessReviews.
+  - It is read-only unless `--allow-writes`.
+  - `--protect` matches stay read-only without `--allow-writes-protected`, which exists
+    only as a flag, never as an env var.
+  - It never ships in release images or in Helm.
 - Compare tokens (agent tokens, PATs, API keys, the proxy secret) in constant time, and never
   log them.
 - The UI uses a strict CSP with no inline script, `frame-ancestors 'none'` and `nosniff`.

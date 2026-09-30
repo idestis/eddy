@@ -117,12 +117,17 @@ Details: [docs/security.md](docs/security.md). To report a vulnerability, see
 ## Development
 
 ```sh
-task dev:hub      # hub on :8080/:8443 with the memory store and fake login (-tags dev)
-task dev:agent    # agent against your current kubecontext
-task ui:dev       # Vite on :5173, proxying to the hub
-cd web && VITE_MOCK=1 pnpm dev   # UI only, with mocked data
-task check        # lint + tests + UI build; run before a PR
+cp .env.example .env                   # local settings (gitignored)
+task dev                               # hub + agent + web with hot reload; nothing installed in a cluster
+task dev CONTEXTS=kind-eddy,staging    # serve these kubeconfig contexts (read-only by default)
+task dev:mock                          # UI only, with mock data
+task check                             # lint + tests + UI build; run before a PR
 ```
+
+Local mode runs the agent on your machine as your kubeconfig identity. It works only in dev
+builds and on loopback, is read-only unless `ALLOW_WRITES=1`, and keeps contexts matching
+`(?i)prod` read-only. See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[docs/development.md](docs/development.md).
 
 `CLAUDE.md` holds the conventions and security invariants used by contributors and by
 Claude Code.
