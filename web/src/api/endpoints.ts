@@ -11,7 +11,9 @@ import type {
   ConnectionInfo,
   CreatedCluster,
   CreatedToken,
+  Finding,
   IssuedJoinToken,
+  JobsSnapshot,
   KubeEvent,
   List,
   Me,
@@ -62,6 +64,18 @@ export const putPrefs = (data: Prefs) =>
 export const getClusters = () => request<List<ClusterInfo>>(`${V1}/clusters`);
 export const getResources = (cluster: string, signal?: AbortSignal) =>
   request<ResourceSnapshot>(`${V1}/clusters/${seg(cluster)}/resources`, { signal });
+/** Jobs including the hidden finished ones; pass `cursor` (hidden.next) for further pages. */
+export const getJobsWithHidden = (
+  cluster: string,
+  q: { namespace?: string; cursor?: string; limit?: number },
+  signal?: AbortSignal,
+) =>
+  request<JobsSnapshot>(`${V1}/clusters/${seg(cluster)}/resources`, {
+    query: { kind: "Job", includeHidden: 1, ...q },
+    signal,
+  });
+export const getFindings = (cluster: string) =>
+  request<List<Finding>>(`${V1}/clusters/${seg(cluster)}/findings`);
 export const getObject = (cluster: string, r: Ref) => request<Resource>(objectPath(cluster, r));
 export const getYaml = (cluster: string, r: Ref) =>
   request<{ yaml: string }>(`${objectPath(cluster, r)}/yaml`);

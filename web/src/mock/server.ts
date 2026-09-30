@@ -55,6 +55,7 @@ const me: Me = {
     ephemeralStore: true,
     devMode: false,
     onboarding: true,
+    workloadLogs: false,
   },
   version: "v1.0.0",
 };
@@ -102,6 +103,9 @@ function parseTtl(ttl: string | undefined): number | undefined {
   const ms = Number(m[1]) * (m[2] === "h" ? 3_600_000 : 60_000);
   return ms > 0 && ms <= 24 * 3_600_000 ? ms : undefined;
 }
+
+/** The hub's default page of hidden finished Jobs. */
+const HIDDEN_PAGE = 500;
 
 const iso = (minutesAgo = 0) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
@@ -171,6 +175,35 @@ export class MockHub {
     this.update(prod, p, { message: `Running (restarts: ${Math.floor(Math.random() * 3)})` });
   }
 
+  /**
+   * GET …/resources, with the hub's optional kind and namespace filters. includeHidden (Jobs
+   * only) adds the hidden finished Jobs a page at a time; a cursor page holds hidden Jobs only.
+   */
+  private resourcesRoute(cl: MockCluster, q: URLSearchParams): Response {
+    const kind = q.get("kind") ?? "";
+    const namespace = q.get("namespace") ?? "";
+    const match = (r: MockResource) =>
+      (!kind || r.kind === kind) && (!namespace || r.namespace === namespace);
+    const listed = [...cl.resources.values()].filter(match).map(strip);
+    if (!q.has("includeHidden")) return json({ items: listed, resourceVersion: nextResourceVersion() });
+    if (kind !== "Job") return error(400, "bad_request", "includeHidden needs kind=Job.");
+    const limit = Number(q.get("limit") ?? HIDDEN_PAGE);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000)
+      return error(400, "bad_request", "limit must be between 1 and 1000.");
+    const cursor = q.get("cursor");
+    const offset = cursor ? Number(cursor.replace(/^h/, "")) : 0;
+    if (cursor && (!/^h\d+$/.test(cursor) || !Number.isInteger(offset)))
+      return error(400, "bad_request", "Invalid cursor.");
+    const hidden = (cl.hidden ?? []).filter(match);
+    const page = hidden.slice(offset, offset + limit).map(strip);
+    const end = offset + page.length;
+    return json({
+      items: cursor ? page : [...listed, ...page],
+      resourceVersion: cursor ? "" : nextResourceVersion(),
+      hidden: { total: hidden.length, next: end < hidden.length ? `h${end}` : undefined },
+    });
+  }
+
   private record(
     action: string,
     target: ResourceRef | undefined,
@@ -235,9 +268,8 @@ export class MockHub {
       const cl = this.cluster(a);
       if (!cl) return error(404, "not_found", `Cluster ${a} not found.`);
       if (!cl.info.connected) return error(503, "disconnected", `${a} is disconnected.`);
-      if (b === "resources") {
-        return json({ items: [...cl.resources.values()].map(strip), resourceVersion: nextResourceVersion() });
-      }
+      if (b === "resources") return this.resourcesRoute(cl, url.searchParams);
+      if (b === "findings" && !c) return json({ items: cl.info.findings ?? [] });
       if (b === "objects" && c && d && e) {
         const r = findResource(cl, c, d === "_" ? "" : d, e);
         if (!r) return error(404, "not_found", `${c}/${e} not found.`);

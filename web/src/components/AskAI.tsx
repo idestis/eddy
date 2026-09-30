@@ -110,7 +110,7 @@ export function suggestions(cluster: ClusterInfo, r: Resource | undefined): stri
       : [`Is anything unhealthy on ${cluster.name}?`, "Summarize this cluster in 3 bullets"];
   }
   if (r.kind === "Pod")
-    return r.status === "ready"
+    return r.status === "ready" || r.status === "completed"
       ? ["Summarize the recent logs", "Which image is this?"]
       : ["Why is this pod not running?", "Summarize the recent logs"];
   if (r.status === "failed")

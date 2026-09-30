@@ -94,7 +94,7 @@ function startStream(hub: MockHub, url: URL, source: MockEventSource): () => voi
     const container = url.searchParams.get("container") ?? r?.containers?.[0];
     const sidecar = container && r?.containers && container !== r.containers[0];
     const app = sidecar ? undefined : r?.labels?.["app.kubernetes.io/name"];
-    if (r?.status !== "ready") {
+    if (r?.status !== "ready" && r?.status !== "completed") {
       const reason = r?.message ?? "not found";
       source.send("log", { lines: [`Container has not started (${reason}), so there are no logs yet.`] });
       source.send("end", {});
@@ -102,7 +102,7 @@ function startStream(hub: MockHub, url: URL, source: MockEventSource): () => voi
     }
     const tail = Number.parseInt(url.searchParams.get("tail") ?? "200", 10);
     source.send("log", { lines: Array.from({ length: Math.min(tail, 120) }, () => logLine(app)) });
-    if (url.searchParams.get("follow") !== "true") {
+    if (url.searchParams.get("follow") !== "true" || r.status === "completed") {
       source.send("end", {});
       return () => {};
     }

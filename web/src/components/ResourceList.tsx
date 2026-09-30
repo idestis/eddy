@@ -41,6 +41,8 @@ export interface Columns {
   ids: ColumnId[];
   template: string;
   versionLabel: string;
+  /** "Done" when the column holds only Job completions, not live replicas. */
+  replicasLabel: string;
 }
 
 /**
@@ -50,12 +52,14 @@ export interface Columns {
  */
 export function pickColumns(rows: readonly Row[], grouped: boolean, width: number): Columns {
   let replicas = false;
+  let completions = false;
   let workloads = 0;
   let flux = 0;
   for (const row of rows) {
     if (row.type !== "resource") continue;
     const r = row.resource;
     if (r.replicas) replicas = true;
+    else if (r.completions) completions = true;
     const info = kindInfo(r.kind);
     if (info.workload) workloads++;
     else if (info.flux) flux++;
@@ -63,12 +67,13 @@ export function pickColumns(rows: readonly Row[], grouped: boolean, width: numbe
   const ids: ColumnId[] = ["name"];
   if (!grouped && width >= 900) ids.push("kind");
   ids.push("status");
-  if (replicas) ids.push("replicas");
+  if (replicas || completions) ids.push("replicas");
   if (width >= 540) ids.push("message");
   if (width >= 820) ids.push("version");
   if (width >= 460) ids.push("age");
   const versionLabel = workloads && !flux ? "Image" : flux && !workloads ? "Revision" : "Version";
-  return { ids, template: ids.map((id) => TRACKS[id]).join(" "), versionLabel };
+  const replicasLabel = replicas ? "Replicas" : "Done";
+  return { ids, template: ids.map((id) => TRACKS[id]).join(" "), versionLabel, replicasLabel };
 }
 
 const HEADER: Record<ColumnId, string> = {
@@ -141,13 +146,22 @@ const ResourceRow = memo(function ResourceRow({
           <StatusPill key={id} status={r.status} />
         );
       case "replicas":
-        return (
+        // A finished Job has no replicas; its completions ("1/1") are shown muted, as history.
+        return r.replicas || !r.completions ? (
           <span
             key={id}
             className={`font-mono text-12-5 tabular-nums ${r.replicas && r.status !== "ready" ? "text-attn" : "text-ink-2"}`}
             title={r.replicas ? `${r.replicas} ready` : undefined}
           >
             {r.replicas}
+          </span>
+        ) : (
+          <span
+            key={id}
+            className="font-mono text-12-5 text-ink-3 tabular-nums"
+            title={`${r.completions} completions succeeded`}
+          >
+            {r.completions}
           </span>
         );
       case "message":
@@ -245,7 +259,7 @@ export function ResourceList({ rows, grouped, selectedId, onSelect, onOpen, labe
       >
         {columns.ids.map((id) => (
           <span key={id} className={id === "age" ? "text-right" : "truncate"}>
-            {id === "version" ? columns.versionLabel : HEADER[id]}
+            {id === "version" ? columns.versionLabel : id === "replicas" ? columns.replicasLabel : HEADER[id]}
           </span>
         ))}
       </div>

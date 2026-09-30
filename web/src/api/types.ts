@@ -1,9 +1,17 @@
 // Wire types for the hub API. They mirror internal/model, internal/store and
 // docs/api.md; keep them in sync when the contract changes.
 
-export type Status = "ready" | "failed" | "reconciling" | "suspended" | "unknown";
+/** "completed" is a finished Job (Complete condition) or a Pod in phase Succeeded: healthy, not live. */
+export type Status = "ready" | "failed" | "reconciling" | "suspended" | "unknown" | "completed";
 
-export const STATUSES: readonly Status[] = ["failed", "reconciling", "suspended", "unknown", "ready"];
+export const STATUSES: readonly Status[] = [
+  "failed",
+  "reconciling",
+  "suspended",
+  "unknown",
+  "ready",
+  "completed",
+];
 
 /** Identifies an object inside one cluster (model.Ref). */
 export interface Ref {
@@ -33,7 +41,10 @@ export interface Resource extends Ref {
   revision?: string;
   source?: Ref;
   owner?: Ref;
+  /** Empty for finished Jobs; see `completions`. */
   replicas?: string;
+  /** Jobs only: "succeeded/completions", e.g. "1/1". */
+  completions?: string;
   images?: string[];
   /** A Pod's container names (not init containers), for the log picker. */
   containers?: string[];
@@ -89,6 +100,45 @@ export interface ClusterInfo {
   /** The kubeconfig context a local-mode agent serves. */
   context?: string;
   counts?: Partial<Record<Status, number>>;
+  /** Cluster-level findings such as a build-up of finished Jobs. They are not resources. */
+  findings?: Finding[];
+}
+
+export type FindingSeverity = "warning" | "info";
+
+export interface JobGroup {
+  by: "owner" | "label" | "generateName" | "prefix" | "namespace";
+  name: string;
+  label: string;
+  count: number;
+  failed?: number;
+  withoutTTL?: number;
+  owner?: Ref;
+}
+
+export interface JobBuildup {
+  hidden: number;
+  finished: number;
+  succeeded: number;
+  failed: number;
+  withoutTTL: number;
+  standaloneFailed: number;
+  oldest?: string;
+  newest?: string;
+  groups?: JobGroup[];
+  threshold: number;
+}
+
+/** One per namespace with hidden finished Jobs. Only "warning" needs attention. */
+export interface Finding {
+  /** "job-buildup/<namespace>" */
+  id: string;
+  kind: "job-buildup";
+  severity: FindingSeverity;
+  namespace: string;
+  message: string;
+  recommendation?: string;
+  jobs?: JobBuildup;
 }
 
 export interface Features {
@@ -101,6 +151,8 @@ export interface Features {
   devMode: boolean;
   /** The hub may add clusters and issue join tokens (ADR-0005, `onboarding.enabled`). */
   onboarding: boolean;
+  /** Logs of workloads other than Pods (Deployments, Jobs…). */
+  workloadLogs: boolean;
 }
 
 export interface Me {
@@ -130,6 +182,11 @@ export interface Page<T> extends List<T> {
 export interface ResourceSnapshot {
   items: Resource[];
   resourceVersion: string;
+}
+
+/** GET …/resources?kind=Job&includeHidden=1: listed Jobs plus a page of hidden finished ones. */
+export interface JobsSnapshot extends ResourceSnapshot {
+  hidden: { total: number; next?: string };
 }
 
 /** The target of a thread (store.ResourceRef). Kind "" means the whole cluster. */

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConnectionInfo, CreatedCluster } from "../api/types";
+import type {
+  ConnectionInfo,
+  CreatedCluster,
+  Finding,
+  JobsSnapshot,
+  List,
+  ResourceSnapshot,
+} from "../api/types";
 import { MockHub } from "./server";
 
 const headers = new Headers({ "X-Eddy-CSRF": "mock-csrf-token" });
@@ -74,5 +81,61 @@ describe("mock prefs", () => {
       new Headers(),
     );
     expect(noCsrf.status).toBe(403);
+  });
+});
+
+describe("mock hidden finished Jobs", () => {
+  const base = "/api/v1/clusters/prod-eu/resources";
+
+  it("reports a warning job-buildup finding and completed Jobs", async () => {
+    const hub = new MockHub();
+    const info = hub.clusterInfos().find((c) => c.name === "prod-eu");
+    const warning = info?.findings?.find((f) => f.severity === "warning");
+    expect(warning?.namespace).toBe("prefect");
+    expect(warning?.jobs?.hidden).toBe(1240);
+    expect(info?.counts?.completed).toBeGreaterThan(0);
+    const findings = await call<List<Finding>>(hub, "GET", "/api/v1/clusters/prod-eu/findings");
+    expect(findings.data.items.map((f) => f.id)).toEqual(["job-buildup/prefect", "job-buildup/apps"]);
+  });
+
+  it("hides them from the normal list and pages through them with includeHidden", async () => {
+    const hub = new MockHub();
+    const normal = await call<ResourceSnapshot>(hub, "GET", base);
+    const listedJobs = normal.data.items.filter((r) => r.kind === "Job" && r.namespace === "prefect");
+    expect(listedJobs).toHaveLength(16);
+
+    const first = await call<JobsSnapshot>(hub, "GET", `${base}?kind=Job&includeHidden=1&namespace=prefect`);
+    expect(first.status).toBe(200);
+    expect(first.data.items).toHaveLength(16 + 500);
+    expect(first.data.items.every((r) => r.kind === "Job" && r.namespace === "prefect")).toBe(true);
+    expect(first.data.hidden.total).toBe(1240);
+    expect(first.data.resourceVersion).not.toBe("");
+
+    const ids = new Set(first.data.items.map((r) => r.id));
+    let next = first.data.hidden.next;
+    let pages = 0;
+    while (next) {
+      const page = await call<JobsSnapshot>(
+        hub,
+        "GET",
+        `${base}?kind=Job&includeHidden=1&namespace=prefect&cursor=${next}`,
+      );
+      expect(page.data.resourceVersion).toBe("");
+      for (const r of page.data.items) ids.add(r.id);
+      next = page.data.hidden.next;
+      pages++;
+    }
+    expect(pages).toBe(2);
+    expect(ids.size).toBe(16 + 1240);
+
+    const small = await call<JobsSnapshot>(hub, "GET", `${base}?kind=Job&includeHidden=1&limit=10`);
+    expect(small.data.hidden).toEqual({ total: 1252, next: "h10" });
+  });
+
+  it("rejects includeHidden without kind=Job and bad limits", async () => {
+    const hub = new MockHub();
+    expect((await call(hub, "GET", `${base}?includeHidden=1`)).status).toBe(400);
+    expect((await call(hub, "GET", `${base}?kind=Pod&includeHidden=1`)).status).toBe(400);
+    expect((await call(hub, "GET", `${base}?kind=Job&includeHidden=1&limit=5000`)).status).toBe(400);
   });
 });

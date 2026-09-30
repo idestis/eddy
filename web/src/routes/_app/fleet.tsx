@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { type FleetResource, useCanAddCluster, useFleetResources, useMe } from "../../api/queries";
-import type { ClusterInfo } from "../../api/types";
+import type { ClusterInfo, Finding } from "../../api/types";
 import { AddClusterDialog } from "../../components/AddClusterDialog";
 import { FactList } from "../../components/ClusterCards";
 import { ClusterTile, LockBadge, PinButton } from "../../components/ClusterSwitch";
@@ -12,11 +12,13 @@ import { PageHead } from "../../components/PageHead";
 import { Screen } from "../../components/Screen";
 import { Health, KeyHint, StatusPill } from "../../components/Status";
 import { clusterStyle } from "../../lib/clusterColor";
+import { warningFindings } from "../../lib/findings";
 import { age, ago, STATUS_RANK } from "../../lib/format";
 import { useKeys } from "../../lib/keys";
 import { isFlux, kindInfo } from "../../lib/kinds";
-import { detailLink } from "../../lib/links";
+import { detailLink, jobsLink } from "../../lib/links";
 import { useOrderedClusters } from "../../lib/prefs";
+import { needsAttention } from "../../lib/resourceRows";
 
 export const Route = createFileRoute("/_app/fleet")({
   component: FleetPage,
@@ -101,9 +103,22 @@ const TH =
   "border-b border-line bg-surface-side px-3.5 py-[9px] text-left text-12 font-medium whitespace-nowrap text-ink-3";
 const TD = "border-b border-line px-3.5 py-2.5 align-middle group-last:border-b-0";
 
-function UnhealthyTable({ items, clusters }: { items: FleetResource[]; clusters: Map<string, ClusterInfo> }) {
+interface FleetFinding {
+  cluster: string;
+  finding: Finding;
+}
+
+function UnhealthyTable({
+  items,
+  findings,
+  clusters,
+}: {
+  items: FleetResource[];
+  findings: FleetFinding[];
+  clusters: Map<string, ClusterInfo>;
+}) {
   const navigate = useNavigate();
-  if (!items.length) {
+  if (!items.length && !findings.length) {
     return <Empty title="Nothing needs attention">Every Flux object you can see is ready.</Empty>;
   }
   return (
@@ -151,6 +166,39 @@ function UnhealthyTable({ items, clusters }: { items: FleetResource[]; clusters:
               </td>
             </tr>
           ))}
+          {findings.map(({ cluster, finding: f }) => (
+            <tr
+              key={`${cluster}/${f.id}`}
+              className="group cursor-pointer hover:bg-surface-sunken"
+              onClick={() => void navigate(jobsLink(cluster, f.namespace))}
+            >
+              <td className={TD}>
+                <span className="ctag" style={clusterStyle(clusters.get(cluster))}>
+                  {cluster}
+                </span>
+              </td>
+              <td className={TD}>
+                <Link
+                  {...jobsLink(cluster, f.namespace)}
+                  className="font-mono text-12-5 no-underline hover:underline"
+                >
+                  <span className="text-ink-3">{kindInfo("Job").abbr} </span>
+                  <span className="text-ink-3">{f.namespace} / </span>
+                  finished Jobs
+                </Link>
+              </td>
+              <td className={TD}>
+                <span className="inline-flex items-center gap-1.5 text-12-5 font-medium whitespace-nowrap text-warn">
+                  <Icon name="alert" className="size-4 shrink-0" />
+                  Warning
+                </span>
+              </td>
+              <td className={`${TD} max-w-0 truncate text-ink-2`} title={f.recommendation ?? f.message}>
+                {f.message}
+              </td>
+              <td className={`${TD} text-right text-ink-3 tabular-nums`}>{age(f.jobs?.newest)}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
@@ -165,13 +213,17 @@ function FleetPage() {
   const unhealthy = useMemo(
     () =>
       items
-        .filter(({ resource: r }) => isFlux(r.kind) && r.status !== "ready" && !r.inventoryOnly)
+        .filter(({ resource: r }) => isFlux(r.kind) && needsAttention(r))
         .sort(
           (a, b) =>
             STATUS_RANK[a.resource.status] - STATUS_RANK[b.resource.status] ||
             (rank.get(a.cluster) ?? 0) - (rank.get(b.cluster) ?? 0),
         ),
     [items, rank],
+  );
+  const findings = useMemo(
+    () => clusters.flatMap((c) => warningFindings(c).map((finding) => ({ cluster: c.name, finding }))),
+    [clusters],
   );
   const disconnected = clusters.filter((c) => !c.connected).length;
   const { data: me } = useMe();
@@ -203,9 +255,11 @@ function FleetPage() {
       {adding && <AddClusterDialog onClose={() => setAdding(false)} />}
       <h3 className="mt-2 flex items-center gap-2 text-14 font-semibold">
         Needs attention across the fleet{" "}
-        <span className="font-normal text-ink-3">{loading ? "loading…" : unhealthy.length}</span>
+        <span className="font-normal text-ink-3">
+          {loading ? "loading…" : unhealthy.length + findings.length}
+        </span>
       </h3>
-      <UnhealthyTable items={unhealthy} clusters={byName} />
+      <UnhealthyTable items={unhealthy} findings={findings} clusters={byName} />
     </Screen>
   );
 }

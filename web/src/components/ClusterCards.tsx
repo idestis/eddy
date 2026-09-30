@@ -1,10 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import type { ClusterInfo, Resource } from "../api/types";
+import type { ClusterInfo, Finding, Resource } from "../api/types";
 import { useAppState } from "../lib/appState";
+import { warningFindings } from "../lib/findings";
 import { ago, shortRevision } from "../lib/format";
 import { isFlux } from "../lib/kinds";
-import { detailLink } from "../lib/links";
+import { detailLink, jobsLink } from "../lib/links";
+import { needsAttention } from "../lib/resourceRows";
 import { QuestionChip, suggestions } from "./AskAI";
 import { Icon } from "./Icon";
 import { StatusIcon } from "./Status";
@@ -28,6 +30,11 @@ export function FactList({ rows }: { rows: Array<[string, ReactNode, string?]> }
   );
 }
 
+const ATTN_ROW =
+  "flex min-w-0 items-center gap-[9px] rounded-[9px] px-2 py-[7px] text-12-5 no-underline hover:bg-surface-sunken";
+
+type AttentionEntry = { type: "resource"; r: Resource } | { type: "finding"; f: Finding };
+
 /** The three summary cards above the list: attention, Git source, Ask AI. */
 export function ClusterCards({
   cluster,
@@ -39,16 +46,23 @@ export function ClusterCards({
   aiEnabled: boolean;
 }) {
   const { ask } = useAppState();
-  const attention = items
-    .filter((r) => isFlux(r.kind) && r.status !== "ready" && !r.inventoryOnly)
+  const resources = items
+    .filter((r) => isFlux(r.kind) && needsAttention(r))
     .sort((a, b) => Number(b.status === "failed") - Number(a.status === "failed"));
+  // Warning findings (not resources) count too; they rank after failures, before the rest.
+  const failed = resources.filter((r) => r.status === "failed").length;
+  const attention: AttentionEntry[] = [
+    ...resources.slice(0, failed).map((r) => ({ type: "resource" as const, r })),
+    ...warningFindings(cluster).map((f) => ({ type: "finding" as const, f })),
+    ...resources.slice(failed).map((r) => ({ type: "resource" as const, r })),
+  ];
   const git =
     items.find((r) => r.kind === "GitRepository" && r.name === "flux-system") ??
     items.find((r) => r.kind === "GitRepository");
   const applied = items.filter(
     (r) => r.kind === "Kustomization" && r.source && git && r.source.name === git.name,
   ).length;
-  const failing = attention.some((r) => r.status === "failed");
+  const failing = failed > 0;
 
   return (
     <div className="grid shrink-0 grid-cols-[1fr_1fr_1.15fr] gap-3.5 max-[1180px]:grid-cols-2 max-[859px]:hidden">
@@ -64,18 +78,26 @@ export function ClusterCards({
         {attention.length === 0 && (
           <div className="text-12-5 text-ink-3">Every Flux object on {cluster.name} is ready.</div>
         )}
-        {attention.slice(0, 3).map((r) => (
-          <Link
-            key={r.id}
-            {...detailLink(cluster.name, r)}
-            className="flex min-w-0 items-center gap-[9px] rounded-[9px] px-2 py-[7px] text-12-5 no-underline hover:bg-surface-sunken"
-          >
-            <StatusIcon status={r.status} label />
-            <span className="font-mono font-medium whitespace-nowrap">{r.name}</span>
-            <span className="min-w-0 truncate text-ink-3">{r.message}</span>
-          </Link>
-        ))}
-        {attention.length > 3 && (
+        {attention.slice(0, 3).map((e) =>
+          e.type === "resource" ? (
+            <Link key={e.r.id} {...detailLink(cluster.name, e.r)} className={ATTN_ROW}>
+              <StatusIcon status={e.r.status} label />
+              <span className="font-mono font-medium whitespace-nowrap">{e.r.name}</span>
+              <span className="min-w-0 truncate text-ink-3">{e.r.message}</span>
+            </Link>
+          ) : (
+            <Link key={e.f.id} {...jobsLink(cluster.name, e.f.namespace)} className={ATTN_ROW}>
+              <span className="inline-flex text-warn" role="img" aria-label="Warning">
+                <Icon name="alert" className="size-4 shrink-0" />
+              </span>
+              <span className="font-mono font-medium whitespace-nowrap">Jobs in {e.f.namespace}</span>
+              <span className="min-w-0 truncate text-ink-3" title={e.f.message}>
+                {e.f.message}
+              </span>
+            </Link>
+          ),
+        )}
+        {attention.length > 3 && resources.length > 0 && (
           <div className="mt-auto flex gap-2">
             <Link
               to="/c/$cluster"
@@ -83,7 +105,7 @@ export function ClusterCards({
               search={{ status: "attention" }}
               className="btn btn-sm"
             >
-              Show all {attention.length}
+              Show all {resources.length} not ready
             </Link>
           </div>
         )}

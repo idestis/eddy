@@ -22,6 +22,9 @@ export const keys = {
   connection: (cluster: string) => ["connection", cluster] as const,
   resourcesAll: ["resources"] as const,
   resources: (cluster: string) => ["resources", cluster] as const,
+  // Under the cluster's resources key, so a `resync` refetches it too.
+  hiddenJobs: (cluster: string, namespace: string | undefined) =>
+    ["resources", cluster, "hiddenJobs", namespace ?? ""] as const,
   yaml: (cluster: string, id: string) => ["yaml", cluster, id] as const,
   events: (cluster: string, id: string) => ["events", cluster, id] as const,
   threadsAll: ["threads"] as const,
@@ -88,6 +91,20 @@ export const resourcesQuery = (cluster: string) =>
     queryFn: ({ signal }) => api.getResources(cluster, signal),
     // Kept fresh by `change` and `resync` SSE events.
     staleTime: Number.POSITIVE_INFINITY,
+  });
+
+/**
+ * Jobs with the finished ones the agent hides, fetched on demand a page at a time. SSE deltas
+ * keep patching the normal list (resourcesQuery); this only adds the hidden rows.
+ */
+export const hiddenJobsQuery = (cluster: string, namespace: string | undefined) =>
+  infiniteQueryOptions({
+    queryKey: keys.hiddenJobs(cluster, namespace),
+    queryFn: ({ pageParam, signal }) =>
+      api.getJobsWithHidden(cluster, { namespace, cursor: pageParam || undefined }, signal),
+    initialPageParam: "",
+    getNextPageParam: (last) => last.hidden.next || undefined,
+    staleTime: 60_000,
   });
 
 export const yamlQuery = (cluster: string, r: Resource) =>

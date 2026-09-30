@@ -1,11 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
-import { resourcesQuery, useCluster, useMe } from "../../../../api/queries";
+import { hiddenJobsQuery, resourcesQuery, useCluster, useMe } from "../../../../api/queries";
 import { type Resource, STATUSES } from "../../../../api/types";
 import { ClusterCards } from "../../../../components/ClusterCards";
 import { Empty } from "../../../../components/Empty";
+import { FindingCallout } from "../../../../components/Findings";
 import { Icon } from "../../../../components/Icon";
 import { ResourceList, type ResourceListHandle } from "../../../../components/ResourceList";
 import {
@@ -20,7 +21,8 @@ import { SEG, SEG_BTN, SidePanel } from "../../../../components/SidePanel";
 import { AttentionIcon, StatusIcon } from "../../../../components/Status";
 import { useToast } from "../../../../components/Toasts";
 import { useAppState } from "../../../../lib/appState";
-import { STATUS_LABEL } from "../../../../lib/format";
+import { hiddenJobCount, warningFindings } from "../../../../lib/findings";
+import { STATUS_LABEL, thousands } from "../../../../lib/format";
 import { useKeys } from "../../../../lib/keys";
 import { filterLabel, NAV_TREE, navNode } from "../../../../lib/kinds";
 import { type DetailView, detailLink } from "../../../../lib/links";
@@ -31,6 +33,7 @@ import { useResourceActions } from "../../../../lib/useResourceActions";
 const searchSchema = z.object({
   filter: z.string().optional().catch(undefined),
   kind: z.string().optional().catch(undefined),
+  namespace: z.string().optional().catch(undefined),
   status: z
     .enum([...STATUSES, "attention"])
     .optional()
@@ -43,14 +46,16 @@ export const Route = createFileRoute("/_app/c/$cluster/")({
   component: ClusterPage,
 });
 
-function listLabel(kind?: string, status?: StatusFilter): string {
+function listLabel(kind?: string, status?: StatusFilter, namespace?: string): string {
   const k = filterLabel(kind);
-  if (status === "attention") return kind ? `${k} needing attention` : "Needs attention";
-  if (status) return `${STATUS_LABEL[status]} ${k.toLowerCase()}`;
-  return k;
+  const where = namespace ? ` in ${namespace}` : "";
+  if (status === "attention") return kind ? `${k} needing attention${where}` : `Needs attention${where}`;
+  if (status) return `${STATUS_LABEL[status]} ${k.toLowerCase()}${where}`;
+  return `${k}${where}`;
 }
 
-type ChipStatus = "attention" | "failed" | "reconciling" | "suspended";
+const CHIPS = ["attention", "failed", "reconciling", "suspended", "completed"] as const;
+type ChipStatus = (typeof CHIPS)[number];
 
 /** Chip colours come from the status tokens; the active chip is tinted with its colour. */
 const CHIP_TONE: Record<ChipStatus, string> = {
@@ -58,7 +63,11 @@ const CHIP_TONE: Record<ChipStatus, string> = {
   failed: "aria-pressed:border-bad/60 aria-pressed:bg-bad/12 [&_.n]:text-bad",
   reconciling: "aria-pressed:border-run/60 aria-pressed:bg-run/12 [&_.n]:text-run",
   suspended: "aria-pressed:border-off/60 aria-pressed:bg-off/12 [&_.n]:text-off",
+  completed: "aria-pressed:border-ok/60 aria-pressed:bg-ok/12 [&_.n]:text-ok",
 };
+
+const TOOL_BTN =
+  "inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 whitespace-nowrap text-ink-2 hover:border-line-strong aria-pressed:border-c/60 aria-pressed:bg-c-soft aria-pressed:text-ink disabled:opacity-60";
 
 function StatusChip({
   status,
@@ -101,18 +110,51 @@ function ClusterPage() {
     ...resourcesQuery(name),
     enabled: cluster?.connected ?? false,
   });
-  const items = data?.items ?? [];
+  const listed = data?.items;
+
+  // Finished Jobs the agent hides: fetched on demand, a page at a time, only on the Jobs list.
+  const namespace = search.namespace;
+  const onJobs = search.kind === "Job";
+  const hiddenTotal = onJobs ? hiddenJobCount(cluster, namespace) : 0;
+  const findings = onJobs ? warningFindings(cluster, namespace) : [];
+  const hiddenScope = `${name}/${namespace ?? ""}`;
+  const [hiddenFor, setHiddenFor] = useState<string | undefined>();
+  const showHidden = onJobs && hiddenFor === hiddenScope;
+  const hidden = useInfiniteQuery({
+    ...hiddenJobsQuery(name, namespace),
+    enabled: showHidden && (cluster?.connected ?? false),
+  });
+  const hiddenPages = showHidden ? hidden.data?.pages : undefined;
+  // The normal list stays the source of truth (SSE deltas patch it); pages add only the rows it lacks.
+  const items = useMemo(() => {
+    const base = listed ?? [];
+    if (!hiddenPages) return base;
+    const seen = new Set(base.map((r) => r.id));
+    const extra: Resource[] = [];
+    for (const r of hiddenPages.flatMap((p) => p.items)) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      extra.push(r);
+    }
+    return extra.length ? [...base, ...extra] : base;
+  }, [listed, hiddenPages]);
+  const lastPage = hiddenPages?.[hiddenPages.length - 1];
+  const loadedHidden = items.length - (listed?.length ?? 0);
+  const remaining = lastPage?.hidden.next ? Math.max(0, lastPage.hidden.total - loadedHidden) : 0;
 
   // Typing stays instant; the 5k-row filter runs at a lower priority.
   const text = useDeferredValue(search.filter ?? "");
   const grouped = search.view !== "flat";
   const filtered = useMemo(
-    () => filterResources(items, { text, kind: search.kind, status: search.status }),
-    [items, text, search.kind, search.status],
+    () => filterResources(items, { text, kind: search.kind, status: search.status, namespace }),
+    [items, text, search.kind, search.status, namespace],
   );
   const rows = useMemo(() => buildRows(filtered, grouped), [filtered, grouped]);
   // Counts follow the kind filter, so "Failed 3" on Workloads means three failing workloads.
-  const inKind = useMemo(() => filterResources(items, { kind: search.kind }), [items, search.kind]);
+  const inKind = useMemo(
+    () => filterResources(items, { kind: search.kind, namespace }),
+    [items, search.kind, namespace],
+  );
   const counts = useMemo(() => statusCounts(inKind), [inKind]);
   const resourceRows = useMemo(
     () => rows.flatMap((r) => (r.type === "resource" ? [r.resource] : [])),
@@ -168,8 +210,8 @@ function ClusterPage() {
     open: () => open(selected),
     back: () => {
       if (pane === "ai") setPane("details");
-      else if (search.filter || search.kind || search.status)
-        setSearch({ filter: undefined, kind: undefined, status: undefined });
+      else if (search.filter || search.kind || search.status || search.namespace)
+        setSearch({ filter: undefined, kind: undefined, status: undefined, namespace: undefined });
     },
     filter: () => filterInput.current?.focus(),
     prevSection: () => cycleSection(-1),
@@ -201,8 +243,8 @@ function ClusterPage() {
 
   if (!cluster) return null;
 
-  const showCards = !search.filter && !search.kind && !search.status && Boolean(data);
-  const title = listLabel(search.kind, search.status);
+  const showCards = !search.filter && !search.kind && !search.status && !namespace && Boolean(data);
+  const title = listLabel(search.kind, search.status, namespace);
 
   const preview = selected ? (
     <>
@@ -226,7 +268,7 @@ function ClusterPage() {
   return (
     <Screen
       cluster={name}
-      title={search.kind || search.status ? title.toLowerCase() : undefined}
+      title={search.kind || search.status || namespace ? title.toLowerCase() : undefined}
       fill
       crumbs={[
         <Link key="c" to="/c/$cluster" params={{ cluster: name }}>
@@ -237,6 +279,9 @@ function ClusterPage() {
       aside={<SidePanel cluster={cluster} resource={selected} details={preview} />}
     >
       {showCards && <ClusterCards cluster={cluster} items={items} aiEnabled={Boolean(me?.features.ai)} />}
+      {findings.map((f) => (
+        <FindingCallout key={f.id} cluster={name} finding={f} link={!namespace} />
+      ))}
       <div className="flex shrink-0 flex-wrap items-center gap-2.5">
         <label className="flex h-9 min-w-40 flex-[0_1_300px] items-center gap-[7px] rounded-control border border-line bg-surface pr-2 pl-2.5 text-ink-3 focus-within:border-c">
           <Icon name="filter" />
@@ -264,7 +309,7 @@ function ClusterPage() {
         </label>
         <fieldset className="no-scrollbar flex min-w-0 gap-1.5 overflow-x-auto">
           <legend className="sr-only">Status</legend>
-          {(["attention", "failed", "reconciling", "suspended"] as const).map((s) => (
+          {CHIPS.map((s) => (
             <StatusChip
               key={s}
               status={s}
@@ -274,6 +319,46 @@ function ClusterPage() {
             />
           ))}
         </fieldset>
+        {namespace && (
+          <button
+            type="button"
+            className={TOOL_BTN}
+            aria-label={`Namespace ${namespace}, clear`}
+            onClick={() => setSearch({ namespace: undefined })}
+          >
+            <span className="text-ink-3">Namespace</span>
+            <span className="font-mono">{namespace}</span>
+            <Icon name="x" className="size-3.5" />
+          </button>
+        )}
+        {hiddenTotal > 0 && (
+          <button
+            type="button"
+            className={TOOL_BTN}
+            aria-pressed={showHidden}
+            onClick={() => setHiddenFor(showHidden ? undefined : hiddenScope)}
+          >
+            <Icon name={showHidden ? "check" : "clock"} className="size-3.5" />
+            {showHidden && hidden.isPending
+              ? "Loading finished Jobs…"
+              : `Show finished Jobs (${thousands(hiddenTotal)} hidden)`}
+          </button>
+        )}
+        {showHidden && remaining > 0 && (
+          <button
+            type="button"
+            className={TOOL_BTN}
+            disabled={hidden.isFetchingNextPage}
+            onClick={() => void hidden.fetchNextPage()}
+          >
+            {hidden.isFetchingNextPage ? "Loading…" : `Load more (${thousands(remaining)} remaining)`}
+          </button>
+        )}
+        {showHidden && hidden.error && (
+          <span className="text-12-5 text-bad" role="alert">
+            Couldn't load finished Jobs: {hidden.error.message}
+          </span>
+        )}
         <span className="ml-auto text-12-5 whitespace-nowrap text-ink-3" aria-live="polite">
           {filtered.length === items.length
             ? `${items.length} resources`
@@ -311,7 +396,7 @@ function ClusterPage() {
         </Empty>
       ) : rows.length === 0 ? (
         <Empty title={search.filter ? `Nothing matches “${search.filter}”` : "Nothing here"}>
-          {search.filter || search.kind || search.status
+          {search.filter || search.kind || search.status || namespace
             ? "Press Esc to clear the filter."
             : `${name} has no resources you can see.`}
         </Empty>

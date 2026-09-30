@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resource } from "../test/fixtures";
-import { buildRows, filterResources, statusCounts } from "./resourceRows";
+import { buildRows, filterResources, needsAttention, statusCounts } from "./resourceRows";
 
 const items = [
   resource("apps", { status: "failed", message: "Health check failed" }),
@@ -69,5 +69,45 @@ describe("inventory-only rows", () => {
   it("sort after rows that have a status in the flat view", () => {
     const rows = buildRows([inv, ...items], false);
     expect(rows[rows.length - 1]?.key).toBe(inv.id);
+  });
+});
+
+describe("completed rows", () => {
+  const done = resource("backup-1", {
+    kind: "Job",
+    group: "batch",
+    namespace: "apps",
+    status: "completed",
+    completions: "1/1",
+  });
+  const pod = resource("backup-1-x7k2p", { kind: "Pod", group: "", namespace: "apps", status: "completed" });
+
+  it("are healthy: they never need attention", () => {
+    expect(needsAttention(done)).toBe(false);
+    expect(needsAttention(pod)).toBe(false);
+    expect(filterResources([...items, done, pod], { status: "attention" }).map((r) => r.name)).toEqual([
+      "apps",
+      "podinfo",
+    ]);
+  });
+
+  it("have their own count and filter", () => {
+    const counts = statusCounts([...items, done, pod]);
+    expect(counts).toEqual({ attention: 2, failed: 1, reconciling: 0, suspended: 1, completed: 2 });
+    expect(filterResources([...items, done, pod], { status: "completed" }).map((r) => r.name)).toEqual([
+      "backup-1",
+      "backup-1-x7k2p",
+    ]);
+  });
+
+  it("sort after ready rows in the flat view", () => {
+    const rows = buildRows([done, ...items], false);
+    expect(rows[rows.length - 1]?.key).toBe(done.id);
+  });
+});
+
+describe("namespace filter", () => {
+  it("keeps one namespace", () => {
+    expect(filterResources(items, { namespace: "apps" }).map((r) => r.name)).toEqual(["podinfo", "web-1"]);
   });
 });

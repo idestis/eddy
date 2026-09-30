@@ -33,6 +33,7 @@ export const STATUS_LABEL: Record<Status, string> = {
   reconciling: "Reconciling",
   suspended: "Suspended",
   unknown: "Unknown",
+  completed: "Completed",
 };
 
 /** Sort order: what needs attention first. */
@@ -42,6 +43,7 @@ export const STATUS_RANK: Record<Status, number> = {
   suspended: 2,
   unknown: 3,
   ready: 4,
+  completed: 5,
 };
 
 /** "main@sha1:0a1b2c3d4e…" → "main@0a1b2c3"; "6.7.1@sha256:…" → "6.7.1". */
@@ -89,5 +91,8 @@ export function bytes(n: number): string {
   if (n < 1024) return `${n} B`;
   return `${(n / 1024).toFixed(1)} KB`;
 }
+
+/** "15168" → "15,168". */
+export const thousands = (n: number): string => n.toLocaleString("en-US");
 
 export const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;

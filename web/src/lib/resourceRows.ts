@@ -5,21 +5,25 @@ import type { Resource, Status } from "../api/types";
 import { STATUS_RANK } from "./format";
 import { kindInfo, matchesKindFilter } from "./kinds";
 
-/** "attention" means anything that is not ready. */
+/** "attention" means anything that is not ready (or completed). */
 export type StatusFilter = Status | "attention";
 
 export interface ListFilter {
   text?: string;
   kind?: string;
   status?: StatusFilter;
+  namespace?: string;
 }
 
 export type Row =
   | { type: "group"; key: string; kind: string; count: number; failing: number }
   | { type: "resource"; key: string; resource: Resource };
 
-/** Needs attention: anything watched that is not ready. Inventory-only rows have no status. */
-export const needsAttention = (r: Resource): boolean => r.status !== "ready" && !r.inventoryOnly;
+/** Healthy statuses: ready, or a finished Job or Pod that completed. */
+export const isHealthy = (status: Status): boolean => status === "ready" || status === "completed";
+
+/** Needs attention: anything watched that is not healthy. Inventory-only rows have no status. */
+export const needsAttention = (r: Resource): boolean => !isHealthy(r.status) && !r.inventoryOnly;
 
 export function matchesStatus(r: Resource, status: StatusFilter | undefined): boolean {
   if (!status) return true;
@@ -32,14 +36,15 @@ export interface StatusCounts {
   failed: number;
   reconciling: number;
   suspended: number;
+  completed: number;
 }
 
 export function statusCounts(items: readonly Resource[]): StatusCounts {
-  const counts: StatusCounts = { attention: 0, failed: 0, reconciling: 0, suspended: 0 };
+  const counts: StatusCounts = { attention: 0, failed: 0, reconciling: 0, suspended: 0, completed: 0 };
   for (const r of items) {
     if (r.inventoryOnly) continue;
-    if (r.status !== "ready") counts.attention++;
-    if (r.status === "failed" || r.status === "reconciling" || r.status === "suspended") counts[r.status]++;
+    if (needsAttention(r)) counts.attention++;
+    if (r.status !== "ready" && r.status !== "unknown") counts[r.status]++;
   }
   return counts;
 }
@@ -57,7 +62,11 @@ export function matchesText(r: Resource, text: string | undefined): boolean {
 
 export function filterResources(items: readonly Resource[], f: ListFilter): Resource[] {
   return items.filter(
-    (r) => matchesKindFilter(r.kind, f.kind) && matchesStatus(r, f.status) && matchesText(r, f.text),
+    (r) =>
+      matchesKindFilter(r.kind, f.kind) &&
+      (!f.namespace || r.namespace === f.namespace) &&
+      matchesStatus(r, f.status) &&
+      matchesText(r, f.text),
   );
 }
 

@@ -18,6 +18,15 @@ export function detailLink(cluster: string, r: Pick<Ref, "kind" | "namespace" | 
   } as const;
 }
 
+/** The cluster's Jobs list, optionally in one namespace (where job-buildup findings point). */
+export function jobsLink(cluster: string, namespace?: string) {
+  return {
+    to: "/c/$cluster",
+    params: { cluster },
+    search: namespace ? { kind: "Job", namespace } : { kind: "Job" },
+  } as const;
+}
+
 /** Only local paths are accepted, never "//host" or "/\host", to avoid open redirects. */
 export function safeReturnTo(value: string | undefined): string {
   if (!value?.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return "/";

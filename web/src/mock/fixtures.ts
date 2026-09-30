@@ -1,7 +1,7 @@
 // Deterministic fixtures for mock mode, ported from the design prototype:
 // three connected clusters (prod-eu, staging, dev) plus a disconnected one.
 
-import type { ClusterInfo, KubeEvent, Ref, Resource, Status } from "../api/types";
+import type { ClusterInfo, Finding, JobGroup, KubeEvent, Ref, Resource, Status } from "../api/types";
 import { kindInfo } from "../lib/kinds";
 
 let seed = 20260930;
@@ -41,6 +41,8 @@ export interface MockResource extends Resource {
 export interface MockCluster {
   info: ClusterInfo;
   resources: Map<string, MockResource>;
+  /** Finished Jobs the agent hides from the list, newest first (…/resources?includeHidden=1). */
+  hidden?: MockResource[];
 }
 
 let rv = 1000;
@@ -483,11 +485,11 @@ export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockClus
       make("Job", "apps", name, {
         owner: refOf(owner),
         images: ["ghcr.io/acme/backup:3.2.0"],
-        status: failed ? "failed" : "ready",
-        replicas: failed ? "0/1" : "1/1",
+        status: failed ? "failed" : "completed",
+        completions: failed ? "0/1" : "1/1",
         message: failed
           ? "BackoffLimitExceeded: Job has reached the specified backoff limit"
-          : "Complete, 1/1 succeeded",
+          : `Completed in ${ri(1, 9)}m${ri(10, 59)}s`,
       }),
     );
     add(
@@ -495,7 +497,7 @@ export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockClus
         owner: refOf(j),
         images: ["ghcr.io/acme/backup:3.2.0"],
         containers: ["backup"],
-        status: failed ? "failed" : "ready",
+        status: failed ? "failed" : "completed",
         message: failed ? "Error" : "Completed",
         spec: { container: "backup", nodeName: `ip-10-0-${ri(10, 200)}-${ri(2, 250)}.internal` },
       }),
@@ -655,7 +657,152 @@ export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockClus
       }
     }
   }
-  return { info: { ...info, counts: countsOf(out) }, resources: out };
+  const buildup = prod ? jobBuildup(add) : undefined;
+  return {
+    info: { ...info, counts: countsOf(out), findings: buildup?.findings },
+    resources: out,
+    hidden: buildup?.hidden,
+  };
+}
+
+const PREFECT_FLOWS = [
+  { flow: "etl-hourly", hidden: 900, failed: 60 },
+  { flow: "sync-crm", hidden: 260, failed: 25 },
+  { flow: "report-daily", hidden: 80, failed: 0 },
+];
+const LISTED_PER_GROUP = 5;
+const PREFECT_IMAGE = "prefecthq/prefect:3.4.1-python3.12";
+
+/**
+ * A Prefect work pool that never garbage-collects its Jobs: the agent lists the active ones and
+ * the newest few per flow, hides the rest, and reports a warning job-buildup finding for
+ * `prefect`. `apps` gets an info finding for its older backups. No random numbers are drawn, so
+ * the other clusters' fixtures stay the same.
+ */
+function jobBuildup(add: (r: MockResource) => MockResource): { findings: Finding[]; hidden: MockResource[] } {
+  const saved = seed;
+  const hidden: MockResource[] = [];
+  const groups: JobGroup[] = [];
+  let listedFinished = 0;
+  let failedTotal = 0;
+  let n = 0;
+  const finishedJob = (flow: string, minutesAgo: number, failed: boolean): MockResource =>
+    make("Job", "prefect", `${flow}-${(0x5f3a91 + n++ * 7919).toString(36)}`, {
+      images: [PREFECT_IMAGE],
+      labels: { "prefect.io/deployment-name": flow },
+      status: failed ? "failed" : "completed",
+      completions: failed ? "0/1" : "1/1",
+      message: failed
+        ? "BackoffLimitExceeded: Job has reached the specified backoff limit"
+        : `Completed in ${1 + (n % 7)}m${10 + (n % 50)}s`,
+      createdAt: ago(minutesAgo),
+      lastChanged: ago(minutesAgo - 2),
+    });
+  for (const [g, { flow, hidden: count, failed }] of PREFECT_FLOWS.entries()) {
+    const every = 60 * (g + 1);
+    for (let i = 0; i < LISTED_PER_GROUP; i++) {
+      add(finishedJob(flow, 90 + i * every, false));
+      listedFinished++;
+    }
+    // Failures are spread out, and all are older than a day, so none of them is listed.
+    const step = failed ? Math.floor(count / failed) : 0;
+    for (let i = 0; i < count; i++) {
+      hidden.push(finishedJob(flow, 60 * 26 + i * every, step > 0 && i % step === 0 && i / step < failed));
+    }
+    failedTotal += failed;
+    groups.push({
+      by: "label",
+      name: `prefect.io/deployment-name=${flow}`,
+      label: flow,
+      count: count + LISTED_PER_GROUP,
+      failed: failed || undefined,
+      withoutTTL: count + LISTED_PER_GROUP,
+    });
+  }
+  const active = add(
+    make("Job", "prefect", "etl-hourly-live", {
+      images: [PREFECT_IMAGE],
+      labels: { "prefect.io/deployment-name": "etl-hourly" },
+      status: "reconciling",
+      replicas: "1/1",
+      completions: "0/1",
+      message: "Running, 1 active",
+      createdAt: ago(3),
+      lastChanged: ago(3),
+    }),
+  );
+  add(
+    make("Pod", "prefect", "etl-hourly-live-x7k2p", {
+      owner: refOf(active),
+      images: [PREFECT_IMAGE],
+      containers: ["prefect-job"],
+      message: "Running",
+      createdAt: ago(3),
+      spec: { container: "prefect-job", nodeName: "ip-10-0-42-17.internal" },
+    }),
+  );
+  const hiddenCount = hidden.length;
+  const finished = hiddenCount + listedFinished;
+  const oldest = hidden.reduce((a, r) => ((r.createdAt ?? "") < a ? (r.createdAt ?? a) : a), ago(0));
+
+  // Older nightly backups in apps: hidden, but few enough to be context only.
+  for (let i = 0; i < 12; i++) {
+    hidden.push(
+      make("Job", "apps", `nightly-backup-${29250000 + i}`, {
+        images: ["ghcr.io/acme/backup:3.2.0"],
+        status: "completed",
+        completions: "1/1",
+        message: `Completed in ${2 + (i % 4)}m${20 + i}s`,
+        createdAt: ago(60 * 24 * (i + 2)),
+        lastChanged: ago(60 * 24 * (i + 2) - 3),
+      }),
+    );
+  }
+  seed = saved;
+  const fmt = (x: number) => x.toLocaleString("en-US");
+  return {
+    hidden,
+    findings: [
+      {
+        id: "job-buildup/prefect",
+        kind: "job-buildup",
+        severity: "warning",
+        namespace: "prefect",
+        message: `${fmt(finished)} finished Jobs in prefect (${fmt(hiddenCount)} hidden), ${fmt(finished)} without ttlSecondsAfterFinished; ${failedTotal} failed standalone Jobs are never garbage-collected`,
+        recommendation:
+          "set ttlSecondsAfterFinished on the Job template (for Prefect, in the work pool's job variables) or add a cleanup policy",
+        jobs: {
+          hidden: hiddenCount,
+          finished,
+          succeeded: finished - failedTotal,
+          failed: failedTotal,
+          withoutTTL: finished,
+          standaloneFailed: failedTotal,
+          oldest,
+          newest: ago(90),
+          groups,
+          threshold: 200,
+        },
+      },
+      {
+        id: "job-buildup/apps",
+        kind: "job-buildup",
+        severity: "info",
+        namespace: "apps",
+        message: "12 older finished Jobs hidden",
+        jobs: {
+          hidden: 12,
+          finished: 13,
+          succeeded: 13,
+          failed: 0,
+          withoutTTL: 0,
+          standaloneFailed: 0,
+          oldest: ago(60 * 24 * 13),
+          threshold: 200,
+        },
+      },
+    ],
+  };
 }
 
 export function countsOf(resources: Map<string, Resource>): Partial<Record<Status, number>> {

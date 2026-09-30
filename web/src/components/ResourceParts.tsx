@@ -194,6 +194,7 @@ export function factRows(cluster: string, r: Resource): Array<[string, ReactNode
   if (r.schedule) rows.push(["Schedule", r.schedule]);
   if (r.inventory) rows.push(["Inventory", `${r.inventory} objects`]);
   if (r.replicas) rows.push(["Replicas", `${r.replicas} ready`]);
+  if (r.completions) rows.push(["Completions", `${r.completions} succeeded`]);
   if (r.images?.length) rows.push([r.images.length > 1 ? "Images" : "Image", r.images.join("\n")]);
   if (r.containers?.length) rows.push(["Containers", r.containers.join(", ")]);
   if (r.hosts?.length) rows.push(["Hosts", r.hosts.join("\n")]);

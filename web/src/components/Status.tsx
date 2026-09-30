@@ -14,6 +14,8 @@ export const STATUS_TEXT: Record<Status | "attention", string> = {
   reconciling: "text-run",
   suspended: "text-off",
   unknown: "text-off",
+  // Healthy but finished: the ready colour, muted, so live objects stand out.
+  completed: "text-ok/70",
   attention: "text-attn",
 };
 
@@ -83,6 +85,23 @@ export function StatusIcon({
             strokeWidth="2.2"
             strokeLinecap="round"
           />
+        </svg>
+      );
+      break;
+    case "completed":
+      glyph = (
+        <svg
+          className={SVG}
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="8" cy="8" r="6.3" />
+          <path d="M5.3 8.2l1.9 1.9 3.6-3.9" />
         </svg>
       );
       break;
