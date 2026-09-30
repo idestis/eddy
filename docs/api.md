@@ -34,12 +34,12 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
 |---|---|---|
 | `GET /auth/csrf` | | `{csrf}` and sets the `__Host-eddy_pre` cookie (10 min) |
 | `GET /auth/providers` | | `{local: bool, proxy: bool, dev: bool}` |
-| `POST /auth/local/login` | `{username, password, returnTo?}` | 204 and sets the session cookie. Failure is 401 with a generic message. |
+| `POST /auth/local/login` | `{username, password, returnTo?}` | 204 and sets the session cookie. Bad credentials or lockout: 401 with a generic message. CSRF or Origin failure: 403. Per-IP limit: 429. Invalid `returnTo`: 400. |
 | `POST /auth/logout` | | 204 |
-| `GET /auth/dev/login?user=&groups=` | dev builds only | 302 to `/` |
+| `GET /auth/dev/login?user=&groups=&returnTo=` | dev builds only | 302 to `returnTo` or `/` |
 
 With proxy auth, the first request that carries valid proxy headers creates a session.
-There is no separate login step.
+There is no separate login step. A trusted proxy that sends an invalid or denied identity gets 401.
 
 `GET /api/v1/me` →
 ```json
@@ -99,6 +99,10 @@ a whole cluster (`kind: ""`).
 
 Bodies are plain text or Markdown. The UI renders them with no raw HTML and no images.
 
+- **Size limits:** a message body is at most 64 KiB (8 KiB over MCP).
+- **Paging:** threads default to 50 per page (maximum 200) and messages to 100 (maximum 500).
+- **Status codes:** a thread you cannot see gives 404. A visible thread you may not resolve or delete gives 403.
+
 ## Ask AI
 
 `POST /api/v1/ai/ask`
@@ -113,7 +117,7 @@ with no streaming in v0.1.
 | Method and path | Body | Response |
 |---|---|---|
 | `GET /api/v1/tokens` | | `{items: [{id, name, scopes, createdAt, expiresAt, lastUsedAt}]}` |
-| `POST /api/v1/tokens` | `{name, scopes: ["read"] or ["read","operate"], ttl: "720h"}` | `{token: "eddy_pat_…", item}`. The token is shown once. |
+| `POST /api/v1/tokens` | `{name, scopes: ["read"] or ["read","operate"], ttl: "720h" or "30d"}` | 201 `{token: "eddy_pat_…", item}`. The token is shown once. A TTL over the maximum gives 400; the per-user token limit gives 409. |
 | `DELETE /api/v1/tokens/{id}` | | 204 |
 
 ## Audit
