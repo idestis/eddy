@@ -254,3 +254,5 @@ Security invariants (never break):
 - With a plain-http `publicURL` (local dev only) the cookie is `eddy_session` without `Secure`; `__Host-` requires https.
 - Runtime kill-switch keys in the `eddy-runtime` flags file are `aiEnabled`, `mcpEnabled`, `mcpWrites` and `mcpAllowLogs` (see `internal/runtimeflags`). They can only turn features off.
 - Config keys follow `internal/config/hub.go`; where this ADR shows a nested or different key (for example `mcp.threads.writeScope`), the Go key (`auth.tokens.threadWriteScope`) is authoritative.
+- Ask AI audit events use `via: askai` (`identity.ViaAskAI`). `maxContextBytes`, `globalDailyAsks` and `auditPrompts` are not implemented in v0.1.
+- The MCP per-token call limit applies to `tools/call`. The concurrency limit (4) applies to every POST.
