@@ -42,6 +42,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Sessions/Touch", testSessionTouch},
 		{"Sessions/Delete", testSessionDelete},
 		{"Sessions/LatestGroups", testSessionLatestGroups},
+		{"Sessions/DeleteOldest", testSessionDeleteOldest},
 		{"Tokens/CreateGet", testTokenCreateGet},
 		{"Tokens/GetExcludesInactive", testTokenGetExcludesInactive},
 		{"Tokens/List", testTokenList},
@@ -203,6 +204,24 @@ func testSessionDelete(t *testing.T, s store.Store) {
 	wantErr(t, err, store.ErrNotFound, "alice's other session")
 	_, err = s.Sessions().Get(ctx(t), b.IDHash, t0)
 	check(t, err, "bob's session survives")
+}
+
+func testSessionDeleteOldest(t *testing.T, s store.Store) {
+	a1 := session("a1", "alice", t0)
+	a2 := session("a2", "alice", t0.Add(time.Hour))
+	a3 := session("a3", "alice", t0.Add(2*time.Hour))
+	b := session("b", "bob", t0)
+	for _, v := range []store.Session{a1, a2, a3, b} {
+		check(t, s.Sessions().Create(ctx(t), v), "create")
+	}
+	check(t, s.Sessions().DeleteOldestBySubject(ctx(t), "alice", 2), "trim to 2")
+	_, err := s.Sessions().Get(ctx(t), a1.IDHash, t0)
+	wantErr(t, err, store.ErrNotFound, "oldest trimmed")
+	for _, v := range []store.Session{a2, a3, b} {
+		_, err := s.Sessions().Get(ctx(t), v.IDHash, t0)
+		check(t, err, "kept "+v.Subject)
+	}
+	check(t, s.Sessions().DeleteOldestBySubject(ctx(t), "alice", 5), "keep more than exist")
 }
 
 func testSessionLatestGroups(t *testing.T, s store.Store) {

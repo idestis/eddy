@@ -59,6 +59,9 @@ type Sessions interface {
 	Touch(ctx context.Context, idHash []byte, seen, expires time.Time) error
 	Delete(ctx context.Context, idHash []byte) error
 	DeleteBySubject(ctx context.Context, subject string) error
+	// DeleteOldestBySubject keeps the subject's newest keep sessions (by
+	// LastSeenAt) and deletes the rest. Enforces auth.session.maxPerUser.
+	DeleteOldestBySubject(ctx context.Context, subject string, keep int) error
 	// LatestGroups returns the groups of the subject's most recent session,
 	// used to shrink proxy users' PAT groups. ErrNotFound if none.
 	LatestGroups(ctx context.Context, subject string) ([]string, error)

@@ -208,6 +208,25 @@ func (x sessions) DeleteBySubject(_ context.Context, subject string) error {
 	return nil
 }
 
+func (x sessions) DeleteOldestBySubject(_ context.Context, subject string, keep int) error {
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	var mine []store.Session
+	for _, v := range x.s.sessions {
+		if v.Subject == subject {
+			mine = append(mine, v)
+		}
+	}
+	if len(mine) <= keep {
+		return nil
+	}
+	slices.SortFunc(mine, func(a, b store.Session) int { return latestCmp(b, a) })
+	for _, v := range mine[max(keep, 0):] {
+		delete(x.s.sessions, string(v.IDHash))
+	}
+	return nil
+}
+
 func (x sessions) LatestGroups(_ context.Context, subject string) ([]string, error) {
 	x.s.mu.RLock()
 	defer x.s.mu.RUnlock()

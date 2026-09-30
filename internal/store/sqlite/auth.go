@@ -100,6 +100,16 @@ func (x sessions) DeleteBySubject(ctx context.Context, subject string) error {
 	return nil
 }
 
+func (x sessions) DeleteOldestBySubject(ctx context.Context, subject string, keep int) error {
+	_, err := x.s.w.ExecContext(ctx, `DELETE FROM sessions WHERE subject = ? AND id_hash NOT IN (
+		SELECT id_hash FROM sessions WHERE subject = ?
+		ORDER BY last_seen_at DESC, created_at DESC, id_hash DESC LIMIT ?)`, subject, subject, max(keep, 0))
+	if err != nil {
+		return fmt.Errorf("sqlite: trim sessions: %w", err)
+	}
+	return nil
+}
+
 func (x sessions) LatestGroups(ctx context.Context, subject string) ([]string, error) {
 	var groups string
 	err := x.s.r.QueryRowContext(ctx,
