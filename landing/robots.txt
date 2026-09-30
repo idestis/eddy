@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://idestis.github.io/eddy/sitemap.xml

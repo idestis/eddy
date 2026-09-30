@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security model · Eddy docs</title>
+<meta name="description" content="How Eddy protects your clusters.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F4F6FA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B0D11" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://idestis.github.io/eddy/docs/security.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="../assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Eddy">
+<meta property="og:title" content="Security model · Eddy docs">
+<meta property="og:description" content="How Eddy protects your clusters.">
+<meta property="og:url" content="https://idestis.github.io/eddy/docs/security.html">
+<meta property="og:image" content="https://idestis.github.io/eddy/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script>try{var t=localStorage.getItem("eddy-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="../" aria-label="Eddy home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2"/></svg>
+      Eddy
+    </a>
+    <nav aria-label="Primary">
+      <ul class="nav">
+        <li><a href="./" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/idestis/eddy">GitHub</a></li>
+        <li><button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch colour theme" hidden>
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>
+        </button></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docnav" aria-label="Documentation"><h2>Docs</h2><ul><li><a href="index.html">Overview</a></li><li><a href="quickstart.html">Quickstart (kind)</a></li><li><a href="install.html">Install</a></li><li><a href="security.html" aria-current="page">Security model</a></li><li><a href="mcp.html">MCP & Claude Code</a></li><li><a href="roadmap-faq.html">Roadmap & FAQ</a></li></ul></nav>
+  <main id="main" class="prose">
+    <h1>Security model</h1>
+
+<p class="lead">A short version of the security model. The full reasoning and threat model are in <a href="https://github.com/idestis/eddy/blob/HEAD/docs/security.md">docs/security.md</a> and the <a href="https://github.com/idestis/eddy/tree/HEAD/docs/adr">ADRs</a>. To report a vulnerability, see <a href="https://github.com/idestis/eddy/blob/HEAD/SECURITY.md">SECURITY.md</a>.</p>
+<h2 id="short">The short version</h2>
+<ul>
+<li><strong>Agents only dial out.</strong> Workload API servers are never exposed, and the hub holds no credentials for any workload cluster.</li>
+<li><strong>Kubernetes RBAC is the only permission model.</strong> Every read and write runs as the signed-in person, impersonated in the cluster.</li>
+<li><strong>Agents have no write access of their own.</strong> Their ServiceAccount is read-only, apart from <code>impersonate</code> and SubjectAccessReviews.</li>
+<li><strong>No Secret or ConfigMap data leaves a cluster.</strong> Agents send summaries only.</li>
+<li><strong>Ask AI is read-only.</strong> Everything the AI or an MCP client sees is filtered by the asking user's RBAC and redacted first.</li>
+</ul>
+<h2 id="impersonation">Impersonation</h2>
+<p>Users appear in the cluster as <code>local:&lt;username&gt;</code> (or the proxy identity), with groups prefixed <code>eddy:</code>. <code>system:*</code> users and groups are never impersonated. The cluster's own audit log records the real user. A compromised hub cannot reach any cluster directly, and the damage is bounded by the RBAC you granted to <code>eddy:</code> groups.</p>
+<h2 id="signin">Signing in and tokens</h2>
+<ul>
+<li>v0.1 supports local users (argon2id) and trusted reverse-proxy headers. Native OIDC and SAML are planned.</li>
+<li>Sessions are server-side behind a <code>__Host-</code> cookie, with CSRF protection and a strict CSP.</li>
+<li>Personal access tokens (<code>eddy_pat_…</code>) work only as a bearer token on <code>/mcp</code>, are stored hashed, expire, and are revocable.</li>
+</ul>
+<h2 id="ai">AI and MCP</h2>
+<ul>
+<li>Ask AI has no write tools. Cluster data is wrapped as untrusted content and output is redacted.</li>
+<li>Bedrock keeps data in your AWS account and region. The Anthropic API sends data to Anthropic, and the UI shows which provider is in use.</li>
+<li>MCP writes need the <code>operate</code> scope and <code>confirm_cluster</code> on protected clusters. Operators can switch AI, MCP or MCP writes off at runtime with the <code>eddy-runtime</code> ConfigMap.</li>
+</ul>
+<h2 id="harden">Hardening checklist</h2>
+<ul>
+<li>Set <code>publicURL</code> to the real https origin.</li>
+<li>Keep the UI and agent ingress internal and restrict source CIDRs.</li>
+<li>Use an encrypted persistent volume.</li>
+<li>Mark production clusters <code>protected: true</code>.</li>
+<li>Grant <code>eddy:</code> groups only the RBAC people should have.</li>
+</ul>
+<div class="pager"><a href="install.html">&larr; Install</a><a href="mcp.html">MCP &amp; Claude Code &rarr;</a></div>
+
+  </main>
+</div>
+<footer class="site-footer">
+  <div class="wrap foot">
+    <p style="margin:0">Eddy is open source under the <a href="https://github.com/idestis/eddy/blob/HEAD/LICENSE">Apache License 2.0</a>. v0.1 MVP, pre-release.</p>
+    <ul><li><a href="../">Home</a></li><li><a href="https://github.com/idestis/eddy">GitHub</a></li><li><a href="https://github.com/idestis/eddy/tree/HEAD/docs">Full docs in the repo</a></li></ul>
+  </div>
+</footer>
+<script src="../assets/site.js" defer></script>
+</body>
+</html>

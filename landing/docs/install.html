@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install · Eddy docs</title>
+<meta name="description" content="A summary of the production install. The full guide is in the repository.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F4F6FA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B0D11" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://idestis.github.io/eddy/docs/install.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="../assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Eddy">
+<meta property="og:title" content="Install · Eddy docs">
+<meta property="og:description" content="A summary of the production install. The full guide is in the repository.">
+<meta property="og:url" content="https://idestis.github.io/eddy/docs/install.html">
+<meta property="og:image" content="https://idestis.github.io/eddy/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script>try{var t=localStorage.getItem("eddy-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="../" aria-label="Eddy home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2"/></svg>
+      Eddy
+    </a>
+    <nav aria-label="Primary">
+      <ul class="nav">
+        <li><a href="./" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/idestis/eddy">GitHub</a></li>
+        <li><button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch colour theme" hidden>
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>
+        </button></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docnav" aria-label="Documentation"><h2>Docs</h2><ul><li><a href="index.html">Overview</a></li><li><a href="quickstart.html">Quickstart (kind)</a></li><li><a href="install.html" aria-current="page">Install</a></li><li><a href="security.html">Security model</a></li><li><a href="mcp.html">MCP & Claude Code</a></li><li><a href="roadmap-faq.html">Roadmap & FAQ</a></li></ul></nav>
+  <main id="main" class="prose">
+    <h1>Install</h1>
+
+<p class="lead">This page is a summary. The full guide, with every value, ingress example, Bedrock policy and troubleshooting, is <a href="https://github.com/idestis/eddy/blob/HEAD/docs/install.md">docs/install.md</a> in the repository.</p>
+<h2 id="prereq">Prerequisites</h2>
+<ul>
+<li>Kubernetes 1.27 or later in every cluster, with Flux installed in the workload clusters.</li>
+<li>Helm 3.12 or later (Helm 4 works).</li>
+<li>An internal ingress (nginx or an AWS ALB) and a TLS certificate for the UI, plus a second internal endpoint for agents.</li>
+</ul>
+<h2 id="steps">Steps</h2>
+<ol>
+<li><strong>Install the hub</strong> in the management cluster with the <code>eddy-hub</code> Helm chart, giving it a <code>publicURL</code>, an <code>agentsPublicURL</code>, local users (argon2id hashes) and persistence.
+<div class="code"><pre><span class="p">$ </span>helm install eddy-hub oci://ghcr.io/eddy-gitops/charts/eddy-hub --version 0.1.0 \
+    --namespace eddy -f hub-values.yaml</pre><button type="button" class="copy" hidden>Copy</button></div></li>
+<li><strong>Register clusters</strong> in <code>clusters[]</code> (name, environment, colour, <code>protected</code>). The chart creates a <code>Cluster</code> resource and a token Secret for each.</li>
+<li><strong>Install an agent</strong> in each workload cluster with the <code>eddy-agent</code> chart. The hub's install notes print the exact command for each cluster.</li>
+<li><strong>Apply user RBAC.</strong> Nobody sees anything until you grant it. Start from <code>deploy/rbac/eddy-user-rbac.yaml</code>.</li>
+<li><strong>Optional:</strong> sign in through your identity provider with oauth2-proxy, enable Ask AI, and configure the kill switches.</li>
+</ol>
+<h2 id="know">Good to know</h2>
+<ul>
+<li>The hub runs <strong>one replica</strong> with SQLite on a PersistentVolumeClaim. Raising <code>replicaCount</code> is rejected at install time. Postgres and a multi-replica hub are planned.</li>
+<li>With persistence off, every restart logs everyone out and loses threads. Use that for demos only.</li>
+<li>Expose the UI through an <strong>internal</strong> ingress only. <code>/mcp</code> must not sit behind your sign-in proxy, because MCP clients send a personal access token.</li>
+<li>Until mTLS arrives in v0.2, the agent token is the main control on the agent endpoint, so restrict it by source network.</li>
+</ul>
+<p>Images and charts in the repository docs are referenced under <code>ghcr.io/eddy-gitops</code>. Check <a href="https://github.com/idestis/eddy/blob/HEAD/docs/install.md">install.md</a> for the current names and versions before you install.</p>
+<div class="pager"><a href="quickstart.html">&larr; Quickstart</a><a href="security.html">Security model &rarr;</a></div>
+
+  </main>
+</div>
+<footer class="site-footer">
+  <div class="wrap foot">
+    <p style="margin:0">Eddy is open source under the <a href="https://github.com/idestis/eddy/blob/HEAD/LICENSE">Apache License 2.0</a>. v0.1 MVP, pre-release.</p>
+    <ul><li><a href="../">Home</a></li><li><a href="https://github.com/idestis/eddy">GitHub</a></li><li><a href="https://github.com/idestis/eddy/tree/HEAD/docs">Full docs in the repo</a></li></ul>
+  </div>
+</footer>
+<script src="../assets/site.js" defer></script>
+</body>
+</html>

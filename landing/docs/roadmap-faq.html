@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap & FAQ · Eddy docs</title>
+<meta name="description" content="What is ready in v0.1, what is next, and honest answers.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F4F6FA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B0D11" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://idestis.github.io/eddy/docs/roadmap-faq.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="../assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Eddy">
+<meta property="og:title" content="Roadmap & FAQ · Eddy docs">
+<meta property="og:description" content="What is ready in v0.1, what is next, and honest answers.">
+<meta property="og:url" content="https://idestis.github.io/eddy/docs/roadmap-faq.html">
+<meta property="og:image" content="https://idestis.github.io/eddy/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script>try{var t=localStorage.getItem("eddy-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="../" aria-label="Eddy home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2"/></svg>
+      Eddy
+    </a>
+    <nav aria-label="Primary">
+      <ul class="nav">
+        <li><a href="./" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/idestis/eddy">GitHub</a></li>
+        <li><button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch colour theme" hidden>
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>
+        </button></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docnav" aria-label="Documentation"><h2>Docs</h2><ul><li><a href="index.html">Overview</a></li><li><a href="quickstart.html">Quickstart (kind)</a></li><li><a href="install.html">Install</a></li><li><a href="security.html">Security model</a></li><li><a href="mcp.html">MCP & Claude Code</a></li><li><a href="roadmap-faq.html" aria-current="page">Roadmap & FAQ</a></li></ul></nav>
+  <main id="main" class="prose">
+    <h1>Roadmap &amp; FAQ</h1>
+
+<h2 id="roadmap">Roadmap</h2>
+<div class="tbl"><table>
+<thead><tr><th scope="col">Area</th><th scope="col">Ready in v0.1</th><th scope="col">Next (v0.2+)</th></tr></thead>
+<tbody>
+<tr><th scope="row">Sign-in</th><td>Local users, trusted proxy headers</td><td>GitHub OAuth2, OIDC (Google, Okta, Entra, Dex), SAML 2.0</td></tr>
+<tr><th scope="row">Clusters</th><td>Outbound WebSocket, <code>Cluster</code> CRD, token auth</td><td>mTLS for agents, <code>eddy register</code> CLI</td></tr>
+<tr><th scope="row">Storage</th><td>SQLite on a PVC (single replica)</td><td>Postgres backend, multi-replica hub</td></tr>
+<tr><th scope="row">Flux</th><td>Kustomization, HelmRelease, sources, HelmChart, Bucket</td><td>Image automation, notification alerts, <code>flux diff</code> view</td></tr>
+<tr><th scope="row">Actions</th><td>Reconcile, suspend, resume</td><td>Workload restart, bulk actions</td></tr>
+<tr><th scope="row">MCP and tokens</th><td>PATs, fleet-wide tools, threads</td><td>MCP OAuth 2.1, per-cluster scoping, log follow</td></tr>
+</tbody></table></div>
+<p>The full table is in the <a href="https://github.com/idestis/eddy#whats-in-v01-and-whats-next">README</a>. Plans can change.</p>
+<h2 id="faq">FAQ</h2>
+<h3>Is Eddy production-ready?</h3>
+<p>No. It is a v0.1 MVP, pre-release. APIs, Helm values and the CRD group may change before v1. The hub runs a single replica with SQLite, so plan for that.</p>
+<h3>How is it different from weave-gitops?</h3>
+<p>The open-source edition of weave-gitops is limited to one cluster and has had no feature work since Weaveworks shut down. Eddy is multi-cluster in the open-source edition and is actively developed. It is pre-release, so it does not yet cover everything.</p>
+<h3>Do you need to expose workload clusters?</h3>
+<p>No. Agents dial out to the hub. The hub holds no workload-cluster credentials.</p>
+<h3>Can Eddy read my Secrets?</h3>
+<p>No. The agent does not watch Secrets or ConfigMaps, and their data never leaves a cluster.</p>
+<h3>Who can do what?</h3>
+<p>Your Kubernetes RBAC decides. Eddy runs each request as the signed-in user through impersonation, and invents no roles of its own.</p>
+<h3>Is AI required?</h3>
+<p>No. Ask AI is off by default, read-only, and works with the Anthropic API or AWS Bedrock. MCP is optional too, and both can be switched off at runtime.</p>
+<h3>Can I use my company login?</h3>
+<p>Today through a reverse proxy such as oauth2-proxy or Pomerium. Native GitHub, OIDC and SAML sign-in are planned for v0.2.</p>
+<h3>How do I contribute or report a problem?</h3>
+<p>Read <a href="https://github.com/idestis/eddy/blob/HEAD/CONTRIBUTING.md">CONTRIBUTING.md</a> and open an issue on <a href="https://github.com/idestis/eddy/issues">GitHub</a>. For vulnerabilities, see <a href="https://github.com/idestis/eddy/blob/HEAD/SECURITY.md">SECURITY.md</a>.</p>
+<h3>What is the license?</h3>
+<p><a href="https://github.com/idestis/eddy/blob/HEAD/LICENSE">Apache License 2.0</a>.</p>
+<div class="pager"><a href="mcp.html">&larr; MCP &amp; Claude Code</a><a href="./">Overview &rarr;</a></div>
+
+  </main>
+</div>
+<footer class="site-footer">
+  <div class="wrap foot">
+    <p style="margin:0">Eddy is open source under the <a href="https://github.com/idestis/eddy/blob/HEAD/LICENSE">Apache License 2.0</a>. v0.1 MVP, pre-release.</p>
+    <ul><li><a href="../">Home</a></li><li><a href="https://github.com/idestis/eddy">GitHub</a></li><li><a href="https://github.com/idestis/eddy/tree/HEAD/docs">Full docs in the repo</a></li></ul>
+  </div>
+</footer>
+<script src="../assets/site.js" defer></script>
+</body>
+</html>

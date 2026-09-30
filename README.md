@@ -79,7 +79,7 @@ Requirements: Docker, [kind](https://kind.sigs.k8s.io), `kubectl`, `helm`, `flux
 
 ```sh
 task kind:up      # kind cluster + Flux + a demo app + the Eddy hub and agent
-kubectl -n eddy-system port-forward svc/eddy-hub 8080:80
+kubectl -n eddy port-forward svc/eddy-hub 8080:80
 open http://localhost:8080   # sign in as the dev user printed by the script
 ```
 

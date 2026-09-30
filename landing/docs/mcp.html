@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP & Claude Code · Eddy docs</title>
+<meta name="description" content="Connect Claude Code, or any MCP client, to your Flux fleet.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F4F6FA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B0D11" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://idestis.github.io/eddy/docs/mcp.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="../assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Eddy">
+<meta property="og:title" content="MCP & Claude Code · Eddy docs">
+<meta property="og:description" content="Connect Claude Code, or any MCP client, to your Flux fleet.">
+<meta property="og:url" content="https://idestis.github.io/eddy/docs/mcp.html">
+<meta property="og:image" content="https://idestis.github.io/eddy/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script>try{var t=localStorage.getItem("eddy-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="../" aria-label="Eddy home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2"/></svg>
+      Eddy
+    </a>
+    <nav aria-label="Primary">
+      <ul class="nav">
+        <li><a href="./" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/idestis/eddy">GitHub</a></li>
+        <li><button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch colour theme" hidden>
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 3a7 7 0 0 1 0 14z" fill="currentColor"/></svg>
+        </button></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docnav" aria-label="Documentation"><h2>Docs</h2><ul><li><a href="index.html">Overview</a></li><li><a href="quickstart.html">Quickstart (kind)</a></li><li><a href="install.html">Install</a></li><li><a href="security.html">Security model</a></li><li><a href="mcp.html" aria-current="page">MCP & Claude Code</a></li><li><a href="roadmap-faq.html">Roadmap & FAQ</a></li></ul></nav>
+  <main id="main" class="prose">
+    <h1>MCP &amp; Claude Code</h1>
+
+<p class="lead">The hub exposes a <a href="https://modelcontextprotocol.io">Model Context Protocol</a> endpoint at <code>/mcp</code>. Claude Code can list your clusters, find unhealthy Flux resources across the fleet, read events and leave review threads that show up in the Eddy UI. Everything runs as you, so the tools see only what your RBAC allows.</p>
+<h2 id="connect">Connect Claude Code</h2>
+<ol>
+<li>In Eddy, create a personal access token under <strong>Settings → Access tokens</strong>. Choose <code>read</code> (read tools, plus threads) or <code>operate</code> (also reconcile, suspend and resume), and set an expiry. The token is shown once.</li>
+<li>Add the server, keeping the token in an environment variable:
+<div class="code"><pre><span class="p">$ </span>export EDDY_PAT=eddy_pat_...
+<span class="p">$ </span>claude mcp add --transport http eddy https://&lt;your-hub&gt;/mcp \
+    --header "Authorization: Bearer $EDDY_PAT"</pre><button type="button" class="copy" hidden>Copy</button></div></li>
+<li>Run <code>claude mcp list</code> and check that <code>eddy</code> is connected.</li>
+</ol>
+<p>The hub address must be reachable from your machine, usually over VPN. <code>/mcp</code> does not go through your sign-in proxy: the token is the credential.</p>
+<h2 id="tools">Tools</h2>
+<div class="tbl"><table>
+<thead><tr><th scope="col">Scope</th><th scope="col">Tools</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>read</code></th><td><code>list_clusters</code>, <code>list_resources</code>, <code>list_unhealthy</code>, <code>get_resource</code>, <code>get_events</code>, <code>list_threads</code>, <code>get_thread</code>, and <code>get_logs</code> when the operator enables it</td></tr>
+<tr><th scope="row">threads</th><td><code>create_thread</code>, <code>reply_thread</code>, <code>resolve_thread</code> (shown as <code>via mcp</code> in the UI)</td></tr>
+<tr><th scope="row"><code>operate</code></th><td><code>reconcile</code>, <code>suspend</code>, <code>resume</code>, when MCP writes are enabled</td></tr>
+</tbody></table></div>
+<p>Arguments and exact contracts are in <a href="https://github.com/idestis/eddy/blob/HEAD/docs/mcp.md">docs/mcp.md</a> and <a href="https://github.com/idestis/eddy/blob/HEAD/docs/api.md">docs/api.md</a>.</p>
+<h2 id="example">Example</h2>
+<p>With a <code>read</code> token, ask:</p>
+<blockquote class="callout"><p>Use the eddy tools to review every failing HelmRelease across the fleet. For each one, read its events and summary, work out the likely cause, and leave a thread on the resource with the cause and the next step. Don't change anything.</p></blockquote>
+<h2 id="guard">Guardrails</h2>
+<ul>
+<li><strong>Your RBAC, always.</strong> A token can never do more than its owner.</li>
+<li><strong>Bearer only, <code>/mcp</code> only.</strong> Tokens are refused everywhere else, and <code>/mcp</code> ignores cookies.</li>
+<li><strong>Protected clusters</strong> need <code>confirm_cluster</code> equal to the cluster name on every write. Operators can deny MCP writes there entirely.</li>
+<li><strong>Redaction and untrusted data.</strong> Output is redacted and marked as data, not instructions. That limits prompt injection but does not remove it, so review write actions before approving.</li>
+<li><strong>Limits and audit.</strong> Request, result and rate limits apply, and every call is audited with the token id.</li>
+<li><strong>Kill switch.</strong> Operators can turn off <code>/mcp</code>, its writes or <code>get_logs</code> without a restart.</li>
+</ul>
+<div class="pager"><a href="security.html">&larr; Security model</a><a href="roadmap-faq.html">Roadmap &amp; FAQ &rarr;</a></div>
+
+  </main>
+</div>
+<footer class="site-footer">
+  <div class="wrap foot">
+    <p style="margin:0">Eddy is open source under the <a href="https://github.com/idestis/eddy/blob/HEAD/LICENSE">Apache License 2.0</a>. v0.1 MVP, pre-release.</p>
+    <ul><li><a href="../">Home</a></li><li><a href="https://github.com/idestis/eddy">GitHub</a></li><li><a href="https://github.com/idestis/eddy/tree/HEAD/docs">Full docs in the repo</a></li></ul>
+  </div>
+</footer>
+<script src="../assets/site.js" defer></script>
+</body>
+</html>
