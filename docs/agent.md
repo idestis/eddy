@@ -16,10 +16,11 @@ Install it in its **own namespace** (`eddy-system`), not in `flux-system`:
 
 | Permission | Why | Guardrail |
 |---|---|---|
-| `get/list/watch` on Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Pods, Events, Namespaces | Informer cache | Read-only. Secrets and ConfigMaps are **not** in the role at all. |
+| `get/list/watch` on Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, Pods, Services, Ingresses, HorizontalPodAutoscalers, PersistentVolumeClaims, Events, Namespaces | Informer cache | Read-only. Secrets and ConfigMaps are **not** in the role at all: they appear only by name, from a Kustomization's inventory. |
 | `create subjectaccessreviews` | Answers "may alice list HelmReleases in team-a?" for hub-side filtering | Asks the API server a question. Grants nothing. |
 | `impersonate users`, `impersonate groups` | Every user read or action runs as that user, so the cluster's RBAC decides and its audit log shows the real user | See below. |
-| Writes of its own | **None** | Reconcile and suspend work only if the *impersonated user* may `patch`. |
+| `get`, `update` on **its own token Secret** (only with `joinToken`) | Stores the permanent token it receives when it joins | A namespaced Role pinned by `resourceNames` to that one Secret. |
+| Other writes of its own | **None** | Reconcile and suspend work only if the *impersonated user* may `patch`. |
 
 The pod runs as non-root with a read-only root filesystem, all capabilities dropped and
 the RuntimeDefault seccomp profile. It has no Service and accepts **no inbound
@@ -109,6 +110,43 @@ the corporate network only.
 - **Protection:** TLS protects the channel. The hub pins the token to the Cluster name, and
   the agent can pin the hub's CA with `hub.caBundle`. Mutual TLS arrives in v1.1.
 
+## Joining with a join token
+
+Clusters added in the UI (see [install.md](install.md#option-a-from-the-ui-onboarding)) get a
+one-time **join token**, `eddy_join_…`, instead of a long-lived agent token that a person would
+have to copy.
+
+1. The chart's `joinToken` value goes into the agent's token Secret (`<release>-token`, key
+   `joinToken`). The agent reads it from `EDDY_JOIN_TOKEN`.
+2. On start the agent reads that Secret through the API. If it already holds a permanent token
+   under `token` (from an earlier run, or from another replica), the agent uses it and skips
+   the join.
+3. Otherwise it connects with `Authorization: Bearer eddy_join_…` and sends only its `hello`.
+   The hub checks the token (right cluster, unused, unexpired), marks it used, writes a new
+   random agent token into the cluster's token Secret in the hub namespace, and sends it to the
+   agent in a `credentials` frame.
+4. The agent writes the token to its own token Secret under `token`, answers, and reconnects
+   with it. The join token is now worthless; the hub lists any later use as a rejected attempt.
+5. Agent replicas share the join token. The first one to connect joins; the others are refused
+   (`join_used`), re-read the Secret, find the permanent token and connect with it.
+
+**The one Secret write.** This is the agent's only write permission, and the chart creates it
+only with `joinToken`: a Role with `get` and `update` on `secrets`, `resourceNames: [<release>-token]`.
+It cannot create, list or read any other Secret. If the write fails (the Role is missing, or a
+policy blocks it), the agent logs a warning, keeps the token in memory for the life of the
+process and reports the error in its `hello` diagnostics, so the Connection panel shows it.
+After a restart it would fall back to the used join token: fix the permission, or issue a new
+join token.
+
+A pre-provisioned token (`token.existingSecret` or `token.value`) keeps working exactly as
+before; then there is no join and no Role.
+
+**Diagnostics.** Before it connects the agent checks itself and sends the result in
+`hello.diagnostics`: the kinds the cluster serves, whether it may create SubjectAccessReviews,
+whether group impersonation is pinned (a SelfSubjectAccessReview asking "may I impersonate
+`system:masters`?"; a yes is a warning), and informer sync progress. The hub turns these into
+the connection checklist.
+
 ## Replicas and control-plane protection
 
 The chart runs **two agent replicas** by default (`replicaCount`), spread across nodes
@@ -153,5 +191,5 @@ connection wins, so run only one replica of an older agent.
 - [ ] Bind people to `eddy:`-prefixed groups, not to individual users.
 - [ ] Enable `networkPolicy` (egress only) and set `hubTo` to the hub endpoint's CIDR.
 - [ ] Use PrivateLink or a private path. If the agent endpoint must be public, restrict it by source CIDR.
-- [ ] Rotate the agent token (`token` → `previousToken`), as described in [install.md](install.md).
+- [ ] Rotate the agent token (`token` → `previousToken`, or **Regenerate join token** in the Connection panel), as described in [install.md](install.md).
 - [ ] Alert on impersonation by `system:serviceaccount:eddy-system:eddy-agent` in the cluster audit logs.

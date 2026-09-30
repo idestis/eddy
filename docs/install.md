@@ -206,6 +206,87 @@ If you prefer no ingress for agents, put an internal NLB in front of the `eddy-h
 
 ### 3. Register clusters
 
+There are two ways to register a workload cluster. Both end with a `Cluster` custom resource
+(`kubectl get clusters`, short name `ecl`) in the management cluster and a token Secret
+`eddy-agent-<name>` in the hub namespace. Pick per cluster; they mix freely.
+
+#### Option A: from the UI (onboarding)
+
+With `onboarding.enabled: true` (the default), a user who may create `clusters.gitops.eddy.dev`
+in the **management** cluster sees **Add cluster** on the Fleet page:
+
+1. Fill in the name (a DNS label), display name, environment, region, colour, protection
+   and order. The hub creates the `Cluster` resource (phase `Pending`), its token Secret and a
+   **one-time join token** (valid 1 h by default, `onboarding.joinTokenTTL`, at most 24 h).
+2. The Connect screen shows the install command for that cluster in three forms: a `helm`
+   command, a `values.yaml`, and plain manifests for GitOps-managed clusters. It also shows the
+   `Cluster` resource, in case you want to keep clusters in Git.
+3. Run the command against the **workload** cluster. The agent connects with the join token,
+   the hub writes a permanent agent token into the cluster's token Secret and hands it to the
+   agent, which stores it in its own token Secret and reconnects. The join token is then
+   worthless.
+4. The checklist fills in live: agent connected, protocol compatible, Flux detected, informers
+   synced, SubjectAccessReview working, impersonation pinned, watched namespaces. Rejected
+   attempts (bad or expired token, used join token, wrong cluster, protocol mismatch) are
+   listed with their reason. **Finish** closes the wizard.
+
+Afterwards the same checklist is the **Connection** panel of the cluster card, with
+**Regenerate join token** (reinstall an agent or rotate its token) and **Delete**
+(typed confirmation on protected clusters). Clusters from the chart's `clusters[]` can get a
+join token there too, but are edited and removed in your Helm values.
+
+Set `agentsPublicURL` so the guide shows the address agents really dial; without it the guide
+uses the first `ingress.agents` host, then the in-cluster Service.
+
+**Who may do it.** Eddy adds no roles of its own: the hub asks the management cluster, with a
+SubjectAccessReview as the signed-in user, for `create` (add), `update` (join tokens and
+edits), `delete` (remove) and `get` (see the Connection panel) on `clusters.gitops.eddy.dev`.
+Bind your platform group in the **management** cluster:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eddy-cluster-admin
+rules:
+  - apiGroups: [gitops.eddy.dev]
+    resources: [clusters]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eddy-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eddy-cluster-admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: eddy:platform
+```
+
+**What it adds to the hub's RBAC.** `onboarding.enabled: true` grants the hub ServiceAccount
+`create`, `update`, `patch` and `delete` on `clusters`, `create` on `subjectaccessreviews`, and
+`create`, `update` and `delete` on Secrets in the hub namespace only. With
+`onboarding.enabled: false` the hub keeps its read-only RBAC and the button is hidden. The
+wizard is also off when the hub uses `staticClusters` (local development): the API answers
+409 and `features.onboarding` in `/api/v1/me` is `false`.
+
+**GitOps.** A join token in Git is acceptable because it is short-lived and single-use, but a
+SOPS or External Secrets reference is better. The agent writes its permanent token into the
+same Secret under `token`; if a GitOps controller manages that Secret, tell it to ignore that
+key (for example an Argo CD `ignoreDifferences` on `/data/token`), or it will remove it and the
+agent falls back to the used join token after a restart.
+
+**HA.** Every hub replica serves every step. The `Cluster` resources and Secrets are the source
+of truth, join tokens live in the `join_tokens` table, and rejected attempts (the last 20 per
+cluster, only for clusters that exist) in the `UNLOGGED` table `connection_attempts`, so
+every replica shows the same checklist.
+
+#### Option B: in Helm values (GitOps)
+
 List every workload cluster in `clusters[]` and upgrade:
 
 ```yaml
@@ -222,11 +303,13 @@ clusters:
     order: 2
 ```
 
-For each entry the chart creates a `Cluster` custom resource (`kubectl get clusters`, short name `ecl`) and a random token Secret `eddy-agent-<name>` in the hub namespace. Both are kept across upgrades.
+For each entry the chart creates a `Cluster` custom resource and a random token Secret
+`eddy-agent-<name>` in the hub namespace. Both are kept across upgrades.
 
 ### 4. Install an agent in each workload cluster
 
-`helm upgrade` (or `helm install`) on the hub prints the exact command per cluster in NOTES.txt. It looks like this:
+With Option A, run the command the Connect screen shows. With Option B, `helm upgrade` (or
+`helm install`) on the hub prints the exact command per cluster in NOTES.txt. It looks like this:
 
 ```sh
 helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.0 \
@@ -243,7 +326,8 @@ Options:
 | `cluster.name` | Must equal the `Cluster` name in the hub |
 | `hub.url` | The agents endpoint, `wss://` only |
 | `hub.caBundle` | PEM CA, only if the hub certificate is not publicly trusted (`--set-file hub.caBundle=ca.pem`) |
-| `token.existingSecret` / `token.value` | Agent token. Prefer an existing Secret under GitOps |
+| `joinToken` | One-time `eddy_join_…` token from the UI. The chart puts it in the token Secret and adds a Role that lets the agent `get` and `update` that one Secret, where it stores its permanent token |
+| `token.existingSecret` / `token.value` | A pre-provisioned agent token instead of a join token. Prefer an existing Secret under GitOps |
 | `watch.namespaces` | Limit what the agent watches. Empty means the whole cluster |
 | `impersonation.allowedGroupPrefixes` | Default `["eddy:"]`. `system:` is always refused |
 | `impersonation.groups` | Strictest: pin impersonation to an exact list of groups (RBAC `resourceNames`) |
@@ -252,7 +336,7 @@ Options:
 | `limits.qps`, `limits.burst` | client-go QPS/burst for the whole Deployment (default 20/40). The chart divides them by `replicaCount` |
 | `limits.concurrency`, `limits.logStreams`, `limits.sarConcurrency` | Requests, log streams and SubjectAccessReviews in flight for the whole Deployment (default 16/8/8), divided by `replicaCount` |
 
-The agent's ServiceAccount is read-only (Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Pods, events, Namespaces). It has no write access and cannot read Secrets or ConfigMaps. Its only extra powers are creating SubjectAccessReviews and impersonating users and `eddy:` groups.
+The agent's ServiceAccount is read-only (Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, Pods, Services, Ingresses, HorizontalPodAutoscalers, PersistentVolumeClaims, events, Namespaces). It cannot read Secrets or ConfigMaps. Its only extra powers are creating SubjectAccessReviews and impersonating users and `eddy:` groups, plus, with `joinToken`, `get` and `update` on its own token Secret.
 
 Within a minute the cluster shows as `Connected`: `kubectl get clusters`.
 
@@ -260,7 +344,9 @@ Within a minute the cluster shows as `Connected`: `kubectl get clusters`.
 
 Eddy shows what a person's own RBAC allows, so nobody sees anything until you grant it. Apply `deploy/rbac/eddy-user-rbac.yaml` in each workload cluster and adjust the subjects:
 
-- `eddy-viewer` (get, list, watch on Flux kinds, workloads, pods, `pods/log` and events) is bound to `eddy:authenticated`, which every signed-in user has.
+- `eddy-viewer` (get, list, watch on Flux kinds, workloads, Jobs, CronJobs, pods, Services, Ingresses, HorizontalPodAutoscalers, PersistentVolumeClaims, `pods/log` and events) is bound to `eddy:authenticated`, which every signed-in user has.
+
+Objects a Kustomization applied whose kinds Eddy does not watch (ConfigMaps, Secrets, ServiceAccounts, RBAC, CRDs and so on) appear as **inventory-only** rows: kind, namespace and name from the Kustomization's `status.inventory`, never the object itself. A user sees such a row only if they can list its Kustomization and, for kinds Eddy knows (for example `secrets`), list that kind in the row's namespace. HelmReleases keep no inventory in their status, so their unwatched objects do not appear.
 - `eddy-operator` (adds `patch` on Flux kinds, which is what reconcile, suspend and resume need) is bound to `eddy:platform`.
 
 Local user `alice` with `groups: [platform]` is Kubernetes user `local:alice` in group `eddy:platform` (plus `eddy:authenticated`). Namespace-scoped RoleBindings work too.
@@ -462,6 +548,7 @@ kubectl delete crd clusters.gitops.eddy.dev
 
 ## Troubleshooting
 
+- **An added cluster stays `Pending`:** open its Connection panel. Rejected attempts say why: an expired or already used join token (regenerate one), a token for another cluster, or a protocol mismatch (upgrade the agent). No attempts at all means the agent never reached the hub: check `hub.url`, DNS, and outbound 443 from the workload cluster.
 - **Cluster stays `Disconnected`:** read the agent log (`kubectl -n eddy-system logs deploy/eddy-agent`). Usual causes are a wrong `hub.url`, a certificate the agent does not trust (set `hub.caBundle`), a token that does not match the `eddy-agent-<name>` Secret, or an ingress that closes idle WebSockets.
 - **Sign-in loops or fails with an Origin error:** `publicURL` must equal the address in the browser, including the scheme.
 - **The UI is empty:** the user has no RBAC in the cluster. Apply the example roles.
