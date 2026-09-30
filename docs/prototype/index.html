@@ -1,0 +1,1127 @@
+<!doctype html>
+<html lang="en" data-cluster="staging">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Eddy: Flux explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+@property --c{syntax:'<color>';inherits:true;initial-value:#6D28D9}
+@property --c2{syntax:'<color>';inherits:true;initial-value:#DB2777}
+:root{
+  --frame:#E7EAF0;--win:#FFFFFF;--side:#F8F9FB;--s2:#F3F5F8;--ink:#101217;--ink-2:#414856;--ink-3:#5C6473;--line:#E5E8EE;--line-2:#D2D6DE;
+  --ok:#15803D;--bad:#C81E4B;--run:#1D4ED8;--off:#5C6473;
+  --pe:#C2410C;--pe2:#F59E0B;--st:#6D28D9;--st2:#DB2777;--dv:#0F766E;--dv2:#2563EB;--c-ink:#FFFFFF;
+  --log-bg:#14161B;--log-ink:#D9DDE5;--log-dim:#8A92A1;
+  --glow:.55;--shadow:0 1px 2px rgba(16,18,23,.05),0 24px 60px -28px rgba(16,18,23,.35);
+  --ui:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --c:var(--st);--c2:var(--st2);
+  --c-soft:color-mix(in oklab,var(--c) 10%,var(--win));
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+  color-scheme:light;transition:--c .7s ease,--c2 .7s ease;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --frame:#0B0D11;--win:#14171C;--side:#111419;--s2:#1B1F26;--ink:#ECEEF2;--ink-2:#B9BFCB;--ink-3:#969EAC;--line:#252A32;--line-2:#363C47;
+  --ok:#4ADE80;--bad:#FB7185;--run:#7AA2FF;--off:#9CA3AF;
+  --pe:#FB923C;--pe2:#F59E0B;--st:#A78BFA;--st2:#EC4899;--dv:#2DD4BF;--dv2:#3B82F6;--c-ink:#14161B;
+  --log-bg:#0A0C10;--glow:.3;--shadow:0 24px 60px -24px rgba(0,0,0,.7);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --frame:#0B0D11;--win:#14171C;--side:#111419;--s2:#1B1F26;--ink:#ECEEF2;--ink-2:#B9BFCB;--ink-3:#969EAC;--line:#252A32;--line-2:#363C47;
+  --ok:#4ADE80;--bad:#FB7185;--run:#7AA2FF;--off:#9CA3AF;
+  --pe:#FB923C;--pe2:#F59E0B;--st:#A78BFA;--st2:#EC4899;--dv:#2DD4BF;--dv2:#3B82F6;--c-ink:#14161B;
+  --log-bg:#0A0C10;--glow:.3;--shadow:0 24px 60px -24px rgba(0,0,0,.7);color-scheme:dark}
+:root[data-cluster="prod-eu"]{--c:var(--pe);--c2:var(--pe2)}
+:root[data-cluster="staging"]{--c:var(--st);--c2:var(--st2)}
+:root[data-cluster="dev"]{--c:var(--dv);--c2:var(--dv2)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;color:var(--ink);font-family:var(--ui);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;overflow:hidden;
+  background:
+   radial-gradient(1100px 720px at -5% -10%,color-mix(in oklab,var(--c) calc(var(--glow)*100%),transparent),transparent 62%),
+   radial-gradient(900px 640px at 105% 110%,color-mix(in oklab,var(--c2) calc(var(--glow)*90%),transparent),transparent 60%),
+   radial-gradient(700px 520px at 100% -10%,color-mix(in oklab,var(--c2) calc(var(--glow)*45%),transparent),transparent 60%),
+   var(--frame)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--c);outline-offset:2px;border-radius:8px}
+kbd{font-family:var(--mono);font-size:10.5px;line-height:1;padding:3px 5px;border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;background:var(--win);color:var(--ink-3);white-space:nowrap}
+.i{width:16px;height:16px;flex:none}
+.mono{font-family:var(--mono)}
+
+.frame{height:100%;padding:16px}
+.win{height:100%;display:flex;flex-direction:column;background:var(--win);border-radius:20px;box-shadow:var(--shadow);overflow:hidden;border:1px solid color-mix(in oklab,var(--c) 22%,var(--line))}
+.ribbon{height:3px;flex:none;background:var(--c)}
+:root[data-protected="true"] .ribbon{height:5px;background:repeating-linear-gradient(-45deg,var(--c) 0 9px,#1C1E23 9px 18px)}
+.shell{flex:1;min-height:0;display:grid;grid-template-columns:252px minmax(0,1fr) 420px}
+
+/* sidebar */
+.side{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;padding:14px 12px}
+.logo{display:flex;align-items:center;gap:9px;font-weight:650;font-size:17px;letter-spacing:-.02em;padding:4px 8px 14px}
+.logo svg{width:22px;height:22px;color:var(--c)}
+.switch{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:0 11px;align-items:center;width:100%;padding:9px 10px 9px 9px;border-radius:14px;background:var(--win);border:1px solid var(--line);text-align:left;box-shadow:0 1px 2px rgba(16,18,23,.04)}
+.switch:hover{border-color:color-mix(in oklab,var(--c) 45%,var(--line))}
+.sw{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--c),var(--c2));color:var(--c-ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;grid-row:1/span 2}
+:root[data-protected="true"] .switch .sw,.clrow.protected .sw{background:repeating-linear-gradient(-45deg,var(--cc,var(--c)) 0 6px,#1C1E23 6px 12px)}
+.switch .sn{font-weight:650;font-size:15px;display:flex;align-items:center;gap:6px;min-width:0}
+.switch .sn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.switch .se{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.switch .sc{grid-row:1/span 2;grid-column:3;color:var(--ink-3)}
+.lockb{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:650;color:var(--c);padding:2px 6px;border-radius:6px;background:color-mix(in oklab,var(--c) 12%,transparent)}
+.lockb .i{width:11px;height:11px}
+.nav{display:flex;flex-direction:column;gap:2px;margin-top:18px}
+.nav h3{font-size:12px;font-weight:550;color:var(--ink-3);margin:0 10px 6px}
+.nav button{display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border-radius:10px;color:var(--ink-2);font-size:13.5px;text-align:left}
+.nav button:hover{background:var(--s2);color:var(--ink)}
+.nav button[aria-current="true"]{background:var(--c-soft);color:var(--ink);font-weight:560}
+.nav button[aria-current="true"] .i{color:var(--c)}
+.nav .n{margin-left:auto;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.nav .n.bad{color:var(--bad);font-weight:650}
+.side-foot{margin-top:auto;border-top:1px solid var(--line);padding:12px 4px 2px;display:flex;flex-direction:column;gap:10px}
+.me{display:flex;align-items:center;gap:10px;min-width:0}
+.av{width:32px;height:32px;border-radius:50%;background:var(--s2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-weight:650;font-size:13px;flex:none}
+.me .mt{display:flex;flex-direction:column;min-width:0;font-size:12.5px}
+.me .mt b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me .mt span{color:var(--ink-3)}
+.me .ib{margin-left:auto}
+.ib{width:34px;height:34px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3);flex:none}
+.ib:hover{background:var(--s2);color:var(--ink)}
+.seg{display:flex;padding:3px;border:1px solid var(--line);border-radius:11px;background:var(--win)}
+.seg button{flex:1;height:30px;padding:0 10px;border-radius:8px;color:var(--ink-2);font-size:12.5px;font-weight:550;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--win)}
+.seg button[aria-pressed="true"] kbd{background:transparent;color:inherit;border-color:color-mix(in oklab,var(--win) 40%,transparent)}
+
+/* content */
+.content{display:flex;flex-direction:column;min-width:0;min-height:0}
+.top{display:flex;align-items:center;gap:12px;height:62px;padding:0 20px;border-bottom:1px solid var(--line);flex:none}
+.top .switch{display:none;width:auto;max-width:230px;padding:5px 9px 5px 5px;grid-template-columns:30px minmax(0,1fr) auto;gap:0 8px}
+.top .switch .sw{width:30px;height:30px;border-radius:9px;font-size:13px}
+.top .switch .se{display:none}
+.top .switch .sn{font-size:14px}
+.crumbs{display:flex;align-items:center;gap:2px;font-size:15px;color:var(--ink-3);overflow-x:auto;white-space:nowrap;scrollbar-width:none;min-width:0;flex:1}
+.crumbs::-webkit-scrollbar{display:none}
+.crumbs button{padding:5px 7px;border-radius:8px}
+.crumbs button:hover{background:var(--s2);color:var(--ink)}
+.crumbs .sep{width:13px;height:13px;opacity:.55}
+.crumbs .cur{color:var(--ink);font-weight:600;padding:5px 7px;display:inline-flex;align-items:center;gap:8px}
+.crumbs .cur.mono,.crumbs button.mono{font-size:14px}
+.search{display:flex;align-items:center;gap:9px;height:38px;width:min(340px,32vw);padding:0 8px 0 12px;border:1px solid var(--line);border-radius:11px;background:var(--s2);color:var(--ink-3);text-align:left;flex:none}
+.search:hover{border-color:var(--line-2)}
+.search .t{flex:1;font-size:13.5px}
+.aibtn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:11px;font-weight:580;font-size:13.5px;color:var(--ink);border:1px solid color-mix(in oklab,var(--c) 35%,var(--line));background:linear-gradient(135deg,color-mix(in oklab,var(--c) 12%,var(--win)),color-mix(in oklab,var(--c2) 12%,var(--win)));flex:none}
+.aibtn .i{color:var(--c)}
+.aibtn[aria-pressed="true"]{border-color:var(--c)}
+.page{flex:1;min-height:0;overflow:auto;padding:18px 20px 28px;display:flex;flex-direction:column;gap:16px}
+.cur-strip{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--side);font-size:13px}
+.cur-strip.failed{border-color:color-mix(in oklab,var(--bad) 40%,var(--line));background:color-mix(in oklab,var(--bad) 6%,var(--win))}
+.cur-strip b{font-weight:600}
+.cur-strip .cm{color:var(--ink-2)}
+.cur-strip button{margin-left:auto}
+.cards{display:grid;grid-template-columns:1fr 1fr 1.15fr;gap:14px}
+.card{border:1px solid var(--line);border-radius:16px;padding:16px;background:var(--win);display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h4{margin:0;font-size:14.5px;font-weight:620;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.card h4 .big{margin-left:auto;font-family:var(--mono);font-size:22px;font-weight:500;letter-spacing:-.02em}
+.card h4 .big.bad{color:var(--bad)}
+.card .sub{font-size:12.5px;color:var(--ink-3);margin-top:-6px}
+.citem{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:9px;text-align:left;width:100%;min-width:0;font-size:12.5px}
+.citem:hover{background:var(--s2)}
+.citem .nm{font-family:var(--mono);font-weight:500;white-space:nowrap}
+.citem .ms{color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.card .kv2{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:12.5px}
+.card .kv2 dt{color:var(--ink-3)}.card .kv2 dd{margin:0;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .row-btns{display:flex;gap:8px;margin-top:auto;flex-wrap:wrap}
+.card.ai{border-color:color-mix(in oklab,var(--c) 30%,var(--line));background:
+  radial-gradient(120% 140% at 0% 0%,color-mix(in oklab,var(--c) 22%,transparent),transparent 60%),
+  radial-gradient(120% 140% at 100% 100%,color-mix(in oklab,var(--c2) 22%,transparent),transparent 60%),var(--win)}
+.card.ai p{margin:-4px 0 0;font-size:12.5px;color:var(--ink-2)}
+.qchip{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:6px 11px;border-radius:999px;border:1px solid var(--line-2);background:color-mix(in oklab,var(--win) 80%,transparent);font-size:12.5px;text-align:left;line-height:1.3}
+.qchip:hover{border-color:var(--c)}
+.qchip .i{width:13px;height:13px;color:var(--c)}
+
+.tools{display:flex;gap:10px;align-items:center}
+.filter{display:flex;align-items:center;gap:7px;height:36px;padding:0 8px 0 10px;border:1px solid var(--line);border-radius:10px;background:var(--win);flex:0 1 300px;min-width:160px;color:var(--ink-3)}
+.filter:focus-within{border-color:var(--c)}
+.filter input{border:0;background:none;outline:none;font:inherit;font-size:14px;color:var(--ink);flex:1;min-width:0}
+.chips{display:none;gap:6px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+.chips::-webkit-scrollbar{display:none}
+.chip{height:32px;padding:0 11px;border-radius:999px;border:1px solid var(--line);font-size:12.5px;color:var(--ink-2);white-space:nowrap;display:inline-flex;align-items:center;gap:5px;background:var(--win)}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--win);border-color:var(--ink)}
+.chip .n{opacity:.75;font-variant-numeric:tabular-nums}
+.tools .cnt{margin-left:auto;font-size:12.5px;color:var(--ink-3);white-space:nowrap}
+
+.table{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--win)}
+.thead,.row-main{display:grid;grid-template-columns:minmax(170px,1.2fr) 118px 118px minmax(0,2fr) 128px 48px 14px;gap:14px;align-items:center}
+.thead{padding:9px 16px;font-size:12px;color:var(--ink-3);background:var(--side);border-bottom:1px solid var(--line)}
+.rows{list-style:none;margin:0;padding:4px}
+.row{display:flex;border-radius:11px}
+.row-main{flex:1;min-width:0;padding:8px 12px;border-radius:11px;text-align:left;min-height:52px}
+.row:hover .row-main{background:var(--s2)}
+.row.sel .row-main{background:var(--c-soft);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--c) 30%,transparent)}
+.nmc{display:flex;flex-direction:column;min-width:0}
+.name{font-family:var(--mono);font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ns{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kd{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stp{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:560;white-space:nowrap}
+.st{display:inline-flex;color:var(--off)}
+.st-ready,.stp.ready{color:var(--ok)}.st-failed,.stp.failed{color:var(--bad)}.st-progressing,.stp.progressing{color:var(--run)}.st-suspended,.stp.suspended{color:var(--off)}
+.msg{font-size:12.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.failed .msg{color:var(--bad)}
+.rev{font-family:var(--mono);font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.age{font-size:12px;color:var(--ink-3);text-align:right;font-variant-numeric:tabular-nums}
+.chev{display:flex;color:var(--ink-3)}.chev .i{width:14px;height:14px}
+.row.sel .chev{color:var(--c)}
+.msg2{display:none}
+.row-info{display:none}
+.spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{padding:44px 20px;text-align:center;color:var(--ink-3)}
+.empty strong{display:block;color:var(--ink);font-size:15px;margin-bottom:4px}
+
+/* detail */
+.detail{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--side)}
+.dtop{padding:12px 16px;border-bottom:1px solid var(--line);flex:none}
+.dbody{flex:1;overflow:auto;padding:18px 20px 28px;min-height:0}
+.dk{display:flex;gap:8px;align-items:center;color:var(--ink-3);font-size:12.5px}
+.kind{font-family:var(--mono);font-size:10px;font-weight:600;padding:4px 6px;border-radius:6px;background:var(--win);border:1px solid var(--line);color:var(--ink-2)}
+.dname{font-family:var(--mono);font-size:18px;font-weight:600;word-break:break-all;margin:8px 0 2px;line-height:1.3}
+.dstatus{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:14px;background:var(--win);border:1px solid var(--line);margin:14px 0 12px;font-size:13px}
+.dstatus .st{margin-top:1px}
+.dstatus b{display:block;font-weight:620}
+.dstatus.failed{border-color:color-mix(in oklab,var(--bad) 45%,var(--line));background:color-mix(in oklab,var(--bad) 6%,var(--win))}
+.dstatus.progressing{border-color:color-mix(in oklab,var(--run) 40%,var(--line))}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px}
+.btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:10px;border:1px solid var(--line-2);background:var(--win);font-weight:560;font-size:13px;white-space:nowrap}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--c);border-color:var(--c);color:var(--c-ink)}
+.btn.primary kbd{background:transparent;color:var(--c-ink);border-color:color-mix(in oklab,var(--c-ink) 45%,transparent)}
+.btn.soft{border-color:color-mix(in oklab,var(--c) 40%,var(--line));background:linear-gradient(135deg,color-mix(in oklab,var(--c) 10%,var(--win)),color-mix(in oklab,var(--c2) 10%,var(--win)))}
+.btn.soft .i{color:var(--c)}
+.btn.sm{height:32px;padding:0 10px;font-size:12.5px}
+.btn.locked{opacity:.5}
+.btn[disabled]{opacity:.4;cursor:not-allowed}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.note{font-size:12px;color:var(--ink-3);display:flex;gap:6px;align-items:center;margin:2px 0 16px}
+.note .i{width:13px;height:13px}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.tabs button{padding:9px 10px;font-size:13px;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px;display:flex;gap:6px;align-items:center}
+.tabs button[aria-selected="true"]{color:var(--ink);border-color:var(--c);font-weight:600}
+.hb{display:inline-flex;align-items:center;gap:3px;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.hb .i{width:13px;height:13px}
+.hb.failed{color:var(--bad)}.hb.progressing{color:var(--run)}.hb.suspended{color:var(--off)}.hb.ready{color:var(--ok)}
+dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:9px 16px;margin:0;font-size:13px}
+dl.kv dt{color:var(--ink-3)}
+dl.kv dd{margin:0;font-family:var(--mono);font-size:12.5px;word-break:break-all}
+.linkbtn{color:var(--c);font-family:var(--mono);font-size:12.5px;text-decoration:underline;text-underline-offset:3px;text-align:left}
+.evs{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+.ev{padding:10px 12px;border-radius:12px;background:var(--win);border:1px solid var(--line);font-size:12.5px}
+.ev .eh{display:flex;justify-content:space-between;gap:8px;margin-bottom:2px}
+.ev .r{font-weight:620}.ev.warn .r{color:var(--bad)}
+.ev .a{color:var(--ink-3);font-variant-numeric:tabular-nums}
+.ev p{margin:0;color:var(--ink-2);word-break:break-word}
+pre.yaml{font-family:var(--mono);font-size:12px;line-height:1.65;background:var(--win);border:1px solid var(--line);border-radius:12px;padding:12px 14px;overflow:auto;margin:0}
+.yk{color:var(--c)}.ys{color:var(--ink-2)}
+
+/* ai */
+.ai{display:flex;flex-direction:column;min-height:0;flex:1}
+.aictx{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-3);flex:none;flex-wrap:wrap}
+.ctxchip{display:inline-flex;align-items:center;gap:7px;padding:4px 6px 4px 9px;border-radius:999px;background:var(--win);border:1px solid var(--line-2);color:var(--ink);font-family:var(--mono);font-size:12px;max-width:100%}
+.ctxchip .dot{width:7px;height:7px;border-radius:50%;background:var(--c)}
+.ctxchip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctxchip button{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3)}
+.ctxchip button:hover{background:var(--s2)}
+.aictx .new{margin-left:auto}
+.aimsgs{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:14px;min-height:0}
+.ahello{padding:16px;border-radius:16px;border:1px solid color-mix(in oklab,var(--c) 28%,var(--line));background:
+  radial-gradient(120% 140% at 0% 0%,color-mix(in oklab,var(--c) 16%,transparent),transparent 60%),
+  radial-gradient(120% 140% at 100% 100%,color-mix(in oklab,var(--c2) 16%,transparent),transparent 60%),var(--win)}
+.ahello h4{margin:0 0 4px;font-size:15px;font-weight:620}
+.ahello p{margin:0 0 12px;font-size:12.5px;color:var(--ink-2)}
+.ahello .qs{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.mu{align-self:flex-end;max-width:88%;padding:9px 13px;border-radius:14px 14px 4px 14px;background:var(--ink);color:var(--win);font-size:13.5px;white-space:pre-wrap;word-break:break-word}
+.ma{max-width:100%;font-size:13.5px;line-height:1.6;color:var(--ink)}
+.ma .steps{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.ma .step{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3)}
+.ma .step .i{width:12px;height:12px;color:var(--c)}
+.ma .think{display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:13px}
+.ma .think .i{color:var(--c)}
+.ma p{margin:0 0 8px}.ma p:last-child{margin-bottom:0}
+.ma ul,.ma ol{margin:0 0 8px;padding-left:20px}.ma li{margin:2px 0}
+.ma code{font-family:var(--mono);font-size:12px;padding:1px 5px;border-radius:5px;background:var(--s2);border:1px solid var(--line)}
+.ma pre{margin:0 0 8px;padding:10px 12px;border-radius:10px;background:var(--log-bg);color:var(--log-ink);overflow:auto}
+.ma pre code{background:none;border:0;padding:0;color:inherit}
+.ma .err{color:var(--bad);font-size:12.5px;margin-top:6px}
+.ma .cut{color:var(--ink-3);font-size:12px;margin-top:6px}
+.comp{border-top:1px solid var(--line);padding:12px 14px 14px;flex:none;display:flex;flex-direction:column;gap:8px}
+.cbox{display:flex;align-items:flex-end;gap:8px;padding:6px 6px 6px 12px;border:1px solid var(--line-2);border-radius:14px;background:var(--win)}
+.cbox:focus-within{border-color:var(--c);box-shadow:0 0 0 3px color-mix(in oklab,var(--c) 15%,transparent)}
+.cbox textarea{flex:1;border:0;outline:none;resize:none;background:none;font:inherit;font-size:14px;color:var(--ink);max-height:140px;min-height:24px;padding:6px 0;line-height:1.45}
+.send{width:36px;height:36px;border-radius:10px;background:var(--c);color:var(--c-ink);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.send[disabled]{opacity:.4;cursor:not-allowed}
+.send.stop{background:var(--ink);color:var(--win)}
+.fine{font-size:11.5px;color:var(--ink-3);display:flex;justify-content:space-between;gap:10px}
+
+/* logs */
+.logs{flex:1;display:flex;flex-direction:column;background:var(--log-bg);color:var(--log-ink);min-height:0}
+.content.logs-open .page{display:none}
+.lgh{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap}
+.lgh .back,.follow,.lgh .lai{display:flex;align-items:center;gap:7px;height:36px;padding:0 11px;border-radius:9px;border:1px solid rgba(255,255,255,.14);font-size:13px}
+.lgh .ttl{display:flex;flex-direction:column;min-width:0;flex:1}
+.lgh .ttl b{font-family:var(--mono);font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lgh .ttl span{font-size:12px;color:var(--log-dim)}
+.follow[aria-pressed="true"]{background:rgba(255,255,255,.1)}
+.follow .dot{width:8px;height:8px;border-radius:50%;background:var(--log-dim)}
+.follow[aria-pressed="true"] .dot{background:#4ADE80;box-shadow:0 0 0 3px rgba(74,222,128,.2)}
+.lgh kbd{background:transparent;color:var(--log-dim);border-color:rgba(255,255,255,.2)}
+.lgb{flex:1;overflow:auto;padding:8px 0 24px;min-height:0}
+.lg{display:grid;grid-template-columns:92px 44px 1fr;gap:12px;padding:1px 16px;font-family:var(--mono);font-size:12.5px;line-height:1.6}
+.lg:hover{background:rgba(255,255,255,.04)}
+.lg .meta{display:contents}
+.lg .t{color:var(--log-dim);font-variant-numeric:tabular-nums}
+.lg .l{font-weight:600;color:var(--log-dim)}
+.lg.info .l{color:#8DB4FF}.lg.warn .l{color:#FBBF24}.lg.error .l{color:#FB7185}.lg.error .m{color:#FFC2CD}
+.lg .m{white-space:pre-wrap;word-break:break-word}
+
+.bnav{display:none;justify-content:space-around;border-top:1px solid var(--line);background:var(--win);padding:2px 6px;flex:none}
+.bnav button{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:64px;height:54px;justify-content:center;font-size:11.5px;color:var(--ink-2);border-radius:10px}
+.bnav button .i{width:20px;height:20px}
+.bnav button[aria-pressed="true"]{color:var(--c)}
+.bnav .badge{position:relative;display:inline-flex}
+.bnav .badge[data-n]:after{content:attr(data-n);position:absolute;top:-6px;right:-10px;font-size:10px;font-weight:700;background:var(--bad);color:#fff;border-radius:999px;padding:1px 5px}
+
+/* overlays */
+.scrim{position:fixed;inset:0;background:rgba(10,12,16,.4);z-index:40;display:flex;justify-content:center;align-items:flex-start;padding:max(10vh,calc(env(safe-area-inset-top,0px) + 16px)) 16px 16px}
+.dialog{width:min(640px,100%);background:var(--win);border-radius:18px;box-shadow:0 28px 70px -18px rgba(0,0,0,.45);border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column;max-height:74vh}
+.pin{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);color:var(--ink-3)}
+.pin input{flex:1;border:0;outline:none;background:none;font:inherit;font-size:16px;color:var(--ink);min-width:0}
+.pres{overflow:auto;padding:6px}
+.pg{font-size:12px;color:var(--ink-3);padding:10px 10px 4px;font-weight:550}
+.pi{--cc:var(--c);display:flex;align-items:center;gap:11px;width:100%;padding:8px 10px;border-radius:10px;text-align:left;min-height:46px}
+.pi[aria-selected="true"]{background:var(--c-soft)}
+.pi .ic{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--s2);color:var(--ink-2);flex:none}
+.pi .ic.swi{background:linear-gradient(135deg,var(--cc),var(--cc2,var(--cc)))}
+.pi .pl{flex:1;min-width:0;display:flex;flex-direction:column}
+.pi .pt{font-weight:540;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pi .pt.mono{font-size:13px;font-weight:500}
+.pi .ps{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctag{font-size:11.5px;padding:3px 8px;border-radius:999px;border:1px solid color-mix(in oklab,var(--cc) 55%,var(--line));color:var(--ink);font-weight:560;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.ctag:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--cc)}
+.pfoot{display:flex;gap:16px;padding:9px 14px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3);flex-wrap:wrap}
+.pfoot span{display:inline-flex;gap:6px;align-items:center}
+.pnone{padding:28px 16px;text-align:center;color:var(--ink-3)}
+.modal{padding:22px}
+.modal h3{margin:0 0 6px;font-size:18px;letter-spacing:-.015em}
+.modal p{margin:0 0 14px;color:var(--ink-2)}
+.modal label{display:block;font-size:13px;color:var(--ink-2);margin-bottom:6px}
+.modal input{width:100%;height:44px;padding:0 12px;border-radius:10px;border:1px solid var(--line-2);background:var(--s2);font-family:var(--mono);font-size:15px;color:var(--ink);outline:none}
+.modal input:focus{border-color:var(--c)}
+.mact{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.hgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 28px;padding:4px 22px 22px;overflow:auto}
+.hgrid h4{grid-column:1/-1;margin:14px 0 4px;font-size:13px;color:var(--ink-3);font-weight:550}
+.hk{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.hk span:last-child{display:flex;gap:4px}
+#clm{justify-content:flex-start;align-items:flex-start;padding:calc(env(safe-area-inset-top,0px) + 118px) 16px 16px 28px;background:rgba(10,12,16,.18)}
+#clm .dialog{width:min(340px,100%);padding:8px}
+.clrow{--cc:var(--c);display:grid;grid-template-columns:38px 1fr auto;gap:0 11px;align-items:center;padding:9px 10px;border-radius:12px;text-align:left;width:100%;min-height:58px}
+.clrow:hover,.clrow[aria-current="true"]{background:var(--s2)}
+.clrow .sw{background:linear-gradient(135deg,var(--cc),var(--cc2))}
+.clrow .cn{font-weight:620;display:flex;align-items:center;gap:6px}.clrow .cm{font-size:12px;color:var(--ink-3);grid-column:2}
+.clrow .ch{grid-column:3;grid-row:1/span 2;display:flex;gap:6px;align-items:center}
+.clsec{border-top:1px solid var(--line);margin-top:6px;padding:12px 8px 6px;display:none;align-items:center;justify-content:space-between;gap:10px;font-size:13px;color:var(--ink-2)}
+#sheet{align-items:flex-end;padding:0}
+.sheetbody{width:100%;height:88vh;display:flex;flex-direction:column;background:var(--side);border-radius:22px 22px 0 0;overflow:hidden;padding-bottom:env(safe-area-inset-bottom,0px)}
+.grab{width:40px;height:5px;border-radius:3px;background:var(--line-2);margin:8px auto 2px;flex:none}
+#toasts{position:fixed;right:24px;bottom:calc(env(safe-area-inset-bottom,0px) + 28px);z-index:70;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
+.toast{display:flex;align-items:flex-start;gap:9px;max-width:380px;padding:11px 14px;border-radius:13px;background:var(--ink);color:var(--win);font-size:13px;box-shadow:0 14px 34px -12px rgba(0,0,0,.4);animation:tin .22s ease-out}
+.toast .i{margin-top:1px}.toast.ok .i{color:#4ADE80}.toast.bad .i{color:#FB7185}
+@keyframes tin{from{opacity:0;transform:translateY(6px)}}
+
+@media (max-width:1439px){.thead,.row-main{grid-template-columns:minmax(160px,1.2fr) 110px 112px minmax(0,2fr) 46px 14px}.c-rev{display:none}}
+@media (max-width:1180px){
+  .shell{grid-template-columns:minmax(0,1fr) 380px}
+  .side{display:none}
+  .top .switch{display:grid}
+  .chips{display:flex}
+  .clsec{display:flex}
+  #clm{padding-left:16px;padding-top:calc(env(safe-area-inset-top,0px) + 84px)}
+  .cards{grid-template-columns:1fr 1fr}.card.ai{grid-column:1/-1}
+  .thead,.row-main{grid-template-columns:minmax(150px,1.2fr) 112px minmax(0,1.6fr) 46px 14px}.c-kind{display:none}
+}
+@media (max-width:859px){
+  .frame{padding:0}
+  .win{border-radius:0;border:0}
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .detail{display:none}
+  .bnav{display:flex}
+  .top{height:58px;padding:0 10px;gap:8px}
+  .top .switch{flex:1;max-width:none}
+  .crumbs{display:none}
+  .search{width:40px;padding:0;justify-content:center}.search .t,.search kbd{display:none}
+  .aibtn{display:none}
+  .page{padding:12px 12px 20px;gap:12px}
+  .mcrumbs{display:flex!important}
+  .cards{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:10px;margin:0 -12px;padding:0 12px;scrollbar-width:none}
+  .cards::-webkit-scrollbar{display:none}
+  .card{flex:0 0 82%;scroll-snap-align:start}
+  .tools{flex-direction:column;align-items:stretch;gap:8px}
+  .filter{flex:none}
+  .tools .cnt{display:none}
+  .thead{display:none}
+  .table{border-radius:14px}
+  .row-main{grid-template-columns:18px minmax(0,1fr) 14px;gap:10px;padding:8px 6px 8px 10px;min-height:58px}
+  .row-main>.c-kind,.row-main>.c-msg,.row-main>.c-age,.row-main>.c-rev{display:none}
+  .row-main .c-st .lbl{display:none}
+  .row-main .c-st{order:-1}
+  .msg2{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2)}
+  .row.failed .msg2{color:var(--bad)}
+  .row-info{display:flex;align-items:center;justify-content:center;width:44px;flex:none;color:var(--ink-3);border-radius:10px}
+  .lg{grid-template-columns:1fr;gap:0;padding:4px 14px}.lg .meta{display:flex;gap:8px}
+  #toasts{left:12px;right:12px;align-items:stretch;bottom:calc(env(safe-area-inset-bottom,0px) + 70px)}
+  .toast{max-width:none}
+  #clm{align-items:flex-end;padding:0;background:rgba(10,12,16,.4)}
+  #clm .dialog{width:100%;border-radius:22px 22px 0 0;padding:8px 10px calc(20px + env(safe-area-inset-bottom,0px));max-height:86vh}
+  .scrim.top{padding-top:calc(env(safe-area-inset-top,0px) + 12px)}
+}
+.mcrumbs{display:none;align-items:center;gap:2px;font-size:13px;color:var(--ink-3);overflow-x:auto;white-space:nowrap;scrollbar-width:none;margin:-2px 0 -4px}
+.mcrumbs button{padding:4px 6px;border-radius:7px}.mcrumbs .cur{color:var(--ink);font-weight:600;padding:4px 6px}.mcrumbs .sep{width:12px;height:12px;opacity:.55}
+@media (prefers-reduced-motion:reduce){:root{transition:none}.spin{animation-duration:3s}}
+</style>
+</head>
+<body>
+<div class="frame"><div class="win">
+  <div class="ribbon"></div>
+  <div class="shell">
+    <aside class="side" aria-label="Navigation">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2"/></svg>eddy</div>
+      <button class="switch" id="switchSide" data-act="clmenu" aria-haspopup="dialog" aria-label="Switch cluster"></button>
+      <nav class="nav" id="nav"></nav>
+      <div class="side-foot" id="sidefoot"></div>
+    </aside>
+    <main class="content" id="content">
+      <header class="top">
+        <button class="switch" id="switchTop" data-act="clmenu" aria-haspopup="dialog" aria-label="Switch cluster"></button>
+        <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+        <button class="search" data-act="search" aria-label="Search"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.8"/><path d="M10.6 10.6l3.4 3.4"/></svg><span class="t">Search every cluster</span><kbd id="modk">⌘K</kbd></button>
+        <button class="aibtn" data-act="ai" id="aibtn"></button>
+      </header>
+      <section class="page" id="page">
+        <nav class="mcrumbs" id="mcrumbs" aria-label="Breadcrumb"></nav>
+        <div id="strip"></div>
+        <div class="cards" id="cards"></div>
+        <div class="tools">
+          <label class="filter"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2.5 4h11M4.5 8h7M6.5 12h3"/></svg><input id="filter" type="text" placeholder="Filter this list" autocomplete="off" spellcheck="false" aria-label="Filter this list"><kbd>/</kbd></label>
+          <div class="chips" id="chips" role="group" aria-label="Show"></div>
+          <span class="cnt" id="cnt"></span>
+        </div>
+        <div class="table">
+          <div class="thead" aria-hidden="true"><span>Name</span><span class="c-kind">Kind</span><span>Status</span><span>Message</span><span class="c-rev">Revision</span><span style="text-align:right">Age</span><span></span></div>
+          <ul class="rows" id="rows"></ul>
+        </div>
+      </section>
+      <section class="logs" id="logs" hidden aria-label="Logs"><div class="lgh" id="lgh"></div><div class="lgb" id="lgb"></div></section>
+      <nav class="bnav" id="bnav" aria-label="Quick actions"></nav>
+    </main>
+    <aside class="detail" id="detail" aria-label="Details"></aside>
+  </div>
+</div></div>
+
+<div class="scrim top" id="palette" hidden>
+  <div class="dialog" role="dialog" aria-label="Command palette">
+    <div class="pin"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.8"/><path d="M10.6 10.6l3.4 3.4"/></svg><input id="pq" type="text" autocomplete="off" spellcheck="false" placeholder="Search every cluster, or type : for commands" aria-label="Search"></div>
+    <div class="pres" id="pres" role="listbox"></div>
+    <div class="pfoot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>:</kbd> commands only</span><span><kbd>?</kbd> then enter to ask AI</span><span><kbd>esc</kbd> close</span></div>
+  </div>
+</div>
+<div class="scrim" id="clm" hidden><div class="dialog" role="dialog" aria-label="Clusters" id="clmbody"></div></div>
+<div class="scrim" id="confirm" hidden><div class="dialog modal" role="dialog" aria-label="Confirm" id="confirmbody"></div></div>
+<div class="scrim" id="help" hidden><div class="dialog" role="dialog" aria-label="Keyboard shortcuts" id="helpbody"></div></div>
+<div class="scrim" id="sheet" hidden><div class="sheetbody" role="dialog" aria-label="Details" id="sheetbody"></div></div>
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+/* ---------- helpers ---------- */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let seed=20260930;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+const ri=(a,b)=>a+Math.floor(rnd()*(b-a+1));
+const pick=a=>a[Math.floor(rnd()*a.length)];
+const sha=()=>Array.from({length:7},()=>'0123456789abcdef'[Math.floor(rnd()*16)]).join('');
+const sfx=n=>Array.from({length:n},()=>'bcdfghjklmnpqrstvwxz2456789'[Math.floor(rnd()*27)]).join('');
+const ageOf=()=>pick(['41m','3h','7h','19h','2d','4d','11d','23d']);
+const isNarrow=()=>matchMedia('(max-width: 859px)').matches;
+const isMac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
+const sv=(p,cls='i')=>`<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const I={
+  ready:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.9 8.2l2.1 2.1 4.2-4.5" fill="none" stroke="var(--win)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  failed:'<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" fill="none" stroke="var(--win)" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  progressing:'<svg class="i spin" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="2.2"/><path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
+  suspended:sv('<circle cx="8" cy="8" r="6.3"/><path d="M6.4 5.7v4.6M9.6 5.7v4.6"/>'),
+  chev:sv('<path d="M6 3.5L10.5 8 6 12.5"/>'),
+  sep:sv('<path d="M6 3.5L10.5 8 6 12.5"/>','i sep'),
+  updown:sv('<path d="M5 6l3-3 3 3M5 10l3 3 3-3"/>'),
+  lock:sv('<rect x="3.5" y="7" width="9" height="6.5" rx="1.6"/><path d="M5.5 7V5.3a2.5 2.5 0 0 1 5 0V7"/>'),
+  info:sv('<circle cx="8" cy="8" r="6.3"/><path d="M8 7.3v3.7M8 5v.1"/>'),
+  sync:sv('<path d="M13 8a5 5 0 0 1-8.6 3.5M3 8a5 5 0 0 1 8.6-3.5"/><path d="M11.8 1.8v2.9H9M4.2 14.2v-2.9H7"/>'),
+  pause:sv('<path d="M5.5 3.5v9M10.5 3.5v9"/>'),
+  play:'<svg class="i" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 3.2v9.6c0 .5.5.8.9.5l7-4.8c.4-.3.4-.8 0-1.1l-7-4.8C5.5 2.4 5 2.7 5 3.2z"/></svg>',
+  term:sv('<rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2"/><path d="M4.8 6.3l2 1.7-2 1.7M8.6 10h2.6"/>'),
+  open:sv('<path d="M3 8h9M8.5 4.5L12 8l-3.5 3.5"/>'),
+  back:sv('<path d="M13 8H4M7.5 4.5L4 8l3.5 3.5"/>'),
+  search:sv('<circle cx="7" cy="7" r="4.8"/><path d="M10.6 10.6l3.4 3.4"/>'),
+  alert:sv('<path d="M8 2.2l6.3 11H1.7z"/><path d="M8 6.5v3M8 11.5v.1"/>'),
+  cmd:sv('<path d="M3.5 5l3 3-3 3M8.5 11h4"/>'),
+  moon:sv('<path d="M13.3 9.6A5.6 5.6 0 0 1 6.4 2.7a5.6 5.6 0 1 0 6.9 6.9z"/>'),
+  user:sv('<circle cx="8" cy="5.6" r="2.8"/><path d="M2.8 14c.6-2.7 2.7-4.2 5.2-4.2s4.6 1.5 5.2 4.2"/>'),
+  trace:sv('<circle cx="4" cy="4" r="2"/><circle cx="12" cy="12" r="2"/><path d="M4 6v2.5a3 3 0 0 0 3 3h3"/>'),
+  keyboard:sv('<rect x="1.5" y="4" width="13" height="8" rx="1.8"/><path d="M4 7h.1M6.5 7h.1M9 7h.1M11.5 7h.1M5 9.5h6"/>'),
+  spark:sv('<path d="M8 1.8l1.4 3.6a2 2 0 0 0 1.2 1.2L14.2 8l-3.6 1.4a2 2 0 0 0-1.2 1.2L8 14.2l-1.4-3.6a2 2 0 0 0-1.2-1.2L1.8 8l3.6-1.4a2 2 0 0 0 1.2-1.2z"/>'),
+  x:sv('<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>'),
+  arrowUp:sv('<path d="M8 13V3.5M4 7.5l4-4 4 4"/>'),
+  stop:'<svg class="i" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>',
+  grid:sv('<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>'),
+  layers:sv('<path d="M8 2l6 3.3L8 8.6 2 5.3z"/><path d="M2 8.2l6 3.3 6-3.3M2 11l6 3.3 6-3.3"/>'),
+  helm:sv('<circle cx="8" cy="8" r="2.4"/><path d="M8 1.8v3.8M8 10.4v3.8M1.8 8h3.8M10.4 8h3.8M3.6 3.6l2.7 2.7M9.7 9.7l2.7 2.7M12.4 3.6L9.7 6.3M6.3 9.7l-2.7 2.7"/>'),
+  git:sv('<circle cx="4.5" cy="4" r="1.8"/><circle cx="4.5" cy="12" r="1.8"/><circle cx="11.5" cy="6" r="1.8"/><path d="M4.5 5.8v4.4M11.5 7.8c0 2.2-2.5 2.6-5.3 3.4"/>'),
+};
+
+/* ---------- mock fleet ---------- */
+const USER={email:'dana@acme.dev'};
+const CL=[
+  {id:'prod-eu',env:'Production',region:'eu-central-1',protected:true,branch:'main',key:'1',v:'pe'},
+  {id:'staging',env:'Staging',region:'eu-west-1',protected:false,branch:'main',key:'2',v:'st'},
+  {id:'dev',env:'Development',region:'kind, local',protected:false,branch:'dev',key:'3',v:'dv'},
+];
+const CLM=Object.fromEntries(CL.map(c=>[c.id,c]));
+const FLUX=new Set(['Kustomization','HelmRelease','GitRepository','HelmRepository','OCIRepository']);
+const SOURCES=['GitRepository','HelmRepository','OCIRepository'];
+const ABBR={Kustomization:'KS',HelmRelease:'HR',GitRepository:'GIT',HelmRepository:'HELM',OCIRepository:'OCI',Deployment:'DEP',StatefulSet:'STS',Pod:'POD',Service:'SVC',ClusterIssuer:'CI'};
+const KORDER=['Kustomization','HelmRelease','GitRepository','OCIRepository','HelmRepository','Deployment','StatefulSet','Service','ClusterIssuer','Pod'];
+const CONTAINER={nginx:'controller',certmgr:'cert-manager',podinfo:'podinfo',redis:'redis',checkout:'checkout'};
+const STL={ready:'Ready',failed:'Failed',progressing:'Progressing',suspended:'Suspended'};
+const N={},P={};
+const rootId=c=>`${c}/Cluster/_/flux`;
+function add(c,kind,ns,name,props={}){const id=`${c}/${kind}/${ns||'_'}/${name}`;N[id]={id,cluster:c,kind,ns,name,children:[],status:'ready',msg:'',age:ageOf(),...props};return id}
+function link(p,...ids){N[p].children.push(...ids);ids.forEach(i=>(P[i]||=[]).push(p))}
+function wl(c,kind,ns,name,n,app,image){
+  const hash=sfx(9),kids=[];
+  for(let i=0;i<n;i++){const pn=kind==='StatefulSet'?`${name}-${i}`:`${name}-${hash}-${sfx(5)}`;
+    kids.push(add(c,'Pod',ns,pn,{app,image,container:CONTAINER[app],node:`ip-10-0-${ri(10,200)}-${ri(2,250)}.internal`,restarts:rnd()<.15?1:0,msg:'Running',phase:'Running'}))}
+  const id=add(c,kind,ns,name,{replicas:n,readyN:n,app,image,msg:`${n}/${n} replicas ready`});link(id,...kids);return id}
+function build(cl){
+  const c=cl.id,prod=c==='prod-eu',stg=c==='staging',dev=c==='dev';
+  const R=add(c,'Cluster','','flux');
+  const rev=`${cl.branch}@sha1:${sha()}`;
+  const git=add(c,'GitRepository','flux-system','flux-system',{url:'ssh://git@github.com/acme/fleet-infra',branch:cl.branch,rev,interval:'1m',msg:`Stored artifact for revision '${rev}'`});
+  const rN=add(c,'HelmRepository','flux-system','ingress-nginx',{url:'https://kubernetes.github.io/ingress-nginx',interval:'1h',msg:'Stored artifact: revision sha256:'+sha()});
+  const rJ=add(c,'HelmRepository','flux-system','jetstack',{url:'https://charts.jetstack.io',interval:'1h',msg:'Stored artifact: revision sha256:'+sha()});
+  const rB=add(c,'HelmRepository','flux-system','bitnami',{url:'oci://registry-1.docker.io/bitnamicharts',oci:true,interval:'1h',msg:'Helm repository is Ready'});
+  const tag=stg?'6.7.2':'6.7.1';
+  const oP=add(c,'OCIRepository','flux-system','podinfo',{url:'oci://ghcr.io/stefanprodan/charts/podinfo',tag,interval:'10m',rev:`${tag}@sha256:${sha()}`,msg:`Stored artifact for digest '${tag}@sha256:${sha()}'`});
+  const rep=prod?3:stg?2:1;
+  const wI=wl(c,'Deployment','ingress-nginx','ingress-nginx-controller',rep,'nginx','registry.k8s.io/ingress-nginx/controller:v1.12.1');
+  const wC1=wl(c,'Deployment','cert-manager','cert-manager',1,'certmgr','quay.io/jetstack/cert-manager-controller:v1.17.2');
+  const wC2=wl(c,'Deployment','cert-manager','cert-manager-webhook',1,'certmgr','quay.io/jetstack/cert-manager-webhook:v1.17.2');
+  const wC3=wl(c,'Deployment','cert-manager','cert-manager-cainjector',1,'certmgr','quay.io/jetstack/cert-manager-cainjector:v1.17.2');
+  const wP=wl(c,'Deployment','apps','podinfo',rep,'podinfo','ghcr.io/stefanprodan/podinfo:6.7.1');
+  const wK=wl(c,'Deployment','apps','checkout',prod?3:1,'checkout','ghcr.io/acme/checkout:'+(prod?'2.14.0':stg?'2.15.0-rc.2':'sha-'+sha()));
+  const sK=add(c,'Service','apps','checkout',{msg:`ClusterIP 10.96.${ri(0,255)}.${ri(2,254)}, port 8080`});
+  const ci=add(c,'ClusterIssuer','','letsencrypt',{msg:'The ACME account was registered with the ACME server'});
+  const redis=dev?[]:[wl(c,'StatefulSet','apps','redis-master',1,'redis','registry-1.docker.io/bitnami/redis:7.4.2'),wl(c,'StatefulSet','apps','redis-replicas',prod?2:1,'redis','registry-1.docker.io/bitnami/redis:7.4.2')];
+  const hI=add(c,'HelmRelease','ingress-nginx','ingress-nginx',{chart:'ingress-nginx',version:'4.12.1',source:'HelmRepository/ingress-nginx',interval:'30m',msg:'Helm upgrade succeeded for release ingress-nginx/ingress-nginx.v7 with chart ingress-nginx@4.12.1'});link(hI,wI);
+  const hC=add(c,'HelmRelease','cert-manager','cert-manager',{chart:'cert-manager',version:'v1.17.2',source:'HelmRepository/jetstack',interval:'30m',msg:'Helm upgrade succeeded for release cert-manager/cert-manager.v4 with chart cert-manager@v1.17.2'});link(hC,wC1,wC2,wC3);
+  const hP=add(c,'HelmRelease','apps','podinfo',{chart:'podinfo',version:'6.7.1',source:'OCIRepository/podinfo',interval:'10m',msg:'Helm upgrade succeeded for release apps/podinfo.v12 with chart podinfo@6.7.1'});link(hP,wP);
+  const hR=add(c,'HelmRelease','apps','redis',{chart:'redis',version:dev?'21.9.x':'20.11.3',source:'HelmRepository/bitnami',interval:'1h',msg:'Helm install succeeded for release apps/redis.v1 with chart redis@20.11.3'});link(hR,...redis);
+  const kI=add(c,'Kustomization','flux-system','infra-controllers',{path:'./infrastructure/controllers',source:'GitRepository/flux-system',rev,interval:'1h',msg:`Applied revision: ${rev}`});link(kI,hI,hC);
+  const kC=add(c,'Kustomization','flux-system','infra-configs',{path:'./infrastructure/configs',source:'GitRepository/flux-system',rev,interval:'1h',dependsOn:'infra-controllers',msg:`Applied revision: ${rev}`});link(kC,ci);
+  const kA=add(c,'Kustomization','flux-system','apps',{path:`./apps/${c}`,source:'GitRepository/flux-system',rev,interval:'10m',dependsOn:'infra-configs',msg:`Applied revision: ${rev}`});link(kA,hP,hR,wK,sK);
+  const kF=add(c,'Kustomization','flux-system','flux-system',{path:`./clusters/${c}`,source:'GitRepository/flux-system',rev,interval:'10m',msg:`Applied revision: ${rev}`});link(kF,kI,kC,kA,git,rN,rJ,rB,oP);
+  N[R].children.push(kF,kI,kC,kA,hI,hC,hP,hR,git,oP,rN,rJ,rB);
+  if(prod){const d=N[wK];Object.assign(d,{status:'progressing',readyN:2,msg:'Rolling out: 2 of 3 updated replicas available',image:'ghcr.io/acme/checkout:2.14.1'});
+    Object.assign(N[d.children[2]],{status:'progressing',msg:'ContainerCreating',phase:'Pending',age:'41s',image:'ghcr.io/acme/checkout:2.14.1',creating:true});}
+  if(stg){Object.assign(N[hP],{status:'failed',version:'6.7.2',failReason:'UpgradeFailed',lastGood:'6.7.1',msg:'Helm upgrade failed for release apps/podinfo with chart podinfo@6.7.2: context deadline exceeded'});
+    const d=N[wP];Object.assign(d,{status:'progressing',readyN:1,msg:'1/2 replicas ready',image:'ghcr.io/stefanprodan/podinfo:6.7.2'});
+    Object.assign(N[d.children[1]],{status:'failed',msg:'ImagePullBackOff',phase:'Pending',image:'ghcr.io/stefanprodan/podinfo:6.7.2-debug',pullFail:true,age:'6m'});
+    Object.assign(N[kA],{status:'failed',failReason:'HealthCheckFailed',msg:"Health check failed after 5m0s: timeout waiting for: [HelmRelease/apps/podinfo status: 'Failed']"});}
+  if(dev){Object.assign(N[kA],{status:'suspended',msg:'Reconciliation is suspended'});
+    Object.assign(N[hR],{status:'failed',failReason:'ArtifactFailed',msg:"Chart pull error: no 'redis' chart with version matching '21.9.x' found in bitnami"});}
+}
+CL.forEach(build);
+
+/* ---------- derived ---------- */
+function okMsg(n){
+  if(n.kind==='Kustomization')return `Applied revision: ${n.rev}`;
+  if(n.kind==='HelmRelease')return `Helm upgrade succeeded for release ${n.ns}/${n.name} with chart ${n.chart}@${n.version}`;
+  if(SOURCES.includes(n.kind))return n.rev?`Stored artifact for revision '${n.rev}'`:'Helm repository is Ready';
+  if(n.kind==='Pod')return 'Running';
+  if(n.replicas)return `${n.replicas}/${n.replicas} replicas ready`;
+  return n.msg;
+}
+const ev=(type,reason,msg,age)=>({type,reason,msg,age});
+function events(n){
+  if(n.events)return n.events;const E=[],k=n.kind;
+  if(k==='Pod'){
+    if(n.pullFail)E.push(ev('Warning','BackOff',`Back-off pulling image "${n.image}"`,'38s'),ev('Warning','Failed',`Failed to pull image "${n.image}": manifest unknown`,'6m'),ev('Normal','Pulling',`Pulling image "${n.image}"`,'6m'));
+    else if(n.creating)E.push(ev('Normal','Pulling',`Pulling image "${n.image}"`,'39s'));
+    else E.push(ev('Normal','Started',`Started container ${n.container}`,n.age),ev('Normal','Pulled',`Container image "${n.image}" already present on machine`,n.age));
+    E.push(ev('Normal','Scheduled',`Successfully assigned ${n.ns}/${n.name} to ${n.node}`,n.age));
+  }else if(FLUX.has(k)){
+    if(n.status==='failed')E.push(ev('Warning',n.failReason||'ReconciliationFailed',n.msg,'1m'),ev('Warning',n.failReason||'ReconciliationFailed',n.msg,'11m'),ev('Normal','Progressing','Reconciliation started','16m'));
+    if(n.status==='suspended')E.push(ev('Normal','Suspended','Reconciliation suspended by alex@acme.dev','2d'));
+    if(n.lastGood)E.push(ev('Normal','UpgradeSucceeded',`Helm upgrade succeeded for release ${n.ns}/${n.name} with chart ${n.chart}@${n.lastGood}`,'3d'));
+    else E.push(ev('Normal',k==='Kustomization'?'ReconciliationSucceeded':k==='HelmRelease'?'UpgradeSucceeded':'NewArtifact',okMsg(n),n.status==='ready'?'4m':'3d'));
+  }else if(n.replicas){
+    if(n.status==='progressing')E.push(ev('Normal','ScalingReplicaSet',`Scaled up replica set ${n.name}-${sfx(9)} to ${n.replicas}`,'1m'));
+    E.push(ev('Normal','ScalingReplicaSet',`Scaled up replica set ${n.name}-${sfx(9)} to ${n.replicas}`,n.age));
+  }else E.push(ev('Normal','Applied',n.msg,n.age));
+  return n.events=E;
+}
+function cond(n){return n.status==='ready'?['True',n.kind==='HelmRelease'?'UpgradeSucceeded':'ReconciliationSucceeded']:n.status==='failed'?['False',n.failReason||'ReconciliationFailed']:n.status==='progressing'?['Unknown','Progressing']:['True','ReconciliationSucceeded']}
+function yaml(n){
+  const API={Kustomization:'kustomize.toolkit.fluxcd.io/v1',HelmRelease:'helm.toolkit.fluxcd.io/v2',GitRepository:'source.toolkit.fluxcd.io/v1',HelmRepository:'source.toolkit.fluxcd.io/v1',OCIRepository:'source.toolkit.fluxcd.io/v1',Deployment:'apps/v1',StatefulSet:'apps/v1',Pod:'v1',Service:'v1',ClusterIssuer:'cert-manager.io/v1'};
+  const L=[`apiVersion: ${API[n.kind]}`,`kind: ${n.kind}`,'metadata:',`  name: ${n.name}`];if(n.ns)L.push(`  namespace: ${n.ns}`);
+  const own=owner(n);if(own&&(!FLUX.has(n.kind)||n.kind==='HelmRelease')){const g=own.kind==='HelmRelease'?'helm.toolkit.fluxcd.io':'kustomize.toolkit.fluxcd.io';L.push('  labels:',`    ${g}/name: ${own.name}`,`    ${g}/namespace: ${own.ns}`)}
+  L.push('spec:');const k=n.kind;
+  if(k==='Kustomization'){L.push(`  interval: ${n.interval}`,`  path: ${n.path}`,'  prune: true','  sourceRef:','    kind: GitRepository','    name: flux-system');if(n.dependsOn)L.push('  dependsOn:',`  - name: ${n.dependsOn}`);L.push(`  suspend: ${n.status==='suspended'}`)}
+  else if(k==='HelmRelease'){const [sk,sn]=n.source.split('/');if(sk==='OCIRepository')L.push(`  interval: ${n.interval}`,'  chartRef:',`    kind: ${sk}`,`    name: ${sn}`,'    namespace: flux-system');else L.push(`  interval: ${n.interval}`,'  chart:','    spec:',`      chart: ${n.chart}`,`      version: "${n.version}"`,'      sourceRef:',`        kind: ${sk}`,`        name: ${sn}`,'        namespace: flux-system');L.push('  install:','    remediation:','      retries: 3','  upgrade:','    remediation:','      retries: 3',`  suspend: ${n.status==='suspended'}`)}
+  else if(k==='GitRepository')L.push(`  interval: ${n.interval}`,`  url: ${n.url}`,'  ref:',`    branch: ${n.branch}`,'  secretRef:','    name: flux-system');
+  else if(k==='HelmRepository'){L.push(`  interval: ${n.interval}`,`  url: ${n.url}`);if(n.oci)L.push('  type: oci')}
+  else if(k==='OCIRepository')L.push(`  interval: ${n.interval}`,`  url: ${n.url}`,'  ref:',`    tag: "${n.tag}"`);
+  else if(n.replicas)L.push(`  replicas: ${n.replicas}`,'  template:','    spec:','      containers:',`      - name: ${CONTAINER[n.app]}`,`        image: ${n.image}`);
+  else if(k==='Pod')L.push(`  nodeName: ${n.node}`,'  containers:',`  - name: ${n.container}`,`    image: ${n.image}`);
+  else if(k==='Service')L.push('  type: ClusterIP','  ports:','  - port: 8080','    targetPort: http');
+  else L.push('  acme:','    server: https://acme-v02.api.letsencrypt.org/directory');
+  L.push('status:');
+  if(FLUX.has(k)){const [s,r]=cond(n);L.push('  conditions:','  - type: Ready',`    status: "${s}"`,`    reason: ${r}`,`    message: "${n.msg.replace(/"/g,'\\"')}"`);if(n.rev)L.push(`  lastAppliedRevision: ${n.rev}`)}
+  else if(n.replicas)L.push(`  replicas: ${n.replicas}`,`  readyReplicas: ${n.readyN}`);
+  else if(k==='Pod'){L.push(`  phase: ${n.phase}`,'  containerStatuses:',`  - name: ${n.container}`,`    restartCount: ${n.restarts}`);if(n.pullFail)L.push('    state:','      waiting:','        reason: ImagePullBackOff');if(n.creating)L.push('    state:','      waiting:','        reason: ContainerCreating')}
+  else L.push('  conditions:','  - type: Ready','    status: "True"');
+  return L.join('\n');
+}
+function hl(src){return src.split('\n').map(l=>{const e=esc(l);const m=e.match(/^(\s*-?\s*)([A-Za-z][\w.\/-]*)(:)(.*)$/);return m?`${m[1]}<span class="yk">${m[2]}</span>${m[3]}<span class="ys">${m[4]}</span>`:e}).join('\n')}
+function owner(n){const seen=new Set();const q=[...(P[n.id]||[])];while(q.length){const id=q.shift();if(seen.has(id))continue;seen.add(id);const p=N[id];if(p.kind==='HelmRelease')return p;if(p.kind==='Kustomization')return p;q.push(...(P[id]||[]))}return null}
+function counts(c){const r={failed:0,progressing:0,suspended:0};for(const n of Object.values(N))if(n.cluster===c&&n.kind!=='Cluster'&&r[n.status]!==undefined)r[n.status]++;return r}
+function revOf(n){
+  if(n.kind==='HelmRelease')return `${n.chart}@${n.version}`;
+  if(n.rev&&n.rev.includes('@sha1:'))return n.rev.replace('@sha1:','@');
+  if(n.kind==='OCIRepository')return n.tag;
+  if(n.image)return n.image.split(':').pop();
+  return '';
+}
+const shortRev=r=>r?r.replace('@sha1:','@'):'';
+
+/* ---------- state ---------- */
+const S={cluster:'staging',role:'operator',per:{},palette:null,logs:null,sheet:false,clm:false,help:false,confirm:null,pane:'details'};
+const cs=()=>S.per[S.cluster]||(S.per[S.cluster]={path:[],sel:null,filter:'',kind:null,tab:'overview'});
+const curId=()=>{const s=cs();return s.path.length?s.path[s.path.length-1]:rootId(S.cluster)};
+const RANK={failed:0,progressing:1,suspended:2,ready:3};
+const KINDF={ks:['Kustomization'],hr:['HelmRelease'],src:SOURCES};
+function list(){
+  const s=cs(),id=curId();let a=N[id].children.map(x=>N[x]);
+  if(!s.path.length&&s.kind)a=s.kind==='failing'?a.filter(n=>n.status!=='ready'):a.filter(n=>KINDF[s.kind].includes(n.kind));
+  if(s.filter){const q=s.filter.toLowerCase();a=a.filter(n=>`${n.name} ${n.kind} ${n.ns} ${n.msg}`.toLowerCase().includes(q))}
+  return a.sort((x,y)=>RANK[x.status]-RANK[y.status]||KORDER.indexOf(x.kind)-KORDER.indexOf(y.kind)||x.name.localeCompare(y.name));
+}
+function selIdx(L){const s=cs();let i=L.findIndex(n=>n.id===s.sel);if(i<0){i=0;s.sel=L[0]?.id??null}return i}
+function selNode(){const L=list();return L.length?L[selIdx(L)]:null}
+function detailNode(){return selNode()||N[curId()]}
+
+/* ---------- rendering ---------- */
+const health=c=>{const k=counts(c);const b=[];if(k.failed)b.push(`<span class="hb failed" title="${k.failed} failing">${I.failed}${k.failed}</span>`);if(k.progressing)b.push(`<span class="hb progressing" title="${k.progressing} progressing">${I.progressing}${k.progressing}</span>`);if(k.suspended)b.push(`<span class="hb suspended" title="${k.suspended} suspended">${I.suspended}${k.suspended}</span>`);if(!b.length)b.push(`<span class="hb ready" title="All ready">${I.ready}</span>`);return b.join('')};
+function switchHTML(){const c=CLM[S.cluster];return `<span class="sw">${c.protected?'':esc(c.id[0].toUpperCase())}</span><span class="sn"><span>${esc(c.id)}</span>${c.protected?`<span class="lockb">${I.lock}Protected</span>`:''}</span><span class="se">${esc(c.env)}, ${esc(c.region)}</span><span class="sc">${I.updown}</span>`}
+const roleSeg=()=>['operator','viewer'].map(r=>`<button data-act="role" data-r="${r}" aria-pressed="${S.role===r}">${r==='operator'?'Operator':'Viewer'}</button>`).join('');
+function renderSide(){
+  $('#switchSide').innerHTML=switchHTML();$('#switchTop').innerHTML=switchHTML();
+  const s=cs(),all=N[rootId(S.cluster)].children.map(x=>N[x]),active=s.path.length?null:(s.kind||'all');
+  const cnt=k=>k==='all'?all.length:k==='failing'?all.filter(n=>n.status!=='ready').length:all.filter(n=>KINDF[k].includes(n.kind)).length;
+  const items=[['all','Flux objects',I.grid],['failing','Needs attention',I.alert],['ks','Kustomizations',I.layers],['hr','HelmReleases',I.helm],['src','Sources',I.git]];
+  $('#nav').innerHTML=`<h3>Browse</h3>`+items.map(([k,l,ic])=>{const n=cnt(k);return `<button data-act="nav" data-k="${k}" aria-current="${active===k}">${ic}${l}<span class="n${k==='failing'&&n?' bad':''}">${n}</span></button>`}).join('');
+  $('#chips').innerHTML=s.path.length?'':items.map(([k,l])=>{const n=cnt(k);return `<button class="chip" data-act="nav" data-k="${k}" aria-pressed="${active===k}">${l} <span class="n">${n}</span></button>`}).join('');
+  $('#sidefoot').innerHTML=`<div class="me"><span class="av">D</span><span class="mt"><b>${USER.email}</b><span>${S.role==='operator'?'Can sync and suspend':'Read-only access'}</span></span></div><div class="seg" role="group" aria-label="Role">${roleSeg()}</div><div style="display:flex;gap:4px"><button class="ib" data-act="theme" aria-label="Toggle theme" title="Toggle theme">${I.moon}</button><button class="ib" data-act="help" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">${I.keyboard}</button></div>`;
+  $('#modk').textContent=isMac?'⌘K':'Ctrl K';
+  $('#aibtn').innerHTML=`${I.spark}Ask AI <kbd>a</kbd>`;$('#aibtn').setAttribute('aria-pressed',S.pane==='ai');
+}
+function crumbsHTML(){
+  const s=cs();
+  if(!s.path.length){const lbl={all:'Flux objects',failing:'Needs attention',ks:'Kustomizations',hr:'HelmReleases',src:'Sources'}[s.kind||'all'];return `<span class="cur">${lbl}</span>`}
+  const cr=[`<button data-act="crumb" data-i="0">Flux objects</button>`];
+  s.path.forEach((id,i)=>{const n=N[id];cr.push(I.sep+(i===s.path.length-1?`<span class="cur mono">${esc(n.name)}</span>`:`<button class="mono" data-act="crumb" data-i="${i+1}">${esc(n.name)}</button>`))});
+  return cr.join('');
+}
+function renderHead(){
+  const s=cs(),cur=N[curId()],L=list();
+  $('#crumbs').innerHTML=crumbsHTML();$('#mcrumbs').innerHTML=crumbsHTML();
+  $('#strip').innerHTML=s.path.length?`<div class="cur-strip ${cur.status}"><span class="st st-${cur.status}">${I[cur.status]}</span><div><b>${cur.kind}${cur.ns?' in '+esc(cur.ns):''}</b> <span class="cm">${esc(cur.msg)}</span></div></div>`:'';
+  $('#cnt').textContent=s.filter?`${L.length} match${L.length===1?'':'es'}`:'';
+  const f=$('#filter');if(document.activeElement!==f)f.value=s.filter;
+  renderCards();
+}
+function renderCards(){
+  const s=cs(),el=$('#cards');
+  if(s.path.length||s.filter||(s.kind&&s.kind!=='all')){el.hidden=true;return}
+  el.hidden=false;const c=CLM[S.cluster];
+  const bad=Object.values(N).filter(n=>n.cluster===S.cluster&&n.kind!=='Cluster'&&n.kind!=='Pod'&&n.status!=='ready').sort((a,b)=>RANK[a.status]-RANK[b.status]);
+  const git=N[`${S.cluster}/GitRepository/flux-system/flux-system`];
+  const ks=Object.values(N).filter(n=>n.cluster===S.cluster&&n.kind==='Kustomization');
+  const qs=aiQuestions(null).slice(0,2);
+  el.innerHTML=`<div class="card"><h4>Needs attention<span class="big${bad.some(n=>n.status==='failed')?' bad':''}">${bad.length}</span></h4>
+    ${bad.length?bad.slice(0,3).map(n=>`<button class="citem" data-act="reveal" data-id="${n.id}"><span class="st st-${n.status}">${I[n.status]}</span><span class="nm">${esc(n.name)}</span><span class="ms">${esc(n.msg)}</span></button>`).join(''):`<div class="sub" style="margin:0">Everything on ${esc(c.id)} is ready.</div>`}
+    ${bad.length>3?`<div class="row-btns"><button class="btn sm" data-act="nav" data-k="failing">Show all ${bad.length}<kbd>g f</kbd></button></div>`:''}</div>
+  <div class="card"><h4>${I.git}Git source</h4><dl class="kv2"><dt>Repository</dt><dd>acme/fleet-infra</dd><dt>Revision</dt><dd>${esc(shortRev(git.rev))}</dd><dt>Fetched</dt><dd>${git.status==='progressing'?'now':'1m ago'}, every ${git.interval}</dd><dt>Applied by</dt><dd>${ks.length} Kustomizations</dd></dl>
+    <div class="row-btns"><button class="btn sm${S.role!=='operator'?' locked':''}" data-act="syncsrc" data-id="${git.id}">${I.sync}Sync source</button><button class="btn sm" data-act="reveal" data-id="${git.id}">Details</button></div></div>
+  <div class="card ai"><h4>${I.spark}Ask AI about ${esc(c.id)}</h4><p>Quick answers from what Eddy can see here: statuses, events, versions and logs.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${qs.map(q=>`<button class="qchip" data-act="ask" data-q="${esc(q)}" data-ctx="cluster">${I.spark}${esc(q)}</button>`).join('')}</div></div>`;
+}
+function rowHTML(n,sel){
+  const drill=n.children.length||n.kind==='Pod';
+  const sub=n.kind==='Pod'||n.replicas?n.ns:n.ns?n.ns:'cluster-scoped';
+  return `<li class="row ${n.status}${sel?' sel':''}"><button class="row-main" data-act="row" data-id="${n.id}" aria-current="${sel}">
+<span class="nmc"><span class="name">${esc(n.name)}</span><span class="ns">${esc(sub)}</span><span class="msg2">${n.status!=='ready'?esc(n.msg):esc(n.kind)}</span></span>
+<span class="kd c-kind">${n.kind}</span>
+<span class="stp ${n.status} c-st">${I[n.status]}<span class="lbl">${STL[n.status]}</span></span>
+<span class="msg c-msg">${esc(n.msg)}</span>
+<span class="rev c-rev">${esc(revOf(n))}</span>
+<span class="age c-age">${n.age}</span><span class="chev">${drill?I.chev:''}</span></button>
+<button class="row-info" data-act="info" data-id="${n.id}" aria-label="Details for ${esc(n.name)}">${I.info}</button></li>`;
+}
+function renderRows(){
+  const L=list(),s=cs(),el=$('#rows');
+  if(!L.length){el.innerHTML=`<li class="empty"><strong>${s.filter?`Nothing matches “${esc(s.filter)}”`:s.kind==='failing'?'Nothing needs attention':'No child resources'}</strong>${s.filter?'Press Esc to clear the filter.':s.kind==='failing'?`Everything on ${esc(S.cluster)} is ready.`:'Press h to go back up.'}</li>`;return}
+  const i=selIdx(L);el.innerHTML=L.map((n,j)=>rowHTML(n,j===i)).join('');
+  const se=el.querySelector('.row.sel');if(se)se.scrollIntoView({block:'nearest'});
+}
+function paneSeg(){return `<div class="seg" role="tablist"><button data-act="pane" data-p="details" aria-pressed="${S.pane==='details'}">Details</button><button data-act="pane" data-p="ai" aria-pressed="${S.pane==='ai'}">${I.spark}Ask AI<kbd>a</kbd></button></div>`}
+function detailHTML(n){
+  if(!n||n.kind==='Cluster'){const c=CLM[S.cluster],k=counts(S.cluster);return `<div class="dk">Cluster</div><div class="dname">${esc(c.id)}</div><dl class="kv" style="margin-top:14px"><dt>Environment</dt><dd>${c.env}</dd><dt>Region</dt><dd>${c.region}</dd><dt>Failing</dt><dd>${k.failed}</dd><dt>Progressing</dt><dd>${k.progressing}</dd><dt>Suspended</dt><dd>${k.suspended}</dd></dl>`}
+  const s=cs(),own=owner(n),flux=FLUX.has(n.kind),c=CLM[n.cluster],lock=S.role!=='operator';
+  const tab=s.tab,evs=events(n),acts=[];
+  if(flux){acts.push(`<button class="btn primary${lock?' locked':''}" data-act="reconcile" ${n.status==='suspended'||n._busy?'disabled':''} title="flux reconcile">${I.sync}Sync<kbd>r</kbd></button>`);
+    if(!SOURCES.includes(n.kind))acts.push(`<button class="btn${lock?' locked':''}" data-act="syncsrc" ${n.status==='suspended'||n._busy?'disabled':''} title="flux reconcile --with-source">With source<kbd>R</kbd></button>`);
+    acts.push(`<button class="btn${lock?' locked':''}" data-act="suspend">${n.status==='suspended'?I.play+'Resume':I.pause+'Suspend'}<kbd>s</kbd></button>`)}
+  if(n.kind==='Pod')acts.push(`<button class="btn primary" data-act="logs">${I.term}Logs<kbd>L</kbd></button>`);
+  else if(n.children.length&&n.id!==curId())acts.push(`<button class="btn" data-act="open">${I.open}Open<kbd>l</kbd></button>`);
+  if(own)acts.push(`<button class="btn" data-act="trace">${I.trace}Owner<kbd>t</kbd></button>`);
+  acts.push(`<button class="btn soft" data-act="pane" data-p="ai">${I.spark}Ask<kbd>a</kbd></button>`);
+  const kv=[];const add=(k,v,raw)=>kv.push(`<dt>${k}</dt><dd>${raw?v:esc(v)}</dd>`);
+  if(n.kind==='Kustomization'){add('Source',n.source);add('Path',n.path);add('Revision',n.rev);add('Interval',n.interval);if(n.dependsOn)add('Depends on',n.dependsOn);add('Managing',`${n.children.length} resources`)}
+  else if(n.kind==='HelmRelease'){add('Chart',`${n.chart}@${n.version}`);if(n.lastGood)add('Last good',`${n.chart}@${n.lastGood}`);add('Source',n.source);add('Interval',n.interval);add('Managing',`${n.children.length} workloads`)}
+  else if(n.kind==='GitRepository'){add('URL',n.url);add('Branch',n.branch);add('Revision',n.rev);add('Interval',n.interval)}
+  else if(n.kind==='HelmRepository'){add('URL',n.url);add('Type',n.oci?'OCI':'HTTPS');add('Interval',n.interval)}
+  else if(n.kind==='OCIRepository'){add('URL',n.url);add('Tag',n.tag);add('Revision',n.rev);add('Interval',n.interval)}
+  else if(n.replicas){add('Image',n.image);add('Replicas',`${n.readyN}/${n.replicas} ready`)}
+  else if(n.kind==='Pod'){add('Image',n.image);add('Container',n.container);add('Node',n.node);add('Phase',n.phase);add('Restarts',String(n.restarts))}
+  if(own)add('Managed by',`<button class="linkbtn" data-act="trace">${own.kind}/${esc(own.name)}</button>`,true);
+  add('Age',n.age);
+  const warn=evs.filter(e=>e.type==='Warning').length;
+  const body=tab==='events'?`<ul class="evs">${evs.map(e=>`<li class="ev${e.type==='Warning'?' warn':''}"><div class="eh"><span class="r">${esc(e.reason)}</span><span class="a">${esc(e.age)}</span></div><p>${esc(e.msg)}</p></li>`).join('')}</ul>`
+    :tab==='yaml'?`<pre class="yaml">${hl(yaml(n))}</pre>`:`<dl class="kv">${kv.join('')}</dl>`;
+  return `<div class="dk"><span class="kind">${ABBR[n.kind]}</span>${n.kind}${n.ns?' in '+esc(n.ns):''}</div>
+  <div class="dname">${esc(n.name)}</div>
+  <div class="dstatus ${n.status}"><span class="st st-${n.status}">${I[n.status]}</span><div><b>${STL[n.status]}</b>${esc(n.msg)}</div></div>
+  <div class="actions">${acts.join('')}</div>
+  ${flux?`<div class="note">${lock?I.user+'Viewer role: actions are read-only for you.':c.protected?I.lock+`${esc(c.id)} is protected. Suspending asks you to confirm.`:I.user+`Actions run as ${USER.email} through Kubernetes RBAC.`}</div>`:'<div style="height:10px"></div>'}
+  <div class="tabs" role="tablist"><button role="tab" data-act="tab" data-t="overview" aria-selected="${tab==='overview'}">Overview <kbd>o</kbd></button><button role="tab" data-act="tab" data-t="events" aria-selected="${tab==='events'}">Events${warn?` <span class="hb failed">${warn}</span>`:''} <kbd>e</kbd></button><button role="tab" data-act="tab" data-t="yaml" aria-selected="${tab==='yaml'}">YAML <kbd>y</kbd></button></div>
+  ${body}`;
+}
+function paneTarget(){return S.sheet?$('#sheetbody'):$('#detail')}
+function renderPane(){
+  const targets=[$('#detail')];if(S.sheet)targets.push($('#sheetbody'));
+  for(const t of targets){
+    const grab=t.id==='sheetbody'?'<div class="grab"></div>':'';
+    if(S.pane==='ai'){t.innerHTML=`${grab}<div class="dtop">${paneSeg()}</div>${aiHTML()}`;wireAI(t)}
+    else t.innerHTML=`${grab}<div class="dtop">${paneSeg()}</div><div class="dbody">${detailHTML(detailNode())}</div>`;
+  }
+}
+function renderBnav(){
+  const bad=counts(S.cluster).failed;
+  $('#bnav').innerHTML=`<button data-act="back">${I.back}Back</button><button data-act="nav" data-k="failing"><span class="badge" ${bad?`data-n="${bad}"`:''}>${I.alert}</span>Attention</button><button data-act="search">${I.search}Search</button><button data-act="ai" aria-pressed="${S.sheet&&S.pane==='ai'}">${I.spark}Ask AI</button>`;
+}
+function renderOverlays(){
+  $('#clm').hidden=!S.clm;
+  if(S.clm)$('#clmbody').innerHTML=CL.map(c=>`<button class="clrow${c.protected?' protected':''}" style="--cc:var(--${c.v});--cc2:var(--${c.v}2)" data-act="cluster" data-c="${c.id}" aria-current="${S.cluster===c.id}"><span class="sw">${c.protected?'':esc(c.id[0].toUpperCase())}</span><span class="cn">${esc(c.id)}${c.protected?`<span class="lockb" style="color:var(--cc);background:color-mix(in oklab,var(--cc) 12%,transparent)">${I.lock}Protected</span>`:''}</span><span class="ch">${health(c.id)}<kbd>${c.key}</kbd></span><span class="cm">${esc(c.env)}, ${esc(c.region)}</span></button>`).join('')+`<div class="clsec"><span>Your role</span><div class="seg">${roleSeg()}</div></div><div class="clsec"><span>Appearance</span><button class="btn sm" data-act="theme">${I.moon}Toggle theme</button></div>`;
+  $('#help').hidden=!S.help;$('#sheet').hidden=!S.sheet;
+}
+function render(){
+  const r=document.documentElement;r.dataset.cluster=S.cluster;r.dataset.protected=CLM[S.cluster].protected;
+  document.title=`${S.cluster}: Eddy`;
+  renderSide();renderHead();renderRows();renderPane();renderBnav();renderOverlays();
+  $('#content').classList.toggle('logs-open',!!S.logs);$('#logs').hidden=!S.logs;
+  if(S.palette)renderPalette();
+}
+
+/* ---------- navigation ---------- */
+function switchCluster(id){if(!CLM[id]||id===S.cluster){S.clm=false;render();return}closeLogs(true);S.cluster=id;S.clm=false;S.sheet=false;render()}
+function move(d){const L=list();if(!L.length)return;const i=Math.max(0,Math.min(L.length-1,selIdx(L)+d));cs().sel=L[i].id;renderRows();if(S.pane==='details')renderPane()}
+function drill(n=selNode()){
+  const s=cs();if(!n)return;
+  if(n.kind==='Pod'){openLogs(n);return}
+  if(!n.children.length){toast(`${n.name} has no child resources`);return}
+  s.path.push(n.id);s.sel=null;s.filter='';s.kind=null;$('#filter').value='';S.sheet=false;render();
+}
+function up(){
+  const s=cs();if(S.logs){closeLogs();return}
+  if(S.sheet){S.sheet=false;renderOverlays();return}
+  if(!s.path.length){if(s.filter||s.kind){s.filter='';s.kind=null;render()}return}
+  s.sel=s.path.pop();s.filter='';render();
+}
+function pathTo(target){
+  const r=rootId(N[target].cluster),prev={[r]:null},q=[r];
+  while(q.length){const id=q.shift();if(id===target)break;for(const k of N[id].children)if(!(k in prev)){prev[k]=id;q.push(k)}}
+  const chain=[];let x=prev[target];while(x&&x!==r){chain.unshift(x);x=prev[x]}return chain;
+}
+function reveal(id){const n=N[id];if(!n)return;if(n.cluster!==S.cluster)switchCluster(n.cluster);const s=cs();closeLogs(true);s.path=pathTo(id);s.sel=id;s.filter='';s.kind=null;if(isNarrow()){S.sheet=true;S.pane='details'}render()}
+function trace(n=detailNode()){const o=owner(n);if(!o){toast('This is a top-level Flux object');return}reveal(o.id);toast(`Jumped to ${o.kind}/${o.name}, which manages ${n.name}`)}
+function setKind(k){const s=cs();s.path=[];s.kind=k==='all'?null:k;s.sel=null;s.filter='';closeLogs(true);S.sheet=false;render()}
+
+/* ---------- actions ---------- */
+function can(verb){if(S.role!=='operator'){toast(`Viewers can't ${verb}. Switch to the operator role to try it.`,'bad');return false}return true}
+function descendants(n){const out=[],seen=new Set(),q=[...n.children];while(q.length){const id=q.shift();if(seen.has(id))continue;seen.add(id);out.push(N[id]);q.push(...N[id].children)}return out}
+function sourceOf(n){if(!n.source)return null;const [k,nm]=n.source.split('/');return N[`${n.cluster}/${k}/flux-system/${nm}`]||null}
+function reconcile(n=detailNode(),withSource=false){
+  if(!n||n.kind==='Cluster')return;
+  if(!FLUX.has(n.kind)){toast(`${n.kind}s aren't synced by Flux directly. Press t to jump to the Flux object that owns it.`);return}
+  if(n.status==='suspended'){toast(`${n.name} is suspended. Resume it first with s.`);return}
+  if(n._busy||!can('sync'))return;
+  const src=withSource?sourceOf(n):null;
+  const prev=n.status,pm=n.msg;n._busy=true;n.status='progressing';n.msg=src?`Waiting for ${src.kind}/${src.name} to fetch`:'Reconciliation in progress';
+  events(n).unshift(ev('Normal','ReconcileRequested',`Sync${src?' with source':''} requested by ${USER.email}`,'now'));
+  if(src&&!src._busy){src._busy=true;src._prev=src.status;src.status='progressing';src.msg='Fetching latest revision';setTimeout(()=>{src._busy=false;src.status='ready';src.msg=okMsg(src);events(src).unshift(ev('Normal','NewArtifact',src.msg,'now'));render()},700)}
+  render();
+  setTimeout(()=>{n._busy=false;
+    if(prev==='failed'){n.status='failed';n.msg=pm;events(n).unshift(ev('Warning',n.failReason||'ReconciliationFailed',pm,'now'));toast(`${n.name} is still failing: ${pm}`,'bad')}
+    else{n.status='ready';n.msg=okMsg(n);events(n).unshift(ev('Normal','ReconciliationSucceeded',n.msg,'now'));
+      let fixed=0;for(const d of descendants(n))if(d.status==='progressing'&&!d._busy){d.status='ready';fixed++;if(d.replicas){d.readyN=d.replicas;d.msg=okMsg(d)}else{d.msg='Running';d.phase='Running';d.creating=false;d.events=null}}
+      toast(`Synced ${n.name}${src?' with source':''}${fixed?`, ${fixed} rollout${fixed>1?'s':''} finished`:''}`,'ok')}
+    render()},src?1900:1400);
+}
+function suspend(n=detailNode()){
+  if(!n||!FLUX.has(n.kind)){toast('Only Flux objects can be suspended.');return}
+  if(!can(n.status==='suspended'?'resume':'suspend'))return;
+  if(CLM[n.cluster].protected&&n.status!=='suspended'){S.confirm=n;openConfirm();return}
+  doSuspend(n);
+}
+function doSuspend(n){
+  if(n.status==='suspended'){n.status=n._prev||'ready';n.msg=n._pm||okMsg(n);events(n).unshift(ev('Normal','Resumed',`Resumed by ${USER.email}`,'now'));toast(`Resumed ${n.name}`,'ok')}
+  else{n._prev=n.status;n._pm=n.msg;n.status='suspended';n.msg='Reconciliation is suspended';events(n).unshift(ev('Normal','Suspended',`Suspended by ${USER.email}`,'now'));toast(`Suspended ${n.name}`)}
+  render();
+}
+function openConfirm(){
+  const n=S.confirm,c=n.cluster;$('#confirm').hidden=false;
+  $('#confirmbody').innerHTML=`<h3>Suspend ${esc(n.name)} on ${esc(c)}?</h3><p>Flux stops applying changes from Git to this ${n.kind} until it's resumed. ${esc(c)} is a protected cluster.</p><label for="cin">Type <b class="mono">${esc(c)}</b> to confirm</label><input id="cin" autocomplete="off" spellcheck="false"><div class="mact"><button class="btn" data-act="cancel">Cancel</button><button class="btn danger" data-act="doconfirm" disabled>Suspend</button></div>`;
+  const inp=$('#cin');inp.addEventListener('input',()=>{$('[data-act="doconfirm"]').disabled=inp.value.trim()!==c});
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&inp.value.trim()===c){e.preventDefault();confirmOk()}});
+  setTimeout(()=>inp.focus(),20);
+}
+function confirmOk(){const n=S.confirm;closeConfirm();doSuspend(n)}
+function closeConfirm(){S.confirm=null;$('#confirm').hidden=true}
+function toggleRole(r){S.role=r||(S.role==='operator'?'viewer':'operator');toast(S.role==='operator'?'Operator role: sync and suspend are enabled':'Viewer role: everything is read-only');render()}
+function toggleTheme(){const r=document.documentElement,dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;r.dataset.theme=dark?'light':'dark'}
+function toast(msg,kind=''){const t=document.createElement('div');t.className='toast '+kind;t.innerHTML=(kind==='ok'?I.ready:kind==='bad'?I.failed:I.info)+`<span>${esc(msg)}</span>`;$('#toasts').appendChild(t);setTimeout(()=>t.remove(),3400)}
+
+/* ---------- logs ---------- */
+function fmtT(d){return d.toTimeString().slice(0,8)+'.'+String(d.getMilliseconds()).padStart(3,'0')}
+function genLine(n,t){
+  const a=n.app;let l='info',m='';
+  if(a==='nginx'){const code=pick([200,200,200,200,200,201,204,304,404,499,502]);l=code>=500?'error':code>=400?'warn':'info';m=`10.0.${ri(0,255)}.${ri(2,254)} "${pick(['GET','GET','GET','POST'])} ${pick(['/','/api/cart','/api/checkout','/healthz','/static/app.js','/api/products?page=2'])} HTTP/2.0" ${code} ${ri(120,48000)}B ${ri(1,240)}ms`}
+  else if(a==='podinfo'){if(rnd()<.08){l='warn';m='slow request path=/api/delay/2 duration=2.01s'}else m=pick(['request path=/healthz status=200 duration=0.4ms','request path=/readyz status=200 duration=0.3ms','request path=/api/info status=200 duration=1.2ms','request path=/metrics status=200 duration=3.8ms','cache hit key=info ttl=30s'])}
+  else if(a==='checkout'){const r=rnd();if(r<.06){l='error';m='payment provider error: upstream timeout after 3s, order=ord_'+sfx(6)+' retrying'}else if(r<.16){l='warn';m=`payment provider slow p95=${ri(700,1200)}ms`}else m=pick([`order placed id=ord_${sfx(6)} items=${ri(1,5)} total=€${ri(9,240)}.${ri(10,99)}`,`cart updated session=${sfx(8)} items=${ri(1,6)}`,`inventory reserved sku=SKU-${ri(1000,9999)} qty=${ri(1,3)}`,'health check ok redis=up db=up'])}
+  else if(a==='redis'){m=pick(['Background saving started by pid '+ri(100,900),'DB saved on disk','Background saving terminated with success','Synchronization with replica succeeded',ri(1,99)+' changes in 300 seconds. Saving...']);if(rnd()<.05){l='warn';m='Client id='+ri(100,999)+' closed for idle timeout'}}
+  else m=pick(['certificates-trigger: certificate does not need re-issuance','Syncing ClusterIssuer "letsencrypt"','acmechallenges: nothing to do','Updated cert-manager TLS certificate secret','Leader election renewed lease kube-system/cert-manager-controller']);
+  return {t,l,m};
+}
+function logLinesFor(n,count=60){
+  const now=Date.now();
+  if(n.pullFail)return [{t:new Date(now-360000),l:'warn',m:`Container "${n.container}" hasn't started, so there are no logs yet. Showing why:`},...events(n).slice().reverse().map((e,i)=>({t:new Date(now-300000+i*60000),l:e.type==='Warning'?'error':'info',m:`${e.reason}: ${e.msg}`}))];
+  if(n.status==='progressing'&&n.creating)return [{t:new Date(now-2000),l:'info',m:`Waiting for container "${n.container}" to start (ContainerCreating). Logs will appear once it runs.`}];
+  const out=[];for(let i=count;i>0;i--)out.push(genLine(n,new Date(now-i*1400-ri(0,900))));return out;
+}
+function lineHTML(x){return `<div class="lg ${x.l}"><span class="meta"><span class="t">${fmtT(x.t)}</span><span class="l">${x.l.toUpperCase()}</span></span><span class="m">${esc(x.m)}</span></div>`}
+function openLogs(n){
+  closeLogs(true);S.sheet=false;
+  const L={id:n.id,lines:logLinesFor(n),follow:true,timer:null};S.logs=L;
+  if(!n.pullFail&&!n.creating)L.timer=setInterval(()=>{const k=rnd()<.35?2:1;for(let j=0;j<k;j++)appendLog(genLine(n,new Date()))},850);
+  render();renderLogs();
+}
+function renderLogs(){
+  const L=S.logs;if(!L)return;const n=N[L.id];
+  $('#lgh').innerHTML=`<button class="back" data-act="closelogs">${I.back}Back <kbd>h</kbd></button><div class="ttl"><b>${esc(n.name)}</b><span>${esc(n.container)} in ${esc(n.ns)} on ${esc(n.cluster)}, ${L.timer?'streaming':'not running'}</span></div><button class="lai" data-act="ask" data-q="Summarize these logs. Any errors or warnings I should care about?">${I.spark}Explain logs</button><button class="follow" data-act="follow" aria-pressed="${L.follow}"><span class="dot"></span>Follow <kbd>f</kbd></button>`;
+  const b=$('#lgb');b.innerHTML=L.lines.map(lineHTML).join('');if(L.follow)b.scrollTop=b.scrollHeight;
+}
+function appendLog(x){const L=S.logs;if(!L)return;L.lines.push(x);const b=$('#lgb');if(L.lines.length>1500){L.lines.shift();b.firstElementChild?.remove()}b.insertAdjacentHTML('beforeend',lineHTML(x));if(L.follow)b.scrollTop=b.scrollHeight}
+function setFollow(v){const L=S.logs;if(!L)return;L.follow=v;const f=$('[data-act="follow"]');if(f)f.setAttribute('aria-pressed',v);if(v){const b=$('#lgb');b.scrollTop=b.scrollHeight}}
+function closeLogs(silent){if(!S.logs)return;clearInterval(S.logs.timer);const id=S.logs.id;S.logs=null;if(!silent){cs().sel=id;render()}}
+$('#lgb').addEventListener('scroll',e=>{const b=e.target,L=S.logs;if(!L)return;if(L.follow&&b.scrollHeight-b.scrollTop-b.clientHeight>24)setFollow(false)});
+
+/* ---------- Ask AI ---------- */
+const AI={sample:undefined,ctx:'auto',turns:[],msgs:[],busy:false,ctl:null,draft:''};
+const samplePromise=(window.claude&&typeof window.claude.use==='function')?window.claude.use('sample').then(s=>{AI.sample=s||null;if(S.pane==='ai')renderPane();return AI.sample}).catch(()=>{AI.sample=null;return null}):Promise.resolve(null).then(()=>{AI.sample=null;return null});
+function aiCtxNode(){if(AI.ctx==='cluster')return null;if(S.logs)return N[S.logs.id];const n=detailNode();return n&&n.kind!=='Cluster'?n:null}
+function aiQuestions(n){
+  if(!n){const bad=counts(S.cluster).failed;return bad?[`What's failing on ${S.cluster} and why?`,'Which chart versions are deployed here?','What changed in the last Git revision?']:[`Is anything unhealthy on ${S.cluster}?`,'Which chart versions are deployed here?','Summarize this cluster in 3 bullets']}
+  if(n.kind==='Pod')return ['Summarize the recent logs','Why is this pod not running?','Which image version is this?'].filter((q,i)=>i!==1||n.status!=='ready');
+  if(n.status==='failed')return [`Why is ${n.name} failing?`,'How do I fix it?','What was the last working version?'];
+  if(n.status==='suspended')return [`Why is ${n.name} suspended and who did it?`,'Is it safe to resume?'];
+  if(n.kind==='HelmRelease')return ['Which version is running?','What does this release manage?','When did it last upgrade?'];
+  if(n.kind==='Kustomization')return ['What does this Kustomization apply?','What does it depend on?','Which revision is applied?'];
+  return [`What is ${n.name}?`,'Is it healthy?'];
+}
+function summary(n){
+  const o=owner(n),s={id:n.id,kind:n.kind,name:n.name,namespace:n.ns||null,cluster:n.cluster,status:n.status,message:n.msg,age:n.age};
+  for(const k of ['path','source','rev','interval','dependsOn','chart','version','lastGood','url','branch','tag','image','replicas','readyN','node','restarts','phase','container'])if(n[k]!==undefined)s[k]=n[k];
+  if(o)s.managedBy=o.id;if(n.children.length)s.children=n.children.slice(0,25).map(id=>({id,status:N[id].status}));
+  return s;
+}
+function clusterHealth(c){const all=Object.values(N).filter(n=>n.cluster===c&&n.kind!=='Cluster');return {cluster:c,environment:CLM[c].env,protected:CLM[c].protected,counts:counts(c),notReady:all.filter(n=>n.status!=='ready').map(n=>({id:n.id,status:n.status,message:n.msg})),helmReleases:all.filter(n=>n.kind==='HelmRelease').map(n=>({id:n.id,chart:`${n.chart}@${n.version}`,status:n.status})),gitRevision:N[`${c}/GitRepository/flux-system/flux-system`].rev}}
+function aiStep(t){const m=AI.msgs[AI.msgs.length-1];if(m&&m.role==='assistant'){m.steps.push(t);renderAIMsgs()}}
+const nodeOrThrow=id=>{const n=N[id];if(!n)throw new Error(`No resource with id ${id}. Use search_resources to find ids.`);return n};
+const label=n=>`${n.kind}/${n.name}`;
+const aiTools=[
+  {name:'get_resource',description:'Get one resource by id ("cluster/Kind/namespace/name", "_" as namespace when cluster-scoped). Returns status, message, spec fields (chart, version, revision, image...), owner id and child ids.',inputSchema:{type:'object',properties:{id:{type:'string'}},required:['id']},execute:({id})=>{const n=nodeOrThrow(id);aiStep(`Read ${label(n)}`);return summary(n)}},
+  {name:'get_events',description:'Kubernetes events for a resource id, newest first.',inputSchema:{type:'object',properties:{id:{type:'string'}},required:['id']},execute:({id})=>{const n=nodeOrThrow(id);aiStep(`Checked events for ${label(n)}`);return events(n).slice(0,10)}},
+  {name:'get_yaml',description:'The YAML manifest (spec and status) of a resource id.',inputSchema:{type:'object',properties:{id:{type:'string'}},required:['id']},execute:({id})=>{const n=nodeOrThrow(id);aiStep(`Opened YAML of ${label(n)}`);return yaml(n)}},
+  {name:'get_logs',description:'Recent log lines of a Pod id.',inputSchema:{type:'object',properties:{id:{type:'string'},limit:{type:'integer'}},required:['id']},execute:({id,limit})=>{const n=nodeOrThrow(id);if(n.kind!=='Pod')throw new Error('Logs exist only for Pods. Use get_resource to find the pod ids under a workload.');aiStep(`Read logs of ${n.name}`);const src=S.logs&&S.logs.id===id?S.logs.lines:logLinesFor(n,40);return src.slice(-Math.min(limit||40,80)).map(x=>`${fmtT(x.t)} ${x.l.toUpperCase()} ${x.m}`).join('\n')}},
+  {name:'search_resources',description:'Find resources by name, kind or namespace text across all clusters. Optional status filter: ready, failed, progressing, suspended.',inputSchema:{type:'object',properties:{query:{type:'string'},status:{type:'string'}},required:['query']},execute:({query,status})=>{aiStep(`Searched for “${query}”`);const q=String(query||'').toLowerCase();return Object.values(N).filter(n=>n.kind!=='Cluster'&&`${n.name} ${n.kind} ${n.ns} ${n.cluster}`.toLowerCase().includes(q)&&(!status||n.status===status)).slice(0,20).map(n=>({id:n.id,status:n.status,message:n.msg}))}},
+  {name:'cluster_health',description:'Health summary of a cluster: counts, every resource that is not ready, HelmRelease chart versions and the applied Git revision. Clusters: prod-eu, staging, dev.',inputSchema:{type:'object',properties:{cluster:{type:'string'}},required:['cluster']},execute:({cluster})=>{if(!CLM[cluster])throw new Error('Unknown cluster. Use prod-eu, staging or dev.');aiStep(`Checked health of ${cluster}`);return clusterHealth(cluster)}},
+];
+function aiContext(){
+  const n=aiCtxNode(),c=CLM[S.cluster];
+  let t=`Cluster in view: ${c.id} (${c.env}, ${c.region}${c.protected?', protected production cluster':''}).\n`;
+  if(n){t+=`The user is looking at ${label(n)} (id ${n.id}).\nResource: ${JSON.stringify(summary(n))}\nLatest events: ${JSON.stringify(events(n).slice(0,5))}\n`;
+    if(n.kind==='Pod'&&S.logs&&S.logs.id===n.id)t+=`The user has its logs open; call get_logs to read them.\n`}
+  else t+=`No single resource is selected. Cluster summary: ${JSON.stringify(clusterHealth(c.id))}\n`;
+  return t;
+}
+const RULES=`You are the assistant inside Eddy, a web UI for FluxCD on Kubernetes. Answer the operator's question quickly and precisely.
+Rules:
+- Use only the data given here and what the tools return. If something isn't available, say so. Never invent versions, revisions or events.
+- Look things up with the tools when the given context isn't enough (owners, children, sources, logs, other clusters).
+- Lead with the direct answer in one sentence, then at most 4 short bullets of evidence or next steps. Stay under 130 words.
+- Name exact versions, revisions and resource names. Put names, versions and commands in \`backticks\`.
+- When a fix involves Flux, suggest the flux CLI command (for example \`flux reconcile helmrelease podinfo -n apps --with-source\`) or the Git change to make. In Eddy, r syncs, R syncs with source, s suspends or resumes.
+- Plain text with simple markdown only: bullets and backticks, no headings, no tables.`;
+async function ask(q){
+  q=String(q||'').trim();if(!q||AI.busy)return;
+  S.pane='ai';
+  const n=aiCtxNode(),key=n?n.id:`cluster:${S.cluster}`;
+  if(AI.key!==key){AI.key=key;AI.turns=[];AI.msgs=[]}
+  const content=(AI.turns.length?'':RULES+'\n\n')+aiContext()+'\nQuestion: '+q;
+  AI.turns.push({role:'user',content});AI.msgs.push({role:'user',text:q});
+  const m={role:'assistant',text:'',steps:[],err:'',cut:false};AI.msgs.push(m);
+  AI.busy=true;AI.draft='';renderPane();
+  const sample=AI.sample===undefined?await samplePromise:AI.sample;
+  if(!sample){m.err='Ask AI works when this page is opened in Claude. It isn’t available in this view.';AI.busy=false;AI.turns.pop();renderPane();return}
+  AI.ctl=new AbortController();
+  try{
+    const r=await sample(AI.turns,{modelTier:'quick',cache:false,signal:AI.ctl.signal,tools:aiTools,onText:({text})=>{m.text=text;renderAIMsgs()}});
+    m.text=r.text;m.cut=!!r.truncated;AI.turns.push({role:'assistant',content:r.text});
+  }catch(e){
+    m.text=e&&e.text?e.text:m.text;AI.turns.pop();
+    const code=e&&e.code;
+    m.err=code==='cancelled'?'Stopped.':code==='not_granted'?'AI access was declined for this page. Reload the page to be asked again.':code==='rate_limited'||code==='queue_overflow'?'Too many questions at once. Wait a moment, then ask again.':code==='session_expired'?'Your Claude session expired. Reload the page.':code==='sampling_disabled'||code==='capability_disabled'?'AI answers are turned off for your account or organization.':code==='prompt_too_large'?'That question pulled in too much data. Ask about a single resource.':`Couldn't get an answer (${code||'error'}). Try again.`;
+  }finally{AI.busy=false;AI.ctl=null;renderPane()}
+}
+function md(t){
+  const blocks=[];t=String(t).replace(/```[\w-]*\n?([\s\S]*?)(```|$)/g,(m,c)=>{blocks.push(c.replace(/\n$/,''));return `\u0000${blocks.length-1}\u0000`});
+  const inline=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  const out=[];let list=null;
+  for(const raw of t.split('\n')){const line=raw.trimEnd();
+    const b=line.match(/^\u0000(\d+)\u0000$/);if(b){if(list){out.push(`</${list}>`);list=null}out.push(`<pre><code>${esc(blocks[+b[1]])}</code></pre>`);continue}
+    const li=line.match(/^\s*(?:[-*•]|(\d+)[.)])\s+(.*)$/);
+    if(li){const t2=li[1]?'ol':'ul';if(list!==t2){if(list)out.push(`</${list}>`);out.push(`<${t2}>`);list=t2}out.push(`<li>${inline(li[2])}</li>`);continue}
+    if(list){out.push(`</${list}>`);list=null}
+    if(line.trim())out.push(`<p>${inline(line.replace(/^#+\s*/,''))}</p>`);
+  }
+  if(list)out.push(`</${list}>`);return out.join('');
+}
+function msgHTML(m){
+  if(m.role==='user')return `<div class="mu">${esc(m.text)}</div>`;
+  const steps=m.steps.length?`<div class="steps">${m.steps.map(s=>`<span class="step">${I.chev}${esc(s)}</span>`).join('')}</div>`:'';
+  const body=m.text?md(m.text):m.err?'':`<div class="think">${I.progressing}Thinking…</div>`;
+  return `<div class="ma">${steps}${body}${m.cut?'<div class="cut">Answer was cut short. Ask a narrower question.</div>':''}${m.err?`<div class="err">${esc(m.err)}</div>`:''}</div>`;
+}
+function aiHTML(){
+  const n=aiCtxNode(),key=n?n.id:`cluster:${S.cluster}`,msgs=AI.key===key?AI.msgs:[];
+  const ctx=n?`<span class="ctxchip"><span class="dot"></span><span>${ABBR[n.kind]} ${esc(n.name)}</span><button data-act="aictx" data-v="cluster" aria-label="Ask about the whole cluster instead">${I.x}</button></span>`:`<span class="ctxchip"><span class="dot"></span><span>all of ${esc(S.cluster)}</span>${AI.ctx==='cluster'?`<button data-act="aictx" data-v="auto" aria-label="Ask about the selection instead">${I.x}</button>`:''}</span>`;
+  const qs=aiQuestions(n);
+  const hello=msgs.length?'':`<div class="ahello"><h4>${n?`Ask about ${esc(n.name)}`:`Ask about ${esc(S.cluster)}`}</h4><p>Answers come from a quick model that reads the statuses, events, YAML and logs Eddy shows you.</p><div class="qs">${qs.map(q=>`<button class="qchip" data-act="ask" data-q="${esc(q)}">${I.spark}${esc(q)}</button>`).join('')}</div></div>`;
+  return `<div class="ai"><div class="aictx">About ${ctx}${msgs.length?`<button class="btn sm new" data-act="ainew">New chat</button>`:''}</div>
+  <div class="aimsgs" data-aimsgs>${hello}${msgs.map(msgHTML).join('')}</div>
+  <div class="comp"><div class="cbox"><textarea rows="1" data-aiinput placeholder="${n?`Ask about ${esc(n.name)}…`:`Ask about ${esc(S.cluster)}…`}" aria-label="Ask AI">${esc(AI.draft)}</textarea>${AI.busy?`<button class="send stop" data-act="aistop" aria-label="Stop">${I.stop}</button>`:`<button class="send" data-act="aisend" aria-label="Send" ${AI.draft.trim()?'':'disabled'}>${I.arrowUp}</button>`}</div>
+  <div class="fine"><span>Check answers before acting on ${esc(S.cluster)}.</span><span><kbd>↵</kbd> send · <kbd>esc</kbd> back</span></div></div></div>`;
+}
+function renderAIMsgs(){
+  for(const box of document.querySelectorAll('[data-aimsgs]')){const n=aiCtxNode(),key=n?n.id:`cluster:${S.cluster}`;if(AI.key!==key)continue;box.innerHTML=AI.msgs.map(msgHTML).join('');box.scrollTop=box.scrollHeight}
+}
+function wireAI(root){
+  const ta=root.querySelector('[data-aiinput]'),box=root.querySelector('[data-aimsgs]');if(box)box.scrollTop=box.scrollHeight;if(!ta)return;
+  const fit=()=>{ta.style.height='auto';ta.style.height=Math.min(140,ta.scrollHeight)+'px'};fit();
+  ta.addEventListener('input',()=>{AI.draft=ta.value;fit();const b=root.querySelector('[data-act="aisend"]');if(b)b.disabled=!ta.value.trim()});
+  ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();ask(ta.value)}else if(e.key==='Escape'){e.preventDefault();ta.blur();if(S.sheet){S.sheet=false;renderOverlays()}}});
+}
+function focusAI(){setTimeout(()=>{const t=(S.sheet?$('#sheetbody'):$('#detail')).querySelector('[data-aiinput]');if(t)t.focus()},30)}
+function openAI(q){S.pane='ai';if(isNarrow())S.sheet=true;render();if(q)ask(q);else focusAI()}
+
+/* ---------- palette ---------- */
+function score(q,t){if(!q)return 1;t=t.toLowerCase();let i=0,s=0,last=-2;for(const ch of q){if(ch===' ')continue;const j=t.indexOf(ch,i);if(j<0)return 0;s+=(j===last+1?3:1)+(j===0||/[\s\-\/_.]/.test(t[j-1])?2:0);last=j;i=j+1}return s-t.length*.01}
+function commands(){
+  const n=detailNode(),C=[];
+  CL.forEach(c=>C.push({sw:c,label:`Switch to ${c.id}`,sub:`${c.env}, ${c.region}`,kw:`ctx cluster switch ${c.id} ${c.env}`,keys:[c.key],run:()=>switchCluster(c.id)}));
+  if(n&&n.kind!=='Cluster')C.push({ic:I.spark,label:`Ask AI about ${n.name}`,kw:'ai ask explain why claude',keys:['a'],run:()=>openAI()});
+  if(n&&FLUX.has(n.kind)){C.push({ic:I.sync,label:`Sync ${n.name}`,sub:`${n.kind} on ${n.cluster}`,kw:'sync reconcile',keys:['r'],run:()=>reconcile(n)});
+    if(!SOURCES.includes(n.kind))C.push({ic:I.sync,label:`Sync ${n.name} with source`,sub:'Fetch the source first, then apply',kw:'sync reconcile with source',keys:['R'],run:()=>reconcile(n,true)});
+    C.push({ic:n.status==='suspended'?I.play:I.pause,label:`${n.status==='suspended'?'Resume':'Suspend'} ${n.name}`,sub:`${n.kind} on ${n.cluster}`,kw:'suspend resume pause',keys:['s'],run:()=>suspend(n)})}
+  if(n&&n.kind==='Pod')C.push({ic:I.term,label:`Show logs for ${n.name}`,kw:'logs tail',keys:['L'],run:()=>openLogs(n)});
+  if(n&&owner(n))C.push({ic:I.trace,label:`Jump to the owner of ${n.name}`,kw:'trace owner parent',keys:['t'],run:()=>trace(n)});
+  C.push({ic:I.alert,label:'Show what needs attention',kw:':failing failed errors attention',keys:['g','f'],run:()=>setKind('failing')});
+  C.push({ic:I.layers,label:'Show Kustomizations',kw:':ks kustomization',run:()=>setKind('ks')});
+  C.push({ic:I.helm,label:'Show HelmReleases',kw:':hr helmrelease helm',run:()=>setKind('hr')});
+  C.push({ic:I.git,label:'Show sources',kw:':src sources git oci repository',run:()=>setKind('src')});
+  C.push({ic:I.grid,label:'Show all Flux objects',kw:':all flux root home',run:()=>setKind('all')});
+  C.push({ic:I.user,label:S.role==='operator'?'Switch to viewer role':'Switch to operator role',sub:'Preview what each role can do',kw:'role rbac viewer operator permissions',run:()=>toggleRole()});
+  C.push({ic:I.moon,label:'Toggle light and dark theme',kw:'theme dark light appearance',run:toggleTheme});
+  C.push({ic:I.keyboard,label:'Keyboard shortcuts',kw:'help keys shortcuts',keys:['?'],run:()=>{S.help=true;renderOverlays()}});
+  return C;
+}
+function resItem(n){return {res:n,label:n.name,sub:`${n.kind}${n.ns?' in '+n.ns:''}${n.status!=='ready'?', '+n.msg:''}`,run:()=>reveal(n.id)}}
+function paletteItems(){
+  const raw=S.palette.q.trim(),low=raw.toLowerCase(),cmdOnly=/^[:>]/.test(low),q=low.replace(/^[:>]\s*/,'');
+  const groups=[],cmds=commands(),res=Object.values(N).filter(n=>n.kind!=='Cluster');
+  if(!low){
+    const bad=res.filter(n=>n.status==='failed'||(n.status==='progressing'&&FLUX.has(n.kind))||n.pullFail).sort((a,b)=>(a.cluster===S.cluster?0:1)-(b.cluster===S.cluster?0:1));
+    if(bad.length)groups.push(['Needs attention, every cluster',bad.slice(0,6).map(resItem)]);
+    groups.push(['Clusters',cmds.filter(c=>c.sw)]);groups.push(['Commands',cmds.filter(c=>!c.sw).slice(0,6)]);
+  }else{
+    const cz=cmds.map(c=>[score(q,`${c.label} ${c.kw}`),c]).filter(x=>x[0]>0).sort((a,b)=>b[0]-a[0]).map(x=>x[1]);
+    if(!cmdOnly){
+      if(raw.length>3)groups.push(['Ask AI',[{ic:I.spark,label:`Ask: ${raw}`,sub:'Quick answer about what you’re looking at',run:()=>openAI(raw)}]]);
+      const rs=res.map(n=>[score(q,`${n.name} ${n.kind} ${ABBR[n.kind]} ${n.ns} ${n.cluster}`)+(n.cluster===S.cluster?.5:0),n]).filter(x=>x[0]>0).sort((a,b)=>b[0]-a[0]).slice(0,30).map(x=>resItem(x[1]));
+      if(rs.length)groups.splice(0,0,['Resources',rs]);if(cz.length)groups.push(['Commands',cz.slice(0,6)]);
+    }else if(cz.length)groups.push(['Commands',cz]);
+  }
+  return groups;
+}
+function renderPalette(){
+  const P_=S.palette,groups=paletteItems();P_.flat=groups.flatMap(g=>g[1]);if(P_.i>=P_.flat.length)P_.i=Math.max(0,P_.flat.length-1);
+  let k=0;const html=groups.map(([t,items])=>`<div class="pg">${esc(t)}</div>`+items.map(it=>{const j=k++,n=it.res;
+    const ic=n?`<span class="ic st st-${n.status}">${I[n.status]}</span>`:it.sw?`<span class="ic swi" style="--cc:var(--${it.sw.v});--cc2:var(--${it.sw.v}2)"></span>`:`<span class="ic">${it.ic}</span>`;
+    const right=n?`<span class="ctag" style="--cc:var(--${CLM[n.cluster].v})">${esc(n.cluster)}</span>`:(it.keys||[]).map(x=>`<kbd>${x}</kbd>`).join('');
+    return `<button class="pi" role="option" data-pi="${j}" aria-selected="${j===P_.i}">${ic}<span class="pl"><span class="pt${n?' mono':''}">${n?`<span style="color:var(--ink-3);font-size:11px;margin-right:6px">${ABBR[n.kind]}</span>`:''}${esc(it.label)}</span>${it.sub?`<span class="ps">${esc(it.sub)}</span>`:''}</span>${right}</button>`}).join('')).join('');
+  $('#pres').innerHTML=html||`<div class="pnone">No resources or commands match “${esc(P_.q)}”.</div>`;
+  const se=$('#pres [aria-selected="true"]');if(se)se.scrollIntoView({block:'nearest'});
+}
+function openPalette(q=''){S.palette={q,i:0,flat:[]};$('#palette').hidden=false;const inp=$('#pq');inp.value=q;renderPalette();setTimeout(()=>{inp.focus();inp.setSelectionRange(q.length,q.length)},10)}
+function closePalette(){S.palette=null;$('#palette').hidden=true;$('#pq').blur()}
+function runPalette(i){const it=S.palette?.flat[i];if(!it)return;closePalette();it.run()}
+$('#pq').addEventListener('input',e=>{S.palette.q=e.target.value;S.palette.i=0;renderPalette()});
+$('#pres').addEventListener('click',e=>{const b=e.target.closest('[data-pi]');if(b)runPalette(+b.dataset.pi)});
+$('#pres').addEventListener('mousemove',e=>{const b=e.target.closest('[data-pi]');if(b&&+b.dataset.pi!==S.palette.i){S.palette.i=+b.dataset.pi;$('#pres').querySelectorAll('.pi').forEach(x=>x.setAttribute('aria-selected',x===b))}});
+
+/* ---------- help ---------- */
+function hk([l,ks]){return `<div class="hk"><span>${l}</span><span>${ks.map(k=>`<kbd>${k}</kbd>`).join('')}</span></div>`}
+$('#helpbody').innerHTML=`<div class="modal" style="padding-bottom:4px"><h3>Keyboard shortcuts</h3><p>Everything works without a mouse. Press <kbd>?</kbd> or <kbd>esc</kbd> to close.</p></div><div class="hgrid">
+<h4>Move around</h4>${[['Move down / up',['j','k']],['Open selected',['l']],['Go back up',['h']],['Top / bottom',['g g','G']],['Needs attention',['g f']],['Jump to owner',['t']]].map(hk).join('')}
+<h4>Find and ask</h4>${[['Search every cluster',[isMac?'⌘ K':'Ctrl K']],['Commands only',[':']],['Filter this list',['/']],['Ask AI about selection',['a']]].map(hk).join('')}
+<h4>Clusters</h4>${[['prod-eu / staging / dev',['1','2','3']],['Previous / next cluster',['[',']']]].map(hk).join('')}
+<h4>Act on selection</h4>${[['Sync',['r']],['Sync with source',['R']],['Suspend or resume',['s']],['Logs (pods)',['L']],['Overview / events / YAML',['o','e','y']]].map(hk).join('')}
+<h4>In logs</h4>${[['Toggle follow',['f']],['Scroll',['j','k']],['Back to list',['h']]].map(hk).join('')}</div>`;
+
+/* ---------- input ---------- */
+const filterEl=$('#filter');
+filterEl.addEventListener('input',()=>{cs().filter=filterEl.value;cs().sel=null;renderHead();renderRows();renderPane()});
+let gPending=0;
+document.addEventListener('keydown',e=>{
+  const k=e.key;
+  if((e.metaKey||e.ctrlKey)&&k.toLowerCase()==='k'){e.preventDefault();S.palette?closePalette():openPalette();return}
+  if(S.palette){const P_=S.palette;
+    if(k==='Escape'){e.preventDefault();closePalette()}
+    else if(k==='ArrowDown'||(e.ctrlKey&&(k==='n'||k==='j'))){e.preventDefault();P_.i=Math.min(P_.flat.length-1,P_.i+1);renderPalette()}
+    else if(k==='ArrowUp'||(e.ctrlKey&&(k==='p'||k==='k'))){e.preventDefault();P_.i=Math.max(0,P_.i-1);renderPalette()}
+    else if(k==='Enter'){e.preventDefault();runPalette(P_.i)}
+    return}
+  if(S.confirm){if(k==='Escape')closeConfirm();return}
+  if(S.help){if(k==='Escape'||k==='?'){S.help=false;renderOverlays()}return}
+  if(S.clm&&k==='Escape'){S.clm=false;renderOverlays();return}
+  const tgt=e.target;
+  if(tgt===filterEl){if(k==='Escape'){filterEl.value='';cs().filter='';filterEl.blur();render()}else if(k==='Enter'||k==='ArrowDown'){e.preventDefault();filterEl.blur()}return}
+  if(tgt.matches&&tgt.matches('input,textarea,select'))return;
+  if(S.sheet&&k==='Escape'){S.sheet=false;renderOverlays();return}
+  if(e.metaKey||e.ctrlKey||e.altKey)return;
+  const g=Date.now()-gPending<600;gPending=0;
+  if(k==='a'){e.preventDefault();openAI();return}
+  if(S.logs){const b=$('#lgb');
+    if(k==='f')setFollow(!S.logs.follow);
+    else if(k==='h'||k==='Escape'||k==='Backspace'||k==='ArrowLeft'){e.preventDefault();closeLogs()}
+    else if(k==='j'||k==='ArrowDown')b.scrollTop+=60;
+    else if(k==='k'||k==='ArrowUp'){b.scrollTop-=60;setFollow(false)}
+    else if(k==='G')setFollow(true);
+    else if(k==='g'){if(g){b.scrollTop=0;setFollow(false)}else gPending=Date.now()}
+    else if(k==='?'){S.help=true;renderOverlays()}
+    else if(CL.some(c=>c.key===k))switchCluster(CL.find(c=>c.key===k).id);
+    return}
+  const L=list();
+  switch(k){
+    case 'j':case 'ArrowDown':e.preventDefault();move(1);break;
+    case 'k':case 'ArrowUp':e.preventDefault();move(-1);break;
+    case 'l':case 'Enter':case 'ArrowRight':if(k==='Enter'&&tgt.closest&&tgt.closest('button')&&!tgt.classList.contains('row-main'))return;e.preventDefault();drill();break;
+    case 'h':case 'Backspace':case 'ArrowLeft':e.preventDefault();up();break;
+    case 'G':if(L.length){cs().sel=L[L.length-1].id;renderRows();renderPane()}break;
+    case 'g':if(g){if(L.length){cs().sel=L[0].id;renderRows();renderPane()}}else gPending=Date.now();break;
+    case 'f':if(g){const bad=L.find(n=>n.status!=='ready');if(bad){cs().sel=bad.id;renderRows();renderPane()}else setKind('failing')}break;
+    case '/':e.preventDefault();filterEl.focus();break;
+    case ':':e.preventDefault();openPalette(':');break;
+    case 'r':reconcile();break;
+    case 'R':reconcile(undefined,true);break;
+    case 's':suspend();break;
+    case 'L':{const n=selNode();if(n&&n.kind==='Pod')openLogs(n);else toast('Logs are available on pods. Open a workload to see its pods.');break}
+    case 't':trace();break;
+    case 'o':case 'e':case 'y':cs().tab={o:'overview',e:'events',y:'yaml'}[k];S.pane='details';renderPane();break;
+    case '?':S.help=true;renderOverlays();break;
+    case '[':case ']':{const i=CL.findIndex(c=>c.id===S.cluster);switchCluster(CL[(i+(k===']'?1:CL.length-1))%CL.length].id);break}
+    case 'Escape':{const s=cs();if(S.pane==='ai'){S.pane='details';renderPane();renderSide()}else if(s.filter||s.kind){s.filter='';s.kind=null;render()}break}
+    default:{const c=CL.find(c=>c.key===k);if(c)switchCluster(c.id)}
+  }
+});
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-act]');if(!t)return;
+  const a=t.dataset.act,id=t.dataset.id,s=cs();
+  switch(a){
+    case 'row':if(isNarrow()){s.sel=id;const n=N[id];if(n.kind==='Pod'||n.children.length)drill(n);else{S.sheet=true;S.pane='details';render()}}else if(s.sel===id)drill(N[id]);else{s.sel=id;renderRows();if(S.pane==='details')renderPane();else renderPane()}break;
+    case 'info':s.sel=id;S.sheet=true;S.pane='details';render();break;
+    case 'crumb':{const i=+t.dataset.i;s.sel=s.path[i]||null;s.path=s.path.slice(0,i);s.filter='';render();break}
+    case 'cluster':switchCluster(t.dataset.c);break;
+    case 'clmenu':S.clm=!S.clm;renderOverlays();break;
+    case 'search':openPalette();break;
+    case 'role':if(t.dataset.r!==S.role)toggleRole(t.dataset.r);break;
+    case 'nav':setKind(t.dataset.k);break;
+    case 'reveal':reveal(id);break;
+    case 'tab':s.tab=t.dataset.t;renderPane();break;
+    case 'pane':S.pane=t.dataset.p;renderPane();renderSide();if(S.pane==='ai')focusAI();break;
+    case 'ai':if(isNarrow()){if(S.sheet&&S.pane==='ai'){S.sheet=false;renderOverlays();renderBnav()}else openAI()}else{S.pane=S.pane==='ai'?'details':'ai';renderPane();renderSide();if(S.pane==='ai')focusAI()}break;
+    case 'ask':if(t.dataset.ctx==='cluster')AI.ctx='cluster';if(isNarrow())S.sheet=true;S.pane='ai';render();ask(t.dataset.q);break;
+    case 'aictx':AI.ctx=t.dataset.v;renderPane();break;
+    case 'ainew':AI.msgs=[];AI.turns=[];AI.key=null;renderPane();focusAI();break;
+    case 'aisend':{const ta=t.closest('.comp').querySelector('[data-aiinput]');ask(ta.value);break}
+    case 'aistop':AI.ctl?.abort();break;
+    case 'reconcile':reconcile();break;
+    case 'syncsrc':reconcile(id?N[id]:undefined,!id);break;
+    case 'suspend':suspend();break;
+    case 'open':drill();break;
+    case 'logs':{const n=detailNode();if(n.kind==='Pod')openLogs(n);break}
+    case 'trace':trace();break;
+    case 'back':up();break;
+    case 'help':S.help=true;renderOverlays();break;
+    case 'closelogs':closeLogs();break;
+    case 'follow':setFollow(!S.logs.follow);break;
+    case 'theme':toggleTheme();break;
+    case 'cancel':closeConfirm();break;
+    case 'doconfirm':confirmOk();break;
+  }
+});
+document.addEventListener('dblclick',e=>{const t=e.target.closest('[data-act="row"]');if(t&&!isNarrow())drill(N[t.dataset.id])});
+['palette','clm','confirm','help','sheet'].forEach(x=>$('#'+x).addEventListener('click',e=>{if(e.target.id!==x)return;if(x==='palette')closePalette();else if(x==='confirm')closeConfirm();else{S[x]=false;renderOverlays();renderBnav()}}));
+matchMedia('(max-width: 859px)').addEventListener('change',()=>{S.sheet=false;render()});
+render();
+</script>
+</body>
+</html>
