@@ -53,7 +53,7 @@ type ListResourcesIn struct {
 	Cluster   string `json:"cluster,omitempty" jsonschema:"Cluster name. Leave empty to list every connected cluster in one call."`
 	Kind      string `json:"kind,omitempty" jsonschema:"Kind filter, for example Kustomization, HelmRelease, GitRepository or Deployment."`
 	Namespace string `json:"namespace,omitempty" jsonschema:"Namespace filter."`
-	Status    string `json:"status,omitempty" jsonschema:"Status filter: ready, failed, reconciling, suspended or unknown."`
+	Status    string `json:"status,omitempty" jsonschema:"Status filter: ready, failed, reconciling, suspended, unknown or completed (a finished Job or Succeeded Pod)."`
 	Query     string `json:"query,omitempty" jsonschema:"Case-insensitive substring over kind, namespace, name and message."`
 	Limit     int    `json:"limit,omitempty" jsonschema:"Maximum items per page, 1 to 200 (default 100)."`
 	Cursor    string `json:"cursor,omitempty" jsonschema:"Opaque cursor from a previous call's next field."`
@@ -424,7 +424,7 @@ func item(cluster string, r model.Resource) ResourceItem {
 
 func parseStatus(s string) (model.Status, error) {
 	switch st := model.Status(s); st {
-	case "", model.StatusReady, model.StatusFailed, model.StatusReconciling, model.StatusSuspended, model.StatusUnknown:
+	case "", model.StatusReady, model.StatusFailed, model.StatusReconciling, model.StatusSuspended, model.StatusUnknown, model.StatusCompleted:
 		return st, nil
 	}
 	return "", badArgs("status must be one of ready, failed, reconciling, suspended, unknown")

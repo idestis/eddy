@@ -102,6 +102,16 @@ spec:
               value: {{ max 1 (div (int .Values.limits.logStreams) $n) | quote }}
             - name: EDDY_MAX_SAR_CONCURRENT
               value: {{ max 1 (div (int .Values.limits.sarConcurrency) $n) | quote }}
+            - name: EDDY_MAX_LOG_PODS
+              value: {{ .Values.workloadLogs.maxPods | int | quote }}
+            - name: EDDY_LOG_LINE_RATE
+              value: {{ .Values.workloadLogs.lineRate | int | quote }}
+            - name: EDDY_JOB_HISTORY
+              value: {{ .Values.jobs.history | int | quote }}
+            - name: EDDY_JOB_FAILED_MAX_AGE
+              value: {{ .Values.jobs.failedMaxAge | quote }}
+            - name: EDDY_JOB_BUILDUP_THRESHOLD
+              value: {{ .Values.jobs.buildupThreshold | int | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

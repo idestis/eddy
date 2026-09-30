@@ -28,11 +28,19 @@ import (
 // RequestedAtAnnotation asks a Flux controller to reconcile now.
 const RequestedAtAnnotation = "reconcile.fluxcd.io/requestedAt"
 
+// JobSource lists the Jobs the cache's Job policy hides.
+type JobSource interface {
+	HiddenJobs(namespaces []string, offset, limit, budget int) protocol.HiddenJobsResult
+}
+
+var _ JobSource = (*Cache)(nil)
+
 // Request limits.
 const (
-	maxEvents       = 100
-	maxEventMessage = 1024
-	maxAccessChecks = 100
+	maxHiddenJobNamespaces = 1000
+	maxEvents              = 100
+	maxEventMessage        = 1024
+	maxAccessChecks        = 100
 	// yamlBudget leaves room for the frame envelope around a YAML result.
 	yamlBudget = protocol.MaxFrameBytes - 4096
 )
@@ -61,6 +69,18 @@ type Handler struct {
 	review accessReviewer
 	// readOnly, when set, refuses every write op with a 403 carrying it.
 	readOnly string
+
+	// Pods resolves workloads to their pods for workload logs (the cache).
+	// MaxLogPods caps the pods of one workload log stream and LogLineRate
+	// its lines per second (defaults 20 and 2000).
+	Pods PodSource
+	// Jobs serves OpHiddenJobs from the cache (nil answers 503).
+	Jobs        JobSource
+	MaxLogPods  int
+	LogLineRate int
+	// openLogs opens one container log stream; nil uses the impersonated
+	// clientset. Tests replace it.
+	openLogs logOpener
 
 	// MaxSAR caps SubjectAccessReviews in flight across all requests
 	// (default 8).
@@ -129,6 +149,19 @@ func (h *Handler) dispatch(ctx context.Context, req protocol.Request, stream fun
 		}
 		return h.access(ctx, req.Identity, args)
 	}
+	if req.Op == protocol.OpHiddenJobs {
+		var args protocol.HiddenJobsArgs
+		if err := decodeArgs(req.Args, &args); err != nil {
+			return nil, err
+		}
+		if h.Jobs == nil {
+			return nil, &protocol.Error{Code: 503, Message: "agent: hidden jobs are not available"}
+		}
+		if len(args.Namespaces) > maxHiddenJobNamespaces {
+			return nil, badRequest("at most %d namespaces per request", maxHiddenJobNamespaces)
+		}
+		return h.Jobs.HiddenJobs(args.Namespaces, args.Offset, args.Limit, yamlBudget), nil
+	}
 	k, gvr, err := h.resolve(req.Target)
 	if err != nil {
 		return nil, err
@@ -163,10 +196,13 @@ func (h *Handler) dispatch(ctx context.Context, req protocol.Request, stream fun
 		if err := decodeArgs(req.Args, &args); err != nil {
 			return nil, err
 		}
-		if k.Kind != flux.KindPod {
-			return nil, badRequest("logs are only available for Pods")
+		switch {
+		case k.Kind == flux.KindPod:
+			return nil, streamLogs(ctx, cl.Kube, t, args, stream)
+		case isWorkloadKind(k.Kind):
+			return nil, h.workloadLogs(ctx, cl, gvr, t, args, stream)
 		}
-		return nil, streamLogs(ctx, cl.Kube, t, args, stream)
+		return nil, badRequest("logs are only available for Pods and workloads (Deployment, StatefulSet, DaemonSet, ReplicaSet, Job)")
 	}
 	return nil, badRequest("unknown op %q", req.Op)
 }

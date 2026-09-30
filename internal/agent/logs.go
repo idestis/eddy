@@ -39,6 +39,10 @@ func streamLogs(ctx context.Context, kube kubernetes.Interface, t model.Ref, arg
 		tail = maxTailLines
 	}
 	opts := &corev1.PodLogOptions{Container: args.Container, Follow: args.Follow, TailLines: &tail}
+	if args.SinceSeconds > 0 {
+		since := args.SinceSeconds
+		opts.SinceSeconds = &since
+	}
 	rc, err := kube.CoreV1().Pods(t.Namespace).GetLogs(t.Name, opts).Stream(ctx)
 	if err != nil {
 		return fmt.Errorf("agent: logs of %s: %w", t.ID(), err)

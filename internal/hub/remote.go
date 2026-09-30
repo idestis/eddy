@@ -105,6 +105,7 @@ func (r *remoteSession) handle(f protocol.Frame) error {
 			return fmt.Errorf("decode relayed snapshot: %w", err)
 		}
 		r.replace(snap.Resources)
+		r.replaceFindings(snap.Findings)
 		r.agents.emit(r, event{kind: evResync, cluster: r.cluster})
 		r.agents.emit(r, event{kind: evClusters})
 	case protocol.TypeDelta:
@@ -113,6 +114,9 @@ func (r *remoteSession) handle(f protocol.Frame) error {
 			return fmt.Errorf("decode relayed delta: %w", err)
 		}
 		ups, dels, parents := r.apply(d)
+		if r.setFindings(d.Findings) && len(ups) == 0 && len(dels) == 0 {
+			r.agents.emit(r, event{kind: evClusters})
+		}
 		if len(ups) == 0 && len(dels) == 0 {
 			return nil
 		}

@@ -340,12 +340,19 @@ func sanitizeInventoryRow(r model.Resource) (model.Resource, bool) {
 
 func (s *agentSession) applySnapshot(snap protocol.Snapshot) {
 	s.replace(snap.Resources)
+	s.replaceFindings(snap.Findings)
 	s.emit(s, event{kind: evResync, cluster: s.cluster})
 	s.emit(s, event{kind: evClusters})
 }
 
 func (s *agentSession) applyDelta(d protocol.Delta) {
 	upserts, deletes, parents := s.apply(d)
+	if s.setFindings(d.Findings) {
+		s.emit(s, event{kind: evFindings, cluster: s.cluster, findings: s.findingList()})
+		if len(upserts) == 0 && len(deletes) == 0 {
+			s.emit(s, event{kind: evClusters})
+		}
+	}
 	if len(upserts) == 0 && len(deletes) == 0 {
 		return
 	}

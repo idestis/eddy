@@ -11,13 +11,16 @@ import (
 )
 
 type features struct {
-	AI             bool   `json:"ai"`
-	AIProvider     string `json:"aiProvider,omitempty"`
-	MCP            bool   `json:"mcp"`
-	MCPWrites      bool   `json:"mcpWrites"`
-	Logs           bool   `json:"logs"`
-	EphemeralStore bool   `json:"ephemeralStore"`
-	DevMode        bool   `json:"devMode"`
+	AI         bool   `json:"ai"`
+	AIProvider string `json:"aiProvider,omitempty"`
+	MCP        bool   `json:"mcp"`
+	MCPWrites  bool   `json:"mcpWrites"`
+	Logs       bool   `json:"logs"`
+	// WorkloadLogs: GET …/workloads/{kind}/{ns}/{name}/logs exists (the
+	// cluster's agent must be new enough; an older one answers 400).
+	WorkloadLogs   bool `json:"workloadLogs"`
+	EphemeralStore bool `json:"ephemeralStore"`
+	DevMode        bool `json:"devMode"`
 	// Onboarding: clusters can be added from the UI (ADR-0005). Whether
 	// this user may is GET /api/v1/clusters/permissions.
 	Onboarding bool `json:"onboarding"`
@@ -38,6 +41,7 @@ func (a *api) features() features {
 	f := features{
 		MCP:            a.cfg.MCP.Enabled && fl.MCPEnabled,
 		Logs:           true,
+		WorkloadLogs:   true,
 		EphemeralStore: a.ephemeral,
 		DevMode:        a.auth.DevMode(),
 		Onboarding:     a.onboard.enabled(),
@@ -71,7 +75,7 @@ func (a *api) handleClusters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-var validStatuses = []model.Status{model.StatusReady, model.StatusFailed, model.StatusReconciling, model.StatusSuspended, model.StatusUnknown}
+var validStatuses = model.Statuses
 
 func (a *api) handleResources(w http.ResponseWriter, r *http.Request) {
 	p, _ := identity.From(r.Context())
@@ -91,6 +95,14 @@ func (a *api) handleResources(w http.ResponseWriter, r *http.Request) {
 	fl.Query = q.Get("q")
 	if len(fl.Query) > 256 {
 		a.fail(w, r, badRequest("q is too long"))
+		return
+	}
+	if offset, limit, ok, err := hiddenJobsQuery(r, fl.Kinds); err != nil || ok {
+		if err != nil {
+			a.fail(w, r, err)
+			return
+		}
+		a.handleResourcesWithHidden(w, r, p, r.PathValue("cluster"), fl, offset, limit)
 		return
 	}
 	items, rv, err := a.fleet.list(r.Context(), p, r.PathValue("cluster"), fl)

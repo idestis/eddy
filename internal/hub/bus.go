@@ -17,6 +17,7 @@ const (
 	evClusters                    // connection state or counts may have changed
 	evThread                      // a thread changed
 	evConnection                  // a cluster's onboarding state changed (ADR-0005)
+	evFindings                    // a cluster's findings changed (relayed to peers; SSE clients get them via clusters)
 )
 
 // event is published unfiltered; each subscriber filters it for its own
@@ -29,6 +30,8 @@ type event struct {
 	// parents maps deleted inventory-only row ids to their owners.
 	parents map[string]model.Ref
 	thread  store.Thread
+	// findings is the new finding set of an evFindings event.
+	findings []model.Finding
 }
 
 // subBuffer is the per-subscriber queue. A subscriber that falls this far

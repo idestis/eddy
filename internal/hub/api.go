@@ -61,6 +61,8 @@ func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
 	m.HandleFunc("GET /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}/events", a.handleEvents)
 	m.HandleFunc("POST /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}/{action}", a.handleAction)
 	m.HandleFunc("GET /api/v1/clusters/{cluster}/pods/{ns}/{name}/logs", a.handleLogs)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/workloads/{kind}/{ns}/{name}/logs", a.handleWorkloadLogs)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/findings", a.handleFindings)
 	m.HandleFunc("GET /api/v1/stream", a.handleStream)
 
 	m.HandleFunc("GET /api/v1/threads", a.handleListThreads)

@@ -89,7 +89,7 @@ var tools = []tool{
 				"cluster":   map[string]any{"type": "string", "description": "Cluster name; empty searches all clusters."},
 				"kind":      map[string]any{"type": "string", "description": "Kind filter, e.g. HelmRelease."},
 				"namespace": map[string]any{"type": "string", "description": "Namespace filter."},
-				"status":    map[string]any{"type": "string", "enum": []string{"ready", "failed", "reconciling", "suspended", "unknown"}, "description": "Status filter."},
+				"status":    map[string]any{"type": "string", "enum": []string{"ready", "failed", "reconciling", "suspended", "unknown", "completed"}, "description": "Status filter. completed is a finished Job or a Succeeded Pod."},
 				"query":     map[string]any{"type": "string", "description": "Substring over kind, namespace, name and message."},
 				"limit":     map[string]any{"type": "integer", "minimum": 1, "maximum": maxSearch, "description": "Maximum results (default 50)."},
 			}),
@@ -297,18 +297,22 @@ func searchResources(ctx context.Context, env toolEnv, raw json.RawMessage) (any
 		f.Kinds = []string{a.Kind}
 	}
 	var clusters []string
+	cs, err := env.fleet.Clusters(ctx, env.principal)
+	if err != nil {
+		return nil, err
+	}
+	var findings []findingItem
+	for _, c := range cs {
+		if !c.Connected || (a.Cluster != "" && c.Name != a.Cluster) {
+			continue
+		}
+		if a.Cluster == "" {
+			clusters = append(clusters, c.Name)
+		}
+		findings = append(findings, warningFindings(c, a)...)
+	}
 	if a.Cluster != "" {
 		clusters = []string{a.Cluster}
-	} else {
-		cs, err := env.fleet.Clusters(ctx, env.principal)
-		if err != nil {
-			return nil, err
-		}
-		for _, c := range cs {
-			if c.Connected {
-				clusters = append(clusters, c.Name)
-			}
-		}
 	}
 	var items []searchItem
 	var skipped []string
@@ -330,7 +334,36 @@ func searchResources(ctx context.Context, env toolEnv, raw json.RawMessage) (any
 	if len(skipped) > 0 {
 		out["skipped"] = skipped
 	}
+	if len(findings) > 0 {
+		out["findings"] = findings
+	}
 	return out, nil
+}
+
+// findingItem is a cluster finding (such as finished Jobs piling up) shown
+// beside search results: findings are not resources.
+type findingItem struct {
+	Cluster        string `json:"cluster"`
+	ID             string `json:"id"`
+	Namespace      string `json:"namespace"`
+	Message        string `json:"message"`
+	Recommendation string `json:"recommendation,omitempty"`
+}
+
+// warningFindings returns the warning findings of c that match the search:
+// job-buildup findings go with a Job search or one without a kind.
+func warningFindings(c model.ClusterInfo, a searchArgs) []findingItem {
+	var out []findingItem
+	for _, f := range c.Findings {
+		if f.Severity != model.SeverityWarning || (a.Namespace != "" && f.Namespace != a.Namespace) {
+			continue
+		}
+		if a.Kind != "" && !strings.EqualFold(a.Kind, "Job") {
+			continue
+		}
+		out = append(out, findingItem{Cluster: c.Name, ID: f.ID, Namespace: f.Namespace, Message: f.Message, Recommendation: f.Recommendation})
+	}
+	return out
 }
 
 type logsArgs struct {

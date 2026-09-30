@@ -898,7 +898,7 @@ func (n *peerNode) resend(sub *peerSub) {
 	frames := []protocol.PeerFrame{
 		{Cluster: sub.cluster, Frame: protocol.Frame{Type: protocol.TypeHello, Payload: payload(s.hello())}},
 	}
-	snap := protocol.Snapshot{Resources: []model.Resource{}}
+	snap := protocol.Snapshot{Resources: []model.Resource{}, Findings: &protocol.FindingSet{Items: s.findingList()}}
 	if len(chunks) > 0 {
 		snap.Resources = chunks[0]
 	}
@@ -938,6 +938,9 @@ func (n *peerNode) forward(cluster string, e event) {
 			for _, f := range deltaFrames(cluster, e) {
 				sub.send(f)
 			}
+		case evFindings:
+			sub.send(protocol.PeerFrame{Cluster: cluster, Frame: protocol.Frame{Type: protocol.TypeDelta,
+				Payload: payload(protocol.Delta{Findings: &protocol.FindingSet{Items: e.findings}})}})
 		}
 	}
 }

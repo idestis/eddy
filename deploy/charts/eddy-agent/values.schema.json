@@ -50,6 +50,23 @@
       },
       "additionalProperties": false
     },
+    "workloadLogs": {
+      "type": "object",
+      "properties": {
+        "maxPods": {"type": "integer", "minimum": 1},
+        "lineRate": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "jobs": {
+      "type": "object",
+      "properties": {
+        "history": {"type": "integer", "minimum": 1},
+        "failedMaxAge": {"type": "string", "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h))+$"},
+        "buildupThreshold": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
     "healthPort": {"type": "integer", "minimum": 1, "maximum": 65535},
     "networkPolicy": {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
   }

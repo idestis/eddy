@@ -185,6 +185,9 @@ func (f *fleetService) Clusters(ctx context.Context, p identity.Principal) ([]mo
 				return
 			}
 			ci.Counts = counts
+			if ci.Findings, err = f.visibleFindings(ctx, p, s); err != nil {
+				f.log.Debug("cluster findings unavailable", "cluster", s.name(), "err", err)
+			}
 		})
 	}
 	wg.Wait()

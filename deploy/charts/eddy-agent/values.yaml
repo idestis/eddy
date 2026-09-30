@@ -71,6 +71,24 @@ limits:
   logStreams: 8       # log streams in flight (EDDY_MAX_LOG_STREAMS)
   sarConcurrency: 8   # SubjectAccessReviews in flight (EDDY_MAX_SAR_CONCURRENT)
 
+# Workload log streams (the Logs tab of a Deployment, StatefulSet, DaemonSet or Job). Each
+# stream is one of limits.logStreams and follows up to maxPods pods (newest first), every pod ×
+# container being its own API server log stream; lines beyond lineRate per second are dropped
+# with a marker. Per stream, so not divided by replicaCount.
+workloadLogs:
+  maxPods: 20         # EDDY_MAX_LOG_PODS
+  lineRate: 2000      # EDDY_LOG_LINE_RATE, lines per second per stream
+
+# Finished Jobs. The agent watches every Job but lists only active ones, failed ones that
+# finished within failedMaxAge and the newest `history` finished Jobs of each group (owner,
+# well-known labels such as prefect.io/deployment-name, generateName or name prefix). The rest
+# are hidden (the UI fetches them on demand) and reported as a job-buildup finding per
+# namespace, a warning once more than buildupThreshold are hidden.
+jobs:
+  history: 5              # EDDY_JOB_HISTORY
+  failedMaxAge: 24h       # EDDY_JOB_FAILED_MAX_AGE, a Go duration
+  buildupThreshold: 100   # EDDY_JOB_BUILDUP_THRESHOLD
+
 extraEnv: []
 
 serviceAccount:

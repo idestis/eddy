@@ -208,7 +208,7 @@ func TestHandleRejections(t *testing.T) {
 		{"missing namespace", request(protocol.OpYAML, model.Ref{Group: flux.GroupKustomize, Kind: "Kustomization", Name: "b"}, nil), 400},
 		{"reconcile workload", request(protocol.OpReconcile, deploy, nil), 400},
 		{"suspend workload", request(protocol.OpSuspend, deploy, nil), 400},
-		{"logs of deployment", request(protocol.OpLogs, deploy, nil), 400},
+		{"logs of a service", request(protocol.OpLogs, model.Ref{Group: flux.GroupCore, Kind: flux.KindService, Namespace: "apps", Name: "web"}, nil), 400},
 		{"not found", request(protocol.OpYAML, model.Ref{Group: flux.GroupKustomize, Kind: "Kustomization", Namespace: "x", Name: "missing"}, nil), 404},
 		{"unknown op", request("delete", ksRef, nil), 400},
 		{"bad args", protocol.Request{Op: protocol.OpReconcile, Identity: alice, Target: ksRef, Args: json.RawMessage(`[1]`)}, 400},

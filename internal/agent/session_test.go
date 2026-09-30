@@ -361,3 +361,67 @@ func TestLogStreamCap(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+type findingSource struct {
+	fakeSource
+	fmu      sync.Mutex
+	findings []model.Finding
+	ver      uint64
+}
+
+func (f *findingSource) Findings() ([]model.Finding, uint64) {
+	f.fmu.Lock()
+	defer f.fmu.Unlock()
+	return f.findings, f.ver
+}
+
+func (f *findingSource) set(fs ...model.Finding) {
+	f.fmu.Lock()
+	defer f.fmu.Unlock()
+	f.findings = fs
+	f.ver++
+}
+
+func TestSessionSendsFindings(t *testing.T) {
+	conns := make(chan *websocket.Conn, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		conns <- c
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+	src := &findingSource{}
+	src.set(model.Finding{ID: "job-buildup/prefect", Kind: model.FindingJobBuildup, Severity: model.SeverityWarning, Namespace: "prefect"})
+	s := &Session{
+		URL: "ws" + strings.TrimPrefix(srv.URL, "http") + "/agent/v1/connect", Cluster: "dev", Token: "t",
+		Source: src, Handler: fakeHandler{}, Logger: discardLogger(), DeltaInterval: 10 * time.Millisecond, PingInterval: time.Minute,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	hub := hubConn{t: t, conn: <-conns}
+	hub.read() // hello
+	f := hub.read()
+	var snap protocol.Snapshot
+	_ = json.Unmarshal(f.Payload, &snap)
+	if f.Type != protocol.TypeSnapshot || snap.Findings == nil || len(snap.Findings.Items) != 1 || snap.Findings.Items[0].Namespace != "prefect" {
+		t.Fatalf("snapshot %s %+v", f.Type, snap.Findings)
+	}
+	// Unchanged findings are not resent; a change travels as a delta, and
+	// an empty set clears them.
+	src.set()
+	f = hub.read()
+	var d protocol.Delta
+	_ = json.Unmarshal(f.Payload, &d)
+	if f.Type != protocol.TypeDelta || d.Findings == nil || len(d.Findings.Items) != 0 || len(d.Upserts)+len(d.Deletes) != 0 {
+		t.Fatalf("delta %s %s", f.Type, f.Payload)
+	}
+	if !strings.Contains(string(f.Payload), `"findings":{"items":[]}`) {
+		t.Fatalf("an empty set must be sent explicitly: %s", f.Payload)
+	}
+}

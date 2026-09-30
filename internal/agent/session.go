@@ -46,6 +46,13 @@ type Source interface {
 	Drain() (upserts []model.Resource, deletes []string)
 }
 
+// FindingSource is optionally implemented by a Source (the Cache): its
+// findings travel in the snapshot and, when their version changes, in a
+// delta.
+type FindingSource interface {
+	Findings() ([]model.Finding, uint64)
+}
+
 // RequestHandler executes one hub request. For OpLogs it calls stream for
 // every chunk and returns no result.
 type RequestHandler interface {
@@ -289,6 +296,30 @@ func (s *Session) joinLoop(ctx context.Context, c *sessionConn) error {
 	}
 }
 
+// findings returns the source's findings when their version differs from
+// *sent, and records the new version.
+func (s *Session) findings(sent *uint64, force bool) *protocol.FindingSet {
+	fs, ok := s.Source.(FindingSource)
+	if !ok {
+		return nil
+	}
+	items, ver := fs.Findings()
+	if !force && ver == *sent {
+		return nil
+	}
+	*sent = ver
+	if items == nil {
+		items = []model.Finding{}
+	}
+	if len(items) > maxFindings {
+		items = items[:maxFindings]
+	}
+	return &protocol.FindingSet{Items: items}
+}
+
+// maxFindings caps the findings of one frame (one per namespace at most).
+const maxFindings = 500
+
 func (s *Session) sendSnapshot(ctx context.Context, c *sessionConn) error {
 	chunks, skipped := splitResources(s.Source.Snapshot(), protocol.MaxFrameBytes-frameEnvelopeHeadroom)
 	if skipped > 0 {
@@ -298,7 +329,7 @@ func (s *Session) sendSnapshot(ctx context.Context, c *sessionConn) error {
 	if len(chunks) > 0 {
 		first = chunks[0]
 	}
-	if err := c.send(ctx, protocol.TypeSnapshot, "", protocol.Snapshot{Resources: first}); err != nil {
+	if err := c.send(ctx, protocol.TypeSnapshot, "", protocol.Snapshot{Resources: first, Findings: s.findings(&c.findingsVer, true)}); err != nil {
 		return err
 	}
 	for _, rs := range chunks[min(1, len(chunks)):] {
@@ -320,6 +351,11 @@ func (s *Session) deltaLoop(ctx context.Context, c *sessionConn) error {
 		case <-t.C:
 		}
 		upserts, deletes := s.Source.Drain()
+		if f := s.findings(&c.findingsVer, false); f != nil {
+			if err := c.send(ctx, protocol.TypeDelta, "", protocol.Delta{Findings: f}); err != nil {
+				return err
+			}
+		}
 		if len(upserts) == 0 && len(deletes) == 0 {
 			continue
 		}
@@ -501,6 +537,9 @@ func (s *Session) reply(ctx context.Context, c *sessionConn, id string, result j
 // sessionConn writes frames. coder/websocket allows concurrent writers.
 type sessionConn struct {
 	conn *websocket.Conn
+	// findingsVer is the findings version last sent on this connection;
+	// only the snapshot and then the delta loop touch it, in that order.
+	findingsVer uint64
 }
 
 func (c *sessionConn) send(ctx context.Context, typ protocol.FrameType, id string, payload any) error {

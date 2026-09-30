@@ -3,7 +3,10 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +26,7 @@ type clusterSession interface {
 	lookup(id string) (model.Resource, bool)
 	size() int
 	tupleCounts() map[accessTuple]map[model.Status]int
+	findingList() []model.Finding
 	do(ctx context.Context, req protocol.Request) (json.RawMessage, error)
 	stream(ctx context.Context, req protocol.Request, onChunk func(protocol.LogChunk) error) error
 	hello() protocol.Hello
@@ -47,6 +51,9 @@ type clusterView struct {
 	rv        uint64
 	counts    map[accessTuple]map[model.Status]int
 	countsRV  uint64
+	// findings are the cluster's findings (sanitizeFindings), replaced as
+	// a whole.
+	findings []model.Finding
 }
 
 func newClusterView(rvSeq *atomic.Uint64) *clusterView {
@@ -102,6 +109,86 @@ func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes
 		v.rv = v.rvSeq.Add(1)
 	}
 	return upserts, deletes, parents
+}
+
+// setFindings replaces the findings when fs is set and reports whether they
+// changed.
+func (v *clusterView) setFindings(fs *protocol.FindingSet) bool {
+	if fs == nil {
+		return false
+	}
+	clean := sanitizeFindings(fs.Items)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if reflect.DeepEqual(clean, v.findings) {
+		return false
+	}
+	v.findings = clean
+	return true
+}
+
+// replaceFindings sets the findings of a snapshot: an agent that sends none
+// has none.
+func (v *clusterView) replaceFindings(fs *protocol.FindingSet) {
+	if fs == nil {
+		fs = &protocol.FindingSet{}
+	}
+	v.setFindings(fs)
+}
+
+// findingList returns the findings; the slice must not be modified.
+func (v *clusterView) findingList() []model.Finding {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.findings
+}
+
+// Bounds on findings from an agent.
+const (
+	maxFindings     = 1000
+	maxFindingText  = 600
+	maxFindingGroup = 5
+)
+
+// sanitizeFindings keeps only known finding kinds with valid fields and
+// caps every text, so an agent cannot inject arbitrary data.
+func sanitizeFindings(in []model.Finding) []model.Finding {
+	out := []model.Finding{}
+	for _, f := range in {
+		if len(out) == maxFindings {
+			break
+		}
+		if f.Kind != model.FindingJobBuildup || f.Jobs == nil || f.Namespace == "" || len(f.Namespace) > 63 ||
+			(f.Severity != model.SeverityWarning && f.Severity != model.SeverityInfo) {
+			continue
+		}
+		j := *f.Jobs
+		j.Groups = nil
+		for _, g := range f.Jobs.Groups {
+			if len(j.Groups) == maxFindingGroup {
+				break
+			}
+			g.By, g.Name, g.Label = truncate(g.By, 32), truncate(g.Name, 320), truncate(g.Label, 320)
+			if g.Owner != nil {
+				o := *g.Owner
+				o.Namespace = f.Namespace
+				o.Group, o.Kind, o.Name = truncate(o.Group, 253), truncate(o.Kind, 63), truncate(o.Name, 253)
+				g.Owner = &o
+			}
+			j.Groups = append(j.Groups, g)
+		}
+		out = append(out, model.Finding{
+			ID:             string(f.Kind) + "/" + f.Namespace,
+			Kind:           f.Kind,
+			Severity:       f.Severity,
+			Namespace:      f.Namespace,
+			Message:        truncate(f.Message, maxFindingText),
+			Recommendation: truncate(f.Recommendation, maxFindingText),
+			Jobs:           &j,
+		})
+	}
+	slices.SortFunc(out, func(a, b model.Finding) int { return strings.Compare(a.ID, b.ID) })
+	return out
 }
 
 func (v *clusterView) isSynced() bool {

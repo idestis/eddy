@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -23,6 +24,10 @@ import (
 // podControllerIndex indexes Pods by "<namespace>/<name>" of their
 // controlling ReplicaSet, so a ReplicaSet change can re-attribute its Pods.
 const podControllerIndex = "eddy.controllerReplicaSet"
+
+// podOwnerIndex indexes Pods by "<Kind>/<namespace>/<name>" of their
+// controller, and of their Job by the job-name labels, for workload logs.
+const podOwnerIndex = "eddy.owner"
 
 // Cache watches every served kind with dynamic informers and keeps the
 // summary of each object, plus the set of ids changed since the last Drain.
@@ -46,6 +51,22 @@ type Cache struct {
 	// Kustomizations belongs to the first one.
 	invByOwner map[string][]string
 	invOwner   map[string]string
+
+	// Job policy (jobs.go). jobs holds every watched Job by namespace and
+	// id; only the ones the policy surfaces are in resources.
+	jobPolicy JobPolicy
+	now       func() time.Time
+	jobs      map[string]map[string]*jobEntry
+	jobsDirty map[string]struct{}
+	jobExpiry map[string]time.Time
+	// findings holds the job-buildup finding of each namespace with hidden
+	// Jobs; findingsVer counts their changes.
+	findings    map[string]model.Finding
+	findingsVer uint64
+
+	// podSubs are the workload log streams waiting for pod changes.
+	subMu   sync.Mutex
+	podSubs map[*podSub]struct{}
 }
 
 // NewCache creates informers for every served kind, in each of namespaces
@@ -60,6 +81,13 @@ func NewCache(dyn dynamic.Interface, served flux.Served, namespaces []string, lo
 		served:     served,
 		invByOwner: map[string][]string{},
 		invOwner:   map[string]string{},
+
+		jobPolicy: JobPolicy{}.withDefaults(),
+		jobs:      map[string]map[string]*jobEntry{},
+		jobsDirty: map[string]struct{}{},
+		jobExpiry: map[string]time.Time{},
+		findings:  map[string]model.Finding{},
+		podSubs:   map[*podSub]struct{}{},
 	}
 	if len(namespaces) == 0 {
 		namespaces = []string{metav1.NamespaceAll}
@@ -77,7 +105,7 @@ func NewCache(dyn dynamic.Interface, served flux.Served, namespaces []string, lo
 				return nil, fmt.Errorf("agent: transform %s: %w", k.Kind, err)
 			}
 			if k.Kind == flux.KindPod {
-				if err := inf.AddIndexers(cache.Indexers{podControllerIndex: podControllerKey}); err != nil {
+				if err := inf.AddIndexers(cache.Indexers{podControllerIndex: podControllerKey, podOwnerIndex: podOwnerKeys}); err != nil {
 					return nil, fmt.Errorf("agent: index pods: %w", err)
 				}
 				c.pods = append(c.pods, inf)
@@ -89,6 +117,21 @@ func NewCache(dyn dynamic.Interface, served flux.Served, namespaces []string, lo
 		}
 	}
 	return c, nil
+}
+
+// SetJobPolicy replaces the Job policy; zero fields keep their defaults.
+// Call it before Start.
+func (c *Cache) SetJobPolicy(p JobPolicy) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.jobPolicy = p.withDefaults()
+}
+
+func (c *Cache) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // Start runs the informers until ctx is done.
@@ -128,6 +171,7 @@ func (c *Cache) SyncProgress() (synced, total int) {
 func (c *Cache) Snapshot() []model.Resource {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.flushJobsLocked()
 	out := make([]model.Resource, 0, len(c.resources))
 	for _, r := range c.resources {
 		out = append(out, r)
@@ -141,6 +185,7 @@ func (c *Cache) Snapshot() []model.Resource {
 func (c *Cache) Drain() (upserts []model.Resource, deletes []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.flushJobsLocked()
 	for id := range c.pending {
 		if r, ok := c.resources[id]; ok {
 			upserts = append(upserts, r)
@@ -180,6 +225,9 @@ func (c *Cache) handler(k flux.Kind) cache.ResourceEventHandlerFuncs {
 		if !ok {
 			return
 		}
+		if k.Kind == flux.KindPod {
+			defer c.notifyPods(u.GetNamespace())
+		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if k.Kind == flux.KindReplicaSet {
@@ -187,6 +235,10 @@ func (c *Cache) handler(k flux.Kind) cache.ResourceEventHandlerFuncs {
 			return
 		}
 		r := flux.Summarize(k, u, c.lookupLocked)
+		if k.Kind == flux.KindJob {
+			c.putJobLocked(r, flux.JobFactsOf(u))
+			return
+		}
 		c.putLocked(r)
 		if k.Kind == flux.KindKustomization {
 			c.setInventoryLocked(r.ID, flux.InventoryOnly(u, c.served.Watches))
@@ -203,6 +255,9 @@ func (c *Cache) handler(k flux.Kind) cache.ResourceEventHandlerFuncs {
 			if !ok {
 				return
 			}
+			if k.Kind == flux.KindPod {
+				defer c.notifyPods(u.GetNamespace())
+			}
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			if k.Kind == flux.KindReplicaSet {
@@ -210,6 +265,10 @@ func (c *Cache) handler(k flux.Kind) cache.ResourceEventHandlerFuncs {
 				return
 			}
 			id := model.Ref{Group: k.Group, Kind: k.Kind, Namespace: u.GetNamespace(), Name: u.GetName()}.ID()
+			if k.Kind == flux.KindJob {
+				c.deleteJobLocked(u.GetNamespace(), id)
+				return
+			}
 			if _, ok := c.resources[id]; ok {
 				delete(c.resources, id)
 				c.pending[id] = struct{}{}

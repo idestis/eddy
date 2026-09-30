@@ -86,12 +86,14 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 	logger.Info("agent: starting", "version", version.Version, "cluster", cfg.Cluster, "instance", processInstance,
 		"kubernetes", info.GitVersion, "flux", fluxVersion, "kinds", served, "namespaces", cfg.Namespaces,
 		"limits", map[string]any{"qps": cfg.KubeQPS, "burst": cfg.KubeBurst, "concurrent": cfg.MaxConcurrent,
-			"logStreams": cfg.MaxLogStreams, "sar": cfg.MaxSARConcurrent})
+			"logStreams": cfg.MaxLogStreams, "sar": cfg.MaxSARConcurrent, "logPods": cfg.MaxLogPods, "logLineRate": cfg.LogLineRate},
+		"jobs", map[string]any{"history": cfg.JobHistory, "failedMaxAge": cfg.JobFailedMaxAge.String(), "buildupThreshold": cfg.JobBuildupThreshold})
 
 	c, err := NewCache(dyn, served, cfg.Namespaces, logger)
 	if err != nil {
 		return err
 	}
+	c.SetJobPolicy(JobPolicy{History: cfg.JobHistory, FailedMaxAge: cfg.JobFailedMaxAge, BuildupThreshold: cfg.JobBuildupThreshold})
 	h := &Handler{
 		Policy:      Policy{AllowedGroupPrefixes: cfg.AllowedGroupPrefixes, AllowedGroups: cfg.AllowedGroups, DenyUserPrefixes: cfg.DenyUserPrefixes},
 		Served:      served,
@@ -99,6 +101,10 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 		Self:        kube,
 		Logger:      logger,
 		MaxSAR:      cfg.MaxSARConcurrent,
+		Pods:        c,
+		Jobs:        c,
+		MaxLogPods:  cfg.MaxLogPods,
+		LogLineRate: cfg.LogLineRate,
 	}
 	var secrets secretStore
 	if cfg.TokenSecret != "" && cfg.Namespace != "" {
