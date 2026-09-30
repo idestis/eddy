@@ -207,7 +207,7 @@ function AskHistory({
       </button>
       {open && (
         <div
-          className="absolute top-full right-0 z-20 mt-1.5 flex max-h-72 w-[min(320px,calc(100vw-32px))] flex-col overflow-auto rounded-xl border border-line-strong bg-surface p-1.5 shadow-window"
+          className="absolute bottom-full left-0 z-20 mb-1.5 flex max-h-72 w-[min(320px,calc(100vw-32px))] flex-col overflow-auto rounded-xl border border-line-strong bg-surface p-1.5 shadow-window"
           role="menu"
           aria-label="Previous chats"
         >
@@ -372,20 +372,6 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
       }}
     >
       <div className="flex shrink-0 flex-col gap-2 border-b border-line px-4 py-3 text-12-5 text-ink-3">
-        {/* Conversation controls first, then what the question is about, so the target is
-            visible right above the conversation it applies to. */}
-        <div className="flex items-center justify-end gap-1.5">
-          <AskHistory cluster={cluster.name} target={target} onOpen={(t) => void openThread(t)} />
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={newChat}
-            disabled={turns.length === 0 && !convo?.threadId}
-          >
-            <Icon name="plus" />
-            New chat
-          </button>
-        </div>
         <div className="flex min-w-0 items-center gap-2">
           About
           <span className="inline-flex min-h-[30px] min-w-0 max-w-full items-center gap-[7px] rounded-full border border-line-strong bg-surface py-1 pr-1.5 pl-[9px] font-mono text-12 text-ink">
@@ -468,6 +454,19 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
           send(draft);
         }}
       >
+        {/* Conversation controls sit with the composer: start over or reopen an earlier chat. */}
+        <div className="flex items-center gap-1.5">
+          <AskHistory cluster={cluster.name} target={target} onOpen={(t) => void openThread(t)} />
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={newChat}
+            disabled={turns.length === 0 && !convo?.threadId}
+          >
+            <Icon name="plus" />
+            New chat
+          </button>
+        </div>
         <div className="flex items-end gap-2 rounded-[14px] border border-line-strong bg-surface py-1.5 pr-1.5 pl-3 focus-within:border-c focus-within:ring-3 focus-within:ring-c/15 has-disabled:opacity-60">
           <AutoGrowTextarea
             ref={input}
