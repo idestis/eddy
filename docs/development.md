@@ -164,7 +164,7 @@ Ask AI is off unless you choose a provider. Set it in `.env`, then run `task dev
 - Amazon Bedrock: `EDDY_AI_PROVIDER=bedrock`, `EDDY_BEDROCK_REGION`,
   `EDDY_BEDROCK_MODEL_ID` (an inference profile id or ARN, for example
   `eu.anthropic.claude-haiku-4-5-20251001-v1:0`), and optionally
-  `EDDY_BEDROCK_GUARDRAIL_ID` with `EDDY_BEDROCK_GUARDRAIL_VERSION`. Credentials come from
+  `EDDY_BEDROCK_GUARDRAIL_ID` with `EDDY_BEDROCK_GUARDRAIL_VERSION` (optional), `EDDY_AI_ALLOW_LOGS=1` (let Ask AI read redacted pod logs; off by default`. Credentials come from
   the AWS default chain, so use `AWS_PROFILE` (SSO works). Never put AWS access keys in
   `.env`.
 

@@ -13,9 +13,11 @@ import (
 type features struct {
 	AI         bool   `json:"ai"`
 	AIProvider string `json:"aiProvider,omitempty"`
-	MCP        bool   `json:"mcp"`
-	MCPWrites  bool   `json:"mcpWrites"`
-	Logs       bool   `json:"logs"`
+	// AILogs: Ask AI may read pod logs (ai.allowLogs). The UI offers log questions only then.
+	AILogs    bool `json:"aiLogs"`
+	MCP       bool `json:"mcp"`
+	MCPWrites bool `json:"mcpWrites"`
+	Logs      bool `json:"logs"`
 	// WorkloadLogs: GET …/workloads/{kind}/{ns}/{name}/logs exists (the
 	// cluster's agent must be new enough; an older one answers 400).
 	WorkloadLogs   bool `json:"workloadLogs"`
@@ -49,6 +51,7 @@ func (a *api) features() features {
 	f.MCPWrites = f.MCP && a.cfg.MCP.Writes && fl.MCPWrites
 	if a.ai != nil && a.ai.Enabled() {
 		f.AI, f.AIProvider = true, a.ai.ProviderName()
+		f.AILogs = a.cfg.AI.AllowLogs
 	}
 	return f
 }

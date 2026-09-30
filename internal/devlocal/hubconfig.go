@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -30,6 +31,7 @@ type AIOptions struct {
 	BedrockModelID   string
 	GuardrailID      string
 	GuardrailVersion string
+	AllowLogs        bool // EDDY_AI_ALLOW_LOGS=1: Ask AI may read pod logs (redacted)
 }
 
 // AIFromEnv reads the explicit Ask AI settings of a local setup:
@@ -40,6 +42,7 @@ type AIOptions struct {
 // default chain (use AWS_PROFILE locally), never from the generated file.
 func AIFromEnv(getenv func(string) string) (AIOptions, error) {
 	o := AIOptions{Provider: strings.TrimSpace(getenv("EDDY_AI_PROVIDER"))}
+	o.AllowLogs, _ = strconv.ParseBool(strings.TrimSpace(getenv("EDDY_AI_ALLOW_LOGS")))
 	switch o.Provider {
 	case "":
 		return o, nil
@@ -110,6 +113,9 @@ func RenderHub(o HubOptions) []byte {
 		}
 	default:
 		w("ai:\n  enabled: false\n")
+	}
+	if o.AI.Provider != "" && o.AI.AllowLogs {
+		w("  allowLogs: true\n")
 	}
 	w("mcp:\n  enabled: true\n  writes: true\n  protectedClusters: confirm\n")
 	w("dev:\n  fakeLogin: true\n")

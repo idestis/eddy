@@ -53,7 +53,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 {
   "user": "local:alice", "display": "alice", "groups": ["eddy:platform","eddy:authenticated"],
   "provider": "local", "csrf": "…",
-  "features": {"ai": true, "aiProvider": "bedrock" /* only when ai is on */, "mcp": true, "mcpWrites": true,
+  "features": {"ai": true, "aiProvider": "bedrock" /* only when ai is on */, "aiLogs": false /* ai.allowLogs */, "mcp": true, "mcpWrites": true,
                "logs": true, "ephemeralStore": false, "devMode": false,
                "onboarding": true /* Cluster CRs watched and onboarding.enabled */},
   "version": "v1.0.0"
