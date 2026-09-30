@@ -34,3 +34,6 @@ internal/ui/dist/*
 
 # Local mode (task dev): generated hub config, agent token, air builds
 /.dev/
+
+# Task checksum cache
+.task/
