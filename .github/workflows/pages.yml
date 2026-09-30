@@ -19,6 +19,8 @@ concurrency:
 
 jobs:
   deploy:
+    # Private repos have no GitHub Pages or code scanning on this plan; runs once the repo is public.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-24.04
     environment:
       name: github-pages

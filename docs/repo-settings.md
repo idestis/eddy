@@ -23,6 +23,8 @@ On the main branch:
 
 ## Deployment & Pages
 
+- [ ] The `pages.yml` and `codeql.yml` jobs skip while the repo is private (`!github.event.repository.private`). They start working as soon as it is public.
+
 - [ ] Set GitHub Pages source to "GitHub Actions" (Settings > Pages > Source)
 - [ ] Verify pages URL in Settings > Pages (should auto-deploy from `pages.yml` workflow on landing/* changes)
 
