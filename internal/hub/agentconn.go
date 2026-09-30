@@ -201,6 +201,10 @@ func (a *agentServer) connect(w http.ResponseWriter, r *http.Request) {
 	a.agents.add(s)
 	a.log.Info("agent connected", "cluster", cluster, "agentVersion", hello.AgentVersion,
 		"kubernetesVersion", hello.KubernetesVersion, "fluxVersion", hello.FluxVersion, "peer", ip)
+	if hello.Mode == protocol.ModeLocal {
+		a.log.Warn("agent runs in local mode: it acts as a developer's kubeconfig identity, not as the Eddy user",
+			"cluster", cluster, "context", hello.Context, "readOnly", hello.ReadOnly)
+	}
 	err = s.run(a.base)
 	a.agents.remove(s)
 	a.log.Info("agent disconnected", "cluster", cluster, "reason", closeReason(err))
@@ -252,7 +256,12 @@ func validateHello(h *protocol.Hello, cluster string) error {
 	if h.Cluster != cluster {
 		return fmt.Errorf("hello names cluster %q but the connection is for %q", truncate(h.Cluster, 64), cluster)
 	}
-	for _, f := range []*string{&h.AgentVersion, &h.KubernetesVersion, &h.FluxVersion} {
+	switch h.Mode {
+	case "", protocol.ModeLocal:
+	default:
+		return fmt.Errorf("unknown agent mode %q", truncate(h.Mode, 16))
+	}
+	for _, f := range []*string{&h.AgentVersion, &h.KubernetesVersion, &h.FluxVersion, &h.Context} {
 		*f = cleanText(*f, maxHelloFieldLength)
 	}
 	if len(h.Namespaces) > 1000 {

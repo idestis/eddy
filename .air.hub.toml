@@ -1,0 +1,31 @@
+# Hot reload for the hub in local mode (`task dev` / `task dev:hub`). DEV ONLY.
+# Builds with -tags dev (fake login, dev-config) and without optimisations so
+# `dlv attach` works. Run from the repository root: air -c .air.hub.toml
+root = "."
+tmp_dir = ".dev/tmp"
+
+[build]
+  cmd = "go build -tags dev -gcflags='all=-N -l' -o .dev/bin/eddy-hub ./cmd/hub"
+  bin = ".dev/bin/eddy-hub"
+  args_bin = ["--config", ".dev/hub.yaml"]
+  include_dir = ["cmd", "internal", "hack"]
+  include_file = [".dev/hub.yaml"]
+  include_ext = ["go", "yaml", "sql"]
+  # The hub does not import the agent packages.
+  exclude_dir = ["web", "landing", "node_modules", "internal/ui/dist", "internal/agent", "cmd/agent", ".dev/bin", ".dev/tmp", "deploy", "docs"]
+  exclude_regex = ["_test\\.go$"]
+  delay = 500
+  # SIGINT, then up to 2 s for a graceful shutdown before SIGKILL (air < 1.62 always waits the full delay).
+  send_interrupt = true
+  kill_delay = "2s"
+  stop_on_error = true
+  log = "hub-build-errors.log"
+
+[log]
+  main_only = true
+
+[misc]
+  clean_on_exit = false
+
+[screen]
+  clear_on_rebuild = false

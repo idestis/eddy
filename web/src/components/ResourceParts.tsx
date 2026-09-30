@@ -83,7 +83,7 @@ export function ResourceActions({ cluster, r, actions, onLogs, onOpen, onAsk }: 
   return (
     <>
       <div className="actions">
-        {info.flux && (
+        {info.flux && !actions.readOnly && (
           <>
             <ActionButton
               icon="sync"
@@ -121,12 +121,19 @@ export function ResourceActions({ cluster, r, actions, onLogs, onOpen, onAsk }: 
           <ActionButton icon="spark" label="Ask" keyId="ask" soft onClick={onAsk} />
         )}
       </div>
-      {info.flux ? (
+      {info.flux && actions.readOnly ? (
+        <div className="note">
+          <Icon name="lock" />
+          {`${cluster.name} is in read-only local mode. Reconcile, suspend and resume are off.`}
+        </div>
+      ) : info.flux ? (
         <div className="note">
           <Icon name={cluster.protected ? "lock" : "user"} />
           {cluster.protected
             ? `${cluster.name} is protected. Suspending asks you to type its name.`
-            : `Actions run as ${me?.user ?? "you"} through Kubernetes RBAC.`}
+            : cluster.mode === "local"
+              ? `Actions run as your kubeconfig identity (${cluster.context || cluster.name}), not as ${me?.user ?? "you"}.`
+              : `Actions run as ${me?.user ?? "you"} through Kubernetes RBAC.`}
         </div>
       ) : (
         <div className="note" />

@@ -2,6 +2,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { useCluster, useClusters, useMe } from "../api/queries";
 import { StreamProvider } from "../api/stream";
+import type { ClusterInfo } from "../api/types";
 import { AppStateProvider, useAppState } from "../lib/appState";
 import { applyClusterIdentity } from "../lib/clusterColor";
 import { installKeyboard, useKeys } from "../lib/keys";
@@ -19,11 +20,21 @@ export function useRouteCluster(): string | undefined {
   return useParams({ strict: false }).cluster;
 }
 
-function Banners() {
+function Banners({ cluster }: { cluster: ClusterInfo | undefined }) {
   const { data: me } = useMe();
   if (!me) return null;
   return (
     <>
+      {cluster?.mode === "local" && (
+        <div className="banner warn" role="status">
+          <Icon name="user" />
+          Local mode
+          <span>
+            {`Acting as your kubeconfig identity (${cluster.context || cluster.name})`}
+            {cluster.readOnly ? " · read-only" : " · writes enabled"}
+          </span>
+        </div>
+      )}
       {me.features.devMode && (
         <div className="banner danger" role="alert">
           <Icon name="alert" />
@@ -89,7 +100,7 @@ function Frame({ children }: { children: ReactNode }) {
     <div className="frame">
       <div className="win">
         <div className="ribbon" />
-        <Banners />
+        <Banners cluster={cluster} />
         <div className="shell">
           <Sidebar cluster={cluster} />
           {children}

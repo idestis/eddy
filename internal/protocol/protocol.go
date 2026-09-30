@@ -47,7 +47,19 @@ type Hello struct {
 	KubernetesVersion string   `json:"kubernetesVersion"`
 	FluxVersion       string   `json:"fluxVersion,omitempty"`
 	Namespaces        []string `json:"namespaces,omitempty"` // empty = whole cluster
+	// Mode is "local" for an agent in local mode (dev builds only): it runs on
+	// a developer machine with the kubeconfig's own identity instead of
+	// impersonating the user. Empty for a normal in-cluster agent.
+	Mode string `json:"mode,omitempty"`
+	// ReadOnly is set when the agent refuses every write (local mode without
+	// --allow-writes, or a --protect match). The hub then refuses writes too.
+	ReadOnly bool `json:"readOnly,omitempty"`
+	// Context is the kubeconfig context a local-mode agent serves.
+	Context string `json:"context,omitempty"`
 }
+
+// ModeLocal is the Hello.Mode of a local-mode agent.
+const ModeLocal = "local"
 
 // Snapshot replaces the hub's view of the cluster. When the full state does
 // not fit in MaxFrameBytes, the agent sends the first chunk as a Snapshot and

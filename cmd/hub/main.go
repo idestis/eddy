@@ -8,6 +8,7 @@
 //	eddy-hub hash-password                      # reads a password from stdin
 //	eddy-hub admin revoke --user <subject> [--config …]
 //	eddy-hub admin backup --out <file> [--config …]
+//	eddy-hub dev-config --contexts a,b --out .dev/hub.yaml   # -tags dev only
 package main
 
 import (
@@ -39,6 +40,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			return hashPassword(args[1:], stdin, stdout, stderr)
 		case "admin":
 			return admin(args[1:], stdout, stderr)
+		case "dev-config":
+			return devConfig(args[1:], os.Getenv, stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("eddy-hub", flag.ContinueOnError)

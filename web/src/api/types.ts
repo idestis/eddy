@@ -68,6 +68,12 @@ export interface ClusterInfo {
   agentVersion?: string;
   kubernetesVersion?: string;
   fluxVersion?: string;
+  /** "local" when the agent runs in local mode (dev builds only): it acts as the developer's kubeconfig identity. */
+  mode?: "local";
+  /** The agent refuses reconcile, suspend and resume. */
+  readOnly?: boolean;
+  /** The kubeconfig context a local-mode agent serves. */
+  context?: string;
   counts?: Partial<Record<Status, number>>;
 }
 

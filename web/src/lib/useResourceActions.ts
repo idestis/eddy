@@ -70,9 +70,20 @@ export function useResourceActions(cluster: ClusterInfo | undefined) {
     [cluster, askConfirm, toast],
   );
 
+  const readOnly = cluster?.readOnly === true;
+  const refuseReadOnly = useCallback(() => {
+    toast(
+      `${cluster?.name ?? "This cluster"} is in read-only local mode. Restart the agent with ALLOW_WRITES=1 to allow writes.`,
+    );
+  }, [cluster, toast]);
+
   const reconcile = useCallback(
     (r: Resource | undefined, withSource = false) => {
       if (!r) return;
+      if (readOnly) {
+        refuseReadOnly();
+        return;
+      }
       const info = kindInfo(r.kind);
       if (!info.flux) {
         toast(`${info.plural} aren't reconciled by Flux directly. Press u to jump to the owner.`);
@@ -84,20 +95,24 @@ export function useResourceActions(cluster: ClusterInfo | undefined) {
       }
       void run(r, "reconcile", withSource && info.hasSource);
     },
-    [run, toast],
+    [run, toast, readOnly, refuseReadOnly],
   );
 
   const toggleSuspend = useCallback(
     (r: Resource | undefined) => {
       if (!r) return;
+      if (readOnly) {
+        refuseReadOnly();
+        return;
+      }
       if (!kindInfo(r.kind).flux) {
         toast("Only Flux objects can be suspended.");
         return;
       }
       void run(r, r.suspended ? "resume" : "suspend");
     },
-    [run, toast],
+    [run, toast, readOnly, refuseReadOnly],
   );
 
-  return { reconcile, toggleSuspend, busy };
+  return { reconcile, toggleSuspend, busy, readOnly };
 }

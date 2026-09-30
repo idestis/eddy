@@ -1,5 +1,9 @@
 version: "3"
 
+# A gitignored .env can hold local-mode settings (see .env.example). Variables already in
+# the environment, and task variables on the command line, win over it.
+dotenv: [".env"]
+
 vars:
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
@@ -59,24 +63,53 @@ tasks:
     dir: web
     cmds: [pnpm run dev]
 
+  # Local mode (docs/development.md). Task variables: CONTEXTS=ctx1,ctx2[=name] (default: the
+  # current context), ALLOW_WRITES=1, ALLOW_WRITES_PROTECTED=1, PROTECT=<regex> (default
+  # (?i)prod), SQLITE=1, and LOCAL=0 for the real impersonating agent (kind). They override
+  # EDDY_AGENT_* from the environment or .env.
+  dev:
+    desc: "Local mode: hub, agent (your kube contexts, read-only) and web with hot reload. CONTEXTS=a,b"
+    env: &dev-env
+      CONTEXTS: '{{.CONTEXTS | default ""}}'
+      LOCAL: '{{.LOCAL | default ""}}'
+      ALLOW_WRITES: '{{.ALLOW_WRITES | default ""}}'
+      ALLOW_WRITES_PROTECTED: '{{.ALLOW_WRITES_PROTECTED | default ""}}'
+      PROTECT: '{{.PROTECT | default ""}}'
+      SQLITE: '{{.SQLITE | default ""}}'
+    deps: [ui:install]
+    cmds: [hack/dev.sh all]
+
+  dev:config:
+    desc: Write .dev/hub.yaml and .dev/agent-token for local mode (CONTEXTS=, PROTECT=, SQLITE=1)
+    env: *dev-env
+    cmds: [hack/dev.sh config]
+
   dev:hub:
-    desc: Run the hub locally with the memory store and fake login
-    env:
-      EDDY_DEV_MODE: "1"
-      EDDY_DEV_AGENT_TOKEN: dev-token-please-change-0000000000
+    desc: Run the hub with hot reload (air, -tags dev), the generated .dev/hub.yaml and fake login
+    env: *dev-env
     cmds:
-      - go run -tags dev ./cmd/hub --config hack/hub.dev.yaml
+      - hack/dev.sh config
+      - hack/dev.sh hub
 
   dev:agent:
-    desc: Run an agent against the current kubecontext, connecting to dev:hub
-    env:
-      EDDY_CLUSTER: dev
-      EDDY_HUB_URL: ws://127.0.0.1:8443/agent/v1/connect
-      EDDY_AGENT_TOKEN: dev-token-please-change-0000000000
-      EDDY_ALLOW_INSECURE: "1"
-      EDDY_HEALTH_ADDR: 127.0.0.1:8081
+    desc: Run the agent with hot reload in local mode (CONTEXTS=, ALLOW_WRITES=1); LOCAL=0 runs the impersonating agent (kind)
+    env: *dev-env
     cmds:
-      - go run ./cmd/agent
+      - hack/dev.sh config
+      - hack/dev.sh agent
+
+  dev:web:
+    desc: Vite on :5173, proxying /api, /auth and /mcp to the hub on :8080
+    deps: [ui:install]
+    cmds: [hack/dev.sh web]
+
+  dev:mock:
+    desc: Vite on :5173 with mock data (VITE_MOCK=1); no hub or agent needed
+    deps: [ui:install]
+    dir: web
+    env:
+      VITE_MOCK: "1"
+    cmds: [pnpm run dev]
 
   images:
     desc: Build the hub and agent container images

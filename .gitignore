@@ -31,3 +31,6 @@ internal/ui/dist/*
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# Local mode (task dev): generated hub config, agent token, air builds, sqlite
+/.dev/

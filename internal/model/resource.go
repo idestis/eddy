@@ -120,6 +120,13 @@ type ClusterInfo struct {
 	AgentVersion      string    `json:"agentVersion,omitempty"`
 	KubernetesVersion string    `json:"kubernetesVersion,omitempty"`
 	FluxVersion       string    `json:"fluxVersion,omitempty"`
+	// Mode, ReadOnly and Context come from the connected agent's Hello. Mode
+	// is "local" when the agent runs in local mode (dev builds only) and acts
+	// as the developer's kubeconfig identity for Context; ReadOnly means the
+	// agent refuses reconcile, suspend and resume.
+	Mode     string `json:"mode,omitempty"`
+	ReadOnly bool   `json:"readOnly,omitempty"`
+	Context  string `json:"context,omitempty"`
 	// Counts are filtered to what the viewer may list.
 	Counts map[Status]int `json:"counts,omitempty"`
 }

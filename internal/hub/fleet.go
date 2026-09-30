@@ -175,6 +175,7 @@ func (f *fleetService) Clusters(ctx context.Context, p identity.Principal) ([]mo
 		ci.Connected = true
 		ci.LastSeen = timeFromNanos(s.lastSeen.Load())
 		ci.AgentVersion, ci.KubernetesVersion, ci.FluxVersion = s.hello.AgentVersion, s.hello.KubernetesVersion, s.hello.FluxVersion
+		ci.Mode, ci.ReadOnly, ci.Context = s.hello.Mode, s.hello.ReadOnly, s.hello.Context
 		wg.Go(func() {
 			counts, err := f.counts(ctx, p, s)
 			if err != nil {
@@ -480,6 +481,10 @@ func (f *fleetService) write(ctx context.Context, p identity.Principal, cluster 
 	s := f.agents.get(cluster)
 	if s == nil {
 		return fail(store.AuditError, fmt.Errorf("%w: %s", fleet.ErrDisconnected, cluster))
+	}
+	// The agent refuses these writes itself; the hub does not forward them.
+	if s.hello.ReadOnly {
+		return fail(store.AuditDenied, fmt.Errorf("%w: %s is read-only (its agent runs in read-only local mode)", fleet.ErrForbidden, cluster))
 	}
 	_, err = s.do(ctx, protocol.Request{Op: op, Identity: protoIdentity(p), Target: ref, Args: args})
 	if err != nil {

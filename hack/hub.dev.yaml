@@ -1,6 +1,8 @@
-# Hub config for `task dev:hub` (go run -tags dev ./cmd/hub --config hack/hub.dev.yaml).
-# Run `task ui:dev` for the UI: Vite serves http://localhost:5173 and proxies /api, /auth and
-# /mcp to :8080. publicURL is the browser origin, so it must be the Vite origin, not :8080.
+# Static hub config for running the hub by hand (go run -tags dev ./cmd/hub --config
+# hack/hub.dev.yaml). `task dev` and `task dev:hub` generate .dev/hub.yaml instead; see
+# docs/development.md. Run `task dev:web` for the UI: Vite serves http://localhost:5173 and
+# proxies /api, /auth and /mcp to :8080. publicURL is the browser origin, so it must be the
+# Vite origin, not :8080.
 publicURL: http://localhost:5173
 listen:
   ui: 127.0.0.1:8080

@@ -1,0 +1,30 @@
+# Hot reload for the agent in local mode (`task dev` / `task dev:agent`). DEV ONLY.
+# Arguments after `--` go to the agent, for example:
+#   air -c .air.agent.toml -- --local --contexts kind-eddy
+# On rebuild air sends SIGINT and waits, so the agent closes its WebSocket
+# to the hub cleanly before the new binary starts.
+root = "."
+tmp_dir = ".dev/tmp"
+
+[build]
+  cmd = "go build -tags dev -gcflags='all=-N -l' -o .dev/bin/eddy-agent ./cmd/agent"
+  bin = ".dev/bin/eddy-agent"
+  # Only the packages the agent imports (go list -deps ./cmd/agent).
+  include_dir = ["cmd/agent", "internal/agent", "internal/config", "internal/devlocal", "internal/flux", "internal/model", "internal/protocol", "internal/version"]
+  include_ext = ["go"]
+  exclude_dir = ["web", "landing", "node_modules", ".dev", "deploy", "docs"]
+  exclude_regex = ["_test\\.go$"]
+  delay = 500
+  send_interrupt = true
+  kill_delay = "2s"
+  stop_on_error = true
+  log = "agent-build-errors.log"
+
+[log]
+  main_only = true
+
+[misc]
+  clean_on_exit = false
+
+[screen]
+  clear_on_rebuild = false

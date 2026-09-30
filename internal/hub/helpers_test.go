@@ -204,6 +204,11 @@ type fakeAgent struct {
 }
 
 func dialAgent(ctx context.Context, url, cluster, token string) (*fakeAgent, error) {
+	return dialAgentHello(ctx, url, token, protocol.Hello{Protocol: protocol.Version, Cluster: cluster, AgentVersion: "v0.1.0-test", KubernetesVersion: "v1.33.0", FluxVersion: "v2.7.0"})
+}
+
+// dialAgentHello connects a fake agent that sends hello as its first frame.
+func dialAgentHello(ctx context.Context, url, token string, hello protocol.Hello) (*fakeAgent, error) {
 	conn, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{
 		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}},
 	})
@@ -215,7 +220,7 @@ func dialAgent(ctx context.Context, url, cluster, token string) (*fakeAgent, err
 	}
 	conn.SetReadLimit(protocol.MaxFrameBytes)
 	a := &fakeAgent{conn: conn, cancelled: make(chan string, 16), allow: defaultAllow}
-	a.sendFrame(protocol.TypeHello, "", protocol.Hello{Protocol: protocol.Version, Cluster: cluster, AgentVersion: "v0.1.0-test", KubernetesVersion: "v1.33.0", FluxVersion: "v2.7.0"})
+	a.sendFrame(protocol.TypeHello, "", hello)
 	return a, nil
 }
 

@@ -75,7 +75,7 @@ export function CommandPalette({ initialQuery }: { initialQuery: string }) {
           run: () => ask(),
         });
       }
-      if (isFlux(selected.kind)) {
+      if (isFlux(selected.kind) && !actions.readOnly) {
         out.push({
           id: "reconcile",
           label: `Reconcile ${selected.name}`,

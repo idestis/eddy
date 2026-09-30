@@ -43,6 +43,10 @@ const fieldManager = "eddy"
 // Handler executes hub requests. Every cluster read and write goes through a
 // client that impersonates the request identity; only SubjectAccessReviews
 // use the agent's own client.
+//
+// Local mode (dev builds only, see local_dev.go) swaps Impersonate and review
+// for the kubeconfig's own identity and sets readOnly; release binaries never
+// set those unexported fields.
 type Handler struct {
 	Policy      Policy
 	Served      flux.Served
@@ -51,6 +55,20 @@ type Handler struct {
 	Self   kubernetes.Interface
 	Now    func() time.Time
 	Logger *slog.Logger
+
+	// review answers one access check; nil creates a SubjectAccessReview for
+	// the identity through Self.
+	review accessReviewer
+	// readOnly, when set, refuses every write op with a 403 carrying it.
+	readOnly string
+}
+
+// accessReviewer answers one access check for id.
+type accessReviewer func(ctx context.Context, id protocol.Identity, c protocol.AccessCheck) (bool, error)
+
+// isWrite reports whether op changes cluster state.
+func isWrite(op protocol.Op) bool {
+	return op == protocol.OpReconcile || op == protocol.OpSuspend || op == protocol.OpResume
 }
 
 // Handle runs one request and returns its JSON result. For OpLogs, lines are
@@ -59,6 +77,11 @@ type Handler struct {
 func (h *Handler) Handle(ctx context.Context, req protocol.Request, stream func(protocol.LogChunk) error) (json.RawMessage, *protocol.Error) {
 	if perr := h.Policy.Validate(req.Identity); perr != nil {
 		return nil, perr
+	}
+	if h.readOnly != "" && isWrite(req.Op) {
+		h.Logger.LogAttrs(ctx, slog.LevelInfo, "write refused: read-only",
+			slog.String("op", string(req.Op)), slog.String("target", req.Target.ID()), slog.String("user", req.Identity.User))
+		return nil, &protocol.Error{Code: 403, Message: "agent: " + h.readOnly}
 	}
 	result, err := h.dispatch(ctx, req, stream)
 	if err != nil {
@@ -292,6 +315,10 @@ func (h *Handler) access(ctx context.Context, id protocol.Identity, args protoco
 	if len(args.Checks) > maxAccessChecks {
 		return nil, badRequest("at most %d access checks per request", maxAccessChecks)
 	}
+	review := h.review
+	if review == nil {
+		review = h.subjectAccessReview
+	}
 	allowed := make([]bool, len(args.Checks))
 	errs := make([]error, len(args.Checks))
 	var wg sync.WaitGroup
@@ -300,20 +327,7 @@ func (h *Handler) access(ctx context.Context, id protocol.Identity, args protoco
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   id.User,
-				Groups: slices.Clone(id.Groups),
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Verb: c.Verb, Group: c.Group, Resource: c.Resource, Subresource: c.Subresource,
-					Namespace: c.Namespace, Name: c.Name,
-				},
-			}}
-			res, err := h.Self.AuthorizationV1().SubjectAccessReviews().Create(ctx, sar, metav1.CreateOptions{})
-			if err != nil {
-				errs[i] = fmt.Errorf("agent: subject access review %s %s/%s: %w", c.Verb, c.Group, c.Resource, err)
-				return
-			}
-			allowed[i] = res.Status.Allowed && !res.Status.Denied
+			allowed[i], errs[i] = review(ctx, id, c)
 		})
 	}
 	wg.Wait()
@@ -321,6 +335,28 @@ func (h *Handler) access(ctx context.Context, id protocol.Identity, args protoco
 		return nil, err
 	}
 	return protocol.AccessResult{Allowed: allowed}, nil
+}
+
+// subjectAccessReview asks whether id may perform c, as the agent's own
+// ServiceAccount.
+func (h *Handler) subjectAccessReview(ctx context.Context, id protocol.Identity, c protocol.AccessCheck) (bool, error) {
+	sar := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+		User:               id.User,
+		Groups:             slices.Clone(id.Groups),
+		ResourceAttributes: resourceAttributes(c),
+	}}
+	res, err := h.Self.AuthorizationV1().SubjectAccessReviews().Create(ctx, sar, metav1.CreateOptions{})
+	if err != nil {
+		return false, fmt.Errorf("agent: subject access review %s %s/%s: %w", c.Verb, c.Group, c.Resource, err)
+	}
+	return res.Status.Allowed && !res.Status.Denied, nil
+}
+
+func resourceAttributes(c protocol.AccessCheck) *authorizationv1.ResourceAttributes {
+	return &authorizationv1.ResourceAttributes{
+		Verb: c.Verb, Group: c.Group, Resource: c.Resource, Subresource: c.Subresource,
+		Namespace: c.Namespace, Name: c.Name,
+	}
 }
 
 func decodeArgs(raw json.RawMessage, v any) error {

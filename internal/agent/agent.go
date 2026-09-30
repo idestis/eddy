@@ -38,6 +38,14 @@ const (
 // (ServiceAccount) configuration; it is used unmodified only for discovery,
 // informers and SubjectAccessReviews.
 func Run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.Logger) error {
+	return run(ctx, cfg, rc, logger, nil)
+}
+
+// configureFunc adjusts the handler and Hello before the session starts. Only
+// local mode (dev builds) passes one; kube and dyn are the clients built from rc.
+type configureFunc func(h *Handler, hello *protocol.Hello, kube kubernetes.Interface, dyn dynamic.Interface)
+
+func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.Logger, configure configureFunc) error {
 	kube, err := kubernetes.NewForConfig(rc)
 	if err != nil {
 		return fmt.Errorf("agent: build client: %w", err)
@@ -70,6 +78,13 @@ func Run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 	if err != nil {
 		return err
 	}
+	h := &Handler{
+		Policy:      Policy{AllowedGroupPrefixes: cfg.AllowedGroupPrefixes, AllowedGroups: cfg.AllowedGroups, DenyUserPrefixes: cfg.DenyUserPrefixes},
+		Served:      served,
+		Impersonate: ImpersonatingFactory(rc, clientCacheSize, clientCacheTTL),
+		Self:        kube,
+		Logger:      logger,
+	}
 	sess := &Session{
 		URL:     cfg.HubURL,
 		Cluster: cfg.Cluster,
@@ -81,15 +96,12 @@ func Run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 			FluxVersion:       fluxVersion,
 			Namespaces:        cfg.Namespaces,
 		},
-		Source: c,
-		Handler: &Handler{
-			Policy:      Policy{AllowedGroupPrefixes: cfg.AllowedGroupPrefixes, AllowedGroups: cfg.AllowedGroups, DenyUserPrefixes: cfg.DenyUserPrefixes},
-			Served:      served,
-			Impersonate: ImpersonatingFactory(rc, clientCacheSize, clientCacheTTL),
-			Self:        kube,
-			Logger:      logger,
-		},
-		Logger: logger,
+		Source:  c,
+		Handler: h,
+		Logger:  logger,
+	}
+	if configure != nil {
+		configure(h, &sess.Hello, kube, dyn)
 	}
 
 	// A health server failure (for example a port in use) stops the agent.
@@ -98,6 +110,9 @@ func Run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 	healthDone := make(chan struct{})
 	go func() {
 		defer close(healthDone)
+		if cfg.HealthAddr == "" {
+			return // local mode runs several sessions in one process without one
+		}
 		if err := serveHealth(runCtx, cfg.HealthAddr, c.Synced, sess.Connected); err != nil {
 			cancel(err)
 		}
