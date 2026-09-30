@@ -246,7 +246,7 @@ func TestSummarizePods(t *testing.T) {
 		{"init container crash", obj{"phase": "Pending", "initContainerStatuses": []any{obj{"name": "init", "state": obj{"waiting": obj{"reason": "CrashLoopBackOff"}}}}}, model.StatusFailed, "init: CrashLoopBackOff"},
 		{"creating", obj{"phase": "Pending", "containerStatuses": cs(false, obj{"waiting": obj{"reason": "ContainerCreating"}})}, model.StatusReconciling, "app: ContainerCreating"},
 		{"not ready", obj{"phase": "Running", "containerStatuses": cs(false, obj{"running": obj{}})}, model.StatusReconciling, "0 of 1 containers ready"},
-		{"succeeded", obj{"phase": "Succeeded"}, model.StatusReady, "Completed"},
+		{"succeeded", obj{"phase": "Succeeded"}, model.StatusCompleted, "Completed"},
 		{"evicted", obj{"phase": "Failed", "reason": "Evicted", "message": "The node was low on resource: memory."}, model.StatusFailed, "low on resource"},
 		{"no status", nil, model.StatusUnknown, "No status"},
 	}
@@ -331,5 +331,36 @@ func TestOneLine(t *testing.T) {
 	}
 	if got := OneLine("a\n\n  b\tc", 10); got != "a b c" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSummarizeOCIHelmRepository(t *testing.T) {
+	src := "source.toolkit.fluxcd.io/v1"
+	tests := []struct {
+		name    string
+		spec    obj
+		status  obj
+		want    model.Status
+		wantMsg string
+	}{
+		{"oci without conditions", obj{"type": "oci", "url": "oci://ghcr.io/org/charts"}, nil, model.StatusReady, "OCI repository · not reconciled by source-controller"},
+		{"oci suspended", obj{"type": "oci", "suspend": true}, nil, model.StatusSuspended, "Reconciliation suspended"},
+		{"oci with a Ready condition", obj{"type": "oci"}, obj{"conditions": conds(cond("Ready", "False", "Failed", "auth failed"))}, model.StatusFailed, "auth failed"},
+		{"default type without conditions", obj{"url": "https://charts.example.com"}, nil, model.StatusUnknown, "Waiting for the controller to report status"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := newObj(src, KindHelmRepository, "flux-system", "charts", tt.spec, tt.status)
+			u.Object["metadata"].(obj)["generation"] = int64(1)
+			r := Summarize(mustKind(t, KindHelmRepository), u, nil)
+			if r.Status != tt.want || r.Message != tt.wantMsg {
+				t.Fatalf("got %s %q", r.Status, r.Message)
+			}
+		})
+	}
+	// Other kinds with type: oci-like specs are unaffected.
+	r := Summarize(mustKind(t, KindGitRepository), newObj(src, KindGitRepository, "flux-system", "g", obj{"type": "oci"}, nil), nil)
+	if r.Status != model.StatusUnknown {
+		t.Fatalf("git repository status %s", r.Status)
 	}
 }

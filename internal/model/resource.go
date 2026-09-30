@@ -18,7 +18,14 @@ const (
 	StatusReconciling Status = "reconciling"
 	StatusSuspended   Status = "suspended"
 	StatusUnknown     Status = "unknown"
+	// StatusCompleted is a run-to-completion object that finished
+	// successfully: a Job with the Complete condition or a Pod in phase
+	// Succeeded. Nothing is running and nothing needs attention.
+	StatusCompleted Status = "completed"
 )
+
+// Statuses lists every Status value, in the order the UI and filters use.
+var Statuses = []Status{StatusReady, StatusFailed, StatusReconciling, StatusSuspended, StatusUnknown, StatusCompleted}
 
 // Ref identifies an object inside one cluster.
 type Ref struct {
@@ -93,6 +100,9 @@ type Resource struct {
 	Hosts []string `json:"hosts,omitempty"`
 	// Schedule is a CronJob's cron schedule, e.g. "0 2 * * *".
 	Schedule string `json:"schedule,omitempty"`
+	// Completions is a Job's "succeeded/completions", e.g. "1/1". Replicas
+	// is empty once a Job has finished, so no live pods are implied.
+	Completions string `json:"completions,omitempty"`
 	// InventoryOnly marks an object known only from a Kustomization's
 	// status.inventory, whose kind Eddy does not watch (ConfigMap, Secret,
 	// ServiceAccount, RBAC, CRDs…). Such a summary carries the Ref, Version,
@@ -106,6 +116,87 @@ type Resource struct {
 	LastChanged time.Time `json:"lastChanged,omitzero"`
 	// ResourceVersion is the Kubernetes resourceVersion, used to order deltas.
 	ResourceVersion string `json:"resourceVersion"`
+}
+
+// Finding is something the agent noticed about a cluster that is not the
+// status of one resource, such as finished Jobs piling up in a namespace.
+// Findings travel beside the resources (protocol.FindingSet) and are shown
+// on the cluster, never as resource rows.
+type Finding struct {
+	// ID is "<kind>/<namespace>", unique within a cluster.
+	ID   string      `json:"id"`
+	Kind FindingKind `json:"kind"`
+	// Severity "warning" needs attention; "info" is context only.
+	Severity  Severity `json:"severity"`
+	Namespace string   `json:"namespace"`
+	// Message is one line for lists; Recommendation says how to fix it.
+	Message        string `json:"message"`
+	Recommendation string `json:"recommendation,omitempty"`
+	// Jobs is set for FindingJobBuildup.
+	Jobs *JobBuildup `json:"jobs,omitempty"`
+}
+
+// FindingKind names a kind of Finding.
+type FindingKind string
+
+// FindingJobBuildup: finished Jobs in a namespace that the agent does not
+// list one by one. There is one per namespace with hidden Jobs; it is a
+// warning once more than JobBuildup.Threshold are hidden, info otherwise.
+const FindingJobBuildup FindingKind = "job-buildup"
+
+// Severity of a Finding.
+type Severity string
+
+const (
+	SeverityWarning Severity = "warning"
+	SeverityInfo    Severity = "info"
+)
+
+// JobBuildup describes the finished Jobs of one namespace. The agent lists
+// active Jobs, recent failures and the newest few finished Jobs of each group
+// one by one and hides the rest (GET …/resources?kind=Job&includeHidden=1
+// returns them). Counts cover every finished Job in the namespace, listed
+// or hidden, unless they say "hidden".
+type JobBuildup struct {
+	// Hidden is how many finished Jobs are not listed one by one.
+	Hidden int `json:"hidden"`
+	// Finished counts every finished Job; Succeeded and Failed split it.
+	Finished  int `json:"finished"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	// WithoutTTL counts finished Jobs without spec.ttlSecondsAfterFinished:
+	// nothing deletes them unless an owner (a CronJob's history limits) does.
+	WithoutTTL int `json:"withoutTTL"`
+	// StandaloneFailed counts failed finished Jobs with no owner and no TTL,
+	// which Kubernetes never garbage-collects.
+	StandaloneFailed int `json:"standaloneFailed"`
+	// Oldest and Newest are finish times of the oldest and newest finished Job.
+	Oldest time.Time `json:"oldest,omitzero"`
+	Newest time.Time `json:"newest,omitzero"`
+	// Groups are the largest groups of finished Jobs, biggest first (at most
+	// five). A group is a controlling owner, a well-known grouping label, a
+	// generateName, a name prefix or the namespace itself.
+	Groups []JobGroup `json:"groups,omitempty"`
+	// Threshold is the agent's EDDY_JOB_BUILDUP_THRESHOLD: the finding is a
+	// warning when Hidden exceeds it.
+	Threshold int `json:"threshold"`
+}
+
+// JobGroup is one group of finished Jobs in a JobBuildup.
+type JobGroup struct {
+	// By says how the group was found: "owner", "label", "generateName",
+	// "prefix" or "namespace".
+	By string `json:"by"`
+	// Name is the owner, label value, generateName or prefix ("" for the
+	// namespace group); Label is a human description, e.g.
+	// "prefect deployment nightly-sync" or "CronJob backup".
+	Name       string `json:"name"`
+	Label      string `json:"label"`
+	Count      int    `json:"count"`
+	Failed     int    `json:"failed,omitempty"`
+	WithoutTTL int    `json:"withoutTTL,omitempty"`
+	// Owner is the controlling owner when By is "owner".
+	Owner *Ref `json:"owner,omitempty"`
 }
 
 // Event is a trimmed core/v1 Event about a resource.
@@ -142,4 +233,7 @@ type ClusterInfo struct {
 	Context  string `json:"context,omitempty"`
 	// Counts are filtered to what the viewer may list.
 	Counts map[Status]int `json:"counts,omitempty"`
+	// Findings are filtered the same way: a job-buildup finding is shown to
+	// whoever may list Jobs in its namespace.
+	Findings []Finding `json:"findings,omitempty"`
 }

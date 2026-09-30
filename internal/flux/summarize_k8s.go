@@ -105,8 +105,10 @@ func summarizeIngress(obj map[string]any, r *model.Resource) {
 	r.Status, r.Message = model.StatusReady, OneLine(strings.Join(parts, " · "), maxMessage)
 }
 
-// summarizeJob: suspended, then the Failed and Complete conditions, then
-// active pods. Replicas is "succeeded/completions".
+// summarizeJob: the Failed and Complete conditions first, then suspended,
+// then active pods. Completions is "succeeded/completions"; Replicas carries
+// the same only while the Job has not finished, so a finished Job does not
+// look like it has live pods. A finished Job's LastChanged is its finish time.
 func summarizeJob(obj map[string]any, r *model.Resource) {
 	r.Images = podSpecImages(mapping(obj, "spec", "template", "spec"))
 	completions, ok := integer(obj, "spec", "completions")
@@ -116,7 +118,7 @@ func summarizeJob(obj map[string]any, r *model.Resource) {
 	succeeded, _ := integer(obj, "status", "succeeded")
 	failed, _ := integer(obj, "status", "failed")
 	active, _ := integer(obj, "status", "active")
-	r.Replicas = fmt.Sprintf("%d/%d", succeeded, completions)
+	r.Completions = fmt.Sprintf("%d/%d", succeeded, completions)
 	r.Suspended = boolean(obj, "spec", "suspend")
 	complete := condition(r.Conditions, "Complete")
 	failedCond := condition(r.Conditions, "Failed")
@@ -128,16 +130,27 @@ func summarizeJob(obj map[string]any, r *model.Resource) {
 		}
 		r.Status, r.Message = model.StatusFailed, msg
 	case isTrue(complete):
-		r.Status, r.Message = model.StatusReady, fmt.Sprintf("Complete, %d/%d succeeded", succeeded, completions)
+		msg := "Completed"
+		start, done := timestamp(obj, "status", "startTime"), timestamp(obj, "status", "completionTime")
+		if !start.IsZero() && !done.IsZero() && !done.Before(start) {
+			msg += " in " + done.Sub(start).Round(time.Second).String()
+		}
+		r.Status, r.Message = model.StatusCompleted, msg
 	case r.Suspended:
+		r.Replicas = r.Completions
 		r.Status, r.Message = model.StatusSuspended, "Job suspended"
 	case active > 0:
-		msg := fmt.Sprintf("Running: %d active, %d/%d succeeded", active, succeeded, completions)
+		r.Replicas = r.Completions
+		msg := fmt.Sprintf("Running, %d active", active)
+		if completions > 1 {
+			msg += fmt.Sprintf(", %d/%d succeeded", succeeded, completions)
+		}
 		if failed > 0 {
 			msg += fmt.Sprintf(", %d failed", failed)
 		}
 		r.Status, r.Message = model.StatusReconciling, msg
 	default:
+		r.Replicas = r.Completions
 		r.Status, r.Message = model.StatusReconciling, "Waiting for pods"
 	}
 	r.Message = OneLine(r.Message, maxMessage)

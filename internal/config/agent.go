@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Agent is configured entirely from environment variables (set by the
@@ -41,6 +42,20 @@ type Agent struct {
 	MaxConcurrent    int     // EDDY_MAX_CONCURRENT, default 16: user requests in flight
 	MaxLogStreams    int     // EDDY_MAX_LOG_STREAMS, default 8: log streams in flight (part of MaxConcurrent)
 	MaxSARConcurrent int     // EDDY_MAX_SAR_CONCURRENT, default 8: SubjectAccessReviews in flight
+	// Workload log streams (one request, several pods): MaxLogPods caps the
+	// pods one stream follows (newest first) and LogLineRate its lines per
+	// second across all of them; excess lines are dropped with a marker.
+	MaxLogPods  int // EDDY_MAX_LOG_PODS, default 20
+	LogLineRate int // EDDY_LOG_LINE_RATE, default 2000
+
+	// Job history policy. The agent watches every Job but lists only active
+	// ones, failed ones finished within JobFailedMaxAge and the newest
+	// JobHistory finished ones per group; the rest fold into one Job
+	// history row per namespace, which warns once it hides more than
+	// JobBuildupThreshold Jobs.
+	JobHistory          int           // EDDY_JOB_HISTORY, default 5
+	JobFailedMaxAge     time.Duration // EDDY_JOB_FAILED_MAX_AGE, default 24h
+	JobBuildupThreshold int           // EDDY_JOB_BUILDUP_THRESHOLD, default 100
 }
 
 // Agent limit defaults.
@@ -50,6 +65,12 @@ const (
 	DefaultMaxConcurrent    = 16
 	DefaultMaxLogStreams    = 8
 	DefaultMaxSARConcurrent = 8
+	DefaultMaxLogPods       = 20
+	DefaultLogLineRate      = 2000
+
+	DefaultJobHistory          = 5
+	DefaultJobFailedMaxAge     = 24 * time.Hour
+	DefaultJobBuildupThreshold = 100
 )
 
 // ApplyLimitDefaults fills unset limits with their defaults. LoadAgent calls
@@ -69,6 +90,21 @@ func (a *Agent) ApplyLimitDefaults() {
 	}
 	if a.MaxSARConcurrent <= 0 {
 		a.MaxSARConcurrent = DefaultMaxSARConcurrent
+	}
+	if a.MaxLogPods <= 0 {
+		a.MaxLogPods = DefaultMaxLogPods
+	}
+	if a.LogLineRate <= 0 {
+		a.LogLineRate = DefaultLogLineRate
+	}
+	if a.JobHistory <= 0 {
+		a.JobHistory = DefaultJobHistory
+	}
+	if a.JobFailedMaxAge <= 0 {
+		a.JobFailedMaxAge = DefaultJobFailedMaxAge
+	}
+	if a.JobBuildupThreshold <= 0 {
+		a.JobBuildupThreshold = DefaultJobBuildupThreshold
 	}
 }
 
@@ -122,6 +158,18 @@ func LoadAgent() (*Agent, error) {
 	positiveInt("EDDY_MAX_CONCURRENT", &a.MaxConcurrent)
 	positiveInt("EDDY_MAX_LOG_STREAMS", &a.MaxLogStreams)
 	positiveInt("EDDY_MAX_SAR_CONCURRENT", &a.MaxSARConcurrent)
+	positiveInt("EDDY_MAX_LOG_PODS", &a.MaxLogPods)
+	positiveInt("EDDY_LOG_LINE_RATE", &a.LogLineRate)
+	positiveInt("EDDY_JOB_HISTORY", &a.JobHistory)
+	positiveInt("EDDY_JOB_BUILDUP_THRESHOLD", &a.JobBuildupThreshold)
+	if v := strings.TrimSpace(os.Getenv("EDDY_JOB_FAILED_MAX_AGE")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("EDDY_JOB_FAILED_MAX_AGE must be a positive duration such as 24h, got %q", v))
+		} else {
+			a.JobFailedMaxAge = d
+		}
+	}
 	a.ApplyLimitDefaults()
 	if len(a.AllowedGroupPrefixes) == 0 {
 		a.AllowedGroupPrefixes = []string{"eddy:"}

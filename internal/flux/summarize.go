@@ -203,6 +203,11 @@ func summarizeFlux(k Kind, obj map[string]any, r *model.Resource) {
 		r.Status, r.Message = model.StatusFailed, ready.Message
 	case isTrue(reconciling):
 		r.Status, r.Message = model.StatusReconciling, reconciling.Message
+	case ready == nil && k.Kind == KindHelmRepository && str(obj, "spec", "type") == "oci":
+		// Since Flux 2.1 source-controller does not reconcile OCI
+		// HelmRepositories: helm-controller pulls their charts directly,
+		// so they never get a Ready condition.
+		r.Status, r.Message = model.StatusReady, "OCI repository · not reconciled by source-controller"
 	case ready == nil:
 		r.Status, r.Message = model.StatusUnknown, "Waiting for the controller to report status"
 	case isTrue(ready) && generationPending(obj):
@@ -427,7 +432,7 @@ func summarizePod(obj map[string]any, r *model.Resource) {
 	phase := str(obj, "status", "phase")
 	switch phase {
 	case "Succeeded":
-		r.Status, r.Message = model.StatusReady, "Completed"
+		r.Status, r.Message = model.StatusCompleted, "Completed"
 	case "Failed":
 		r.Status, r.Message = model.StatusFailed, firstNonEmpty(str(obj, "status", "message"), str(obj, "status", "reason"), "Failed")
 	case "Pending":

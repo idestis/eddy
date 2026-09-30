@@ -4,6 +4,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/idestis/eddy/internal/model"
 )
@@ -105,12 +106,22 @@ const ModeLocal = "local"
 // the rest immediately as upsert-only Deltas.
 type Snapshot struct {
 	Resources []model.Resource `json:"resources"`
+	// Findings, when set, replaces the cluster's findings (absent from
+	// older agents, which have none).
+	Findings *FindingSet `json:"findings,omitempty"`
 }
 
 // Delta carries changes since the previous snapshot or delta.
 type Delta struct {
 	Upserts []model.Resource `json:"upserts,omitempty"`
 	Deletes []string         `json:"deletes,omitempty"` // Resource ids
+	// Findings, when set, replaces the cluster's findings.
+	Findings *FindingSet `json:"findings,omitempty"`
+}
+
+// FindingSet is the complete set of a cluster's findings.
+type FindingSet struct {
+	Items []model.Finding `json:"items"`
 }
 
 // Identity is the user an agent impersonates. The agent re-validates it:
@@ -131,7 +142,28 @@ const (
 	OpEvents    Op = "events"
 	OpLogs      Op = "logs"
 	OpAccess    Op = "access"
+	// OpHiddenJobs lists the finished Jobs the agent's Job policy does not
+	// surface. It is answered from the agent's cache, like OpAccess without
+	// impersonation: the hub restricts Namespaces to those where the caller
+	// may list Jobs (SAR) and filters the result again.
+	OpHiddenJobs Op = "hiddenJobs"
 )
+
+// HiddenJobsArgs for OpHiddenJobs. Jobs are ordered by namespace, then
+// newest finished first.
+type HiddenJobsArgs struct {
+	Namespaces []string `json:"namespaces"`
+	Offset     int      `json:"offset,omitempty"`
+	Limit      int      `json:"limit,omitempty"` // agent default 500, cap 1000
+}
+
+// HiddenJobsResult answers HiddenJobsArgs. Next is the Offset of the next
+// page, 0 when there is none. Items are cut short to fit a frame.
+type HiddenJobsResult struct {
+	Items []model.Resource `json:"items"`
+	Total int              `json:"total"`
+	Next  int              `json:"next,omitempty"`
+}
 
 // Request is the payload of a TypeRequest frame.
 type Request struct {
@@ -146,11 +178,25 @@ type ReconcileArgs struct {
 	WithSource bool `json:"withSource,omitempty"`
 }
 
-// LogsArgs for OpLogs. Target is the Pod.
+// LogsArgs for OpLogs. Target is a Pod, or a workload: a Deployment,
+// StatefulSet, DaemonSet, ReplicaSet or Job. For a workload the agent finds
+// its current pods in its cache, streams every pod × container as
+// LogChunk.Entries and, with Follow, picks up new pods and ends the streams
+// of deleted ones. A Pod target streams LogChunk.Lines, as before.
 type LogsArgs struct {
 	Container string `json:"container,omitempty"`
 	Follow    bool   `json:"follow,omitempty"`
-	TailLines int64  `json:"tailLines,omitempty"` // agent caps at 5000
+	// TailLines is per pod (and container). A Pod target defaults to 1000
+	// and caps at 5000; a workload target defaults to 100 and caps at 1000.
+	TailLines int64 `json:"tailLines,omitempty"`
+	// SinceSeconds, when set, starts each stream that many seconds back.
+	SinceSeconds int64 `json:"sinceSeconds,omitempty"`
+	// Pods limits a workload stream to these pod names (workload targets
+	// only; names that are not pods of the workload are ignored).
+	Pods []string `json:"pods,omitempty"`
+	// AllContainers streams every container of each pod when Container is
+	// empty (workload targets only). Nil means true.
+	AllContainers *bool `json:"allContainers,omitempty"`
 }
 
 // AccessCheck is one SubjectAccessReview question.
@@ -188,8 +234,59 @@ type EventsResult struct {
 // stream (even without Follow): zero or more Stream frames, then exactly one
 // StreamEnd whose payload is a Response that may carry an Error. Every other
 // op gets exactly one Response; writes return an empty Result.
+//
+// A Pod target sends Lines. A workload target sends Entries, and Pods once
+// at the start and again whenever the set of streamed pods changes; a chunk
+// may carry both.
 type LogChunk struct {
-	Lines []string `json:"lines"`
+	Lines   []string   `json:"lines,omitempty"`
+	Entries []LogEntry `json:"entries,omitempty"`
+	Pods    *LogPods   `json:"pods,omitempty"`
+}
+
+// LogEntry is one line of a workload log stream, or a marker about it.
+type LogEntry struct {
+	Pod       string `json:"pod"`
+	Container string `json:"container,omitempty"`
+	Line      string `json:"line"`
+	// TS is the kubelet timestamp of the line, when it had one.
+	TS time.Time `json:"ts,omitzero"`
+	// Marker is set on entries that are not log lines; Line then explains.
+	Marker LogMarker `json:"marker,omitempty"`
+}
+
+// LogMarker names a non-line LogEntry.
+type LogMarker string
+
+const (
+	// MarkerForbidden: the user may not read this pod's logs; the pod is
+	// skipped (sent once per pod).
+	MarkerForbidden LogMarker = "forbidden"
+	// MarkerEnded: the stream of this pod (or container) ended because the
+	// pod was deleted or left the streamed set.
+	MarkerEnded LogMarker = "ended"
+	// MarkerError: a stream failed; Line holds the reason.
+	MarkerError LogMarker = "error"
+	// MarkerDropped: lines were dropped by the stream's rate limit; Pod is
+	// empty and Line says how many.
+	MarkerDropped LogMarker = "dropped"
+)
+
+// LogPods is the set of pods a workload log stream follows.
+type LogPods struct {
+	Pods []LogPod `json:"pods"`
+	// Total counts the workload's matching pods; when it exceeds Limit only
+	// the newest Limit pods are streamed.
+	Total int `json:"total"`
+	Limit int `json:"limit"`
+}
+
+// LogPod is one streamed pod.
+type LogPod struct {
+	Name       string       `json:"name"`
+	Containers []string     `json:"containers"`
+	Status     model.Status `json:"status"`
+	CreatedAt  time.Time    `json:"createdAt,omitzero"`
 }
 
 // Response is the payload of TypeResponse and, optionally, TypeStreamEnd.

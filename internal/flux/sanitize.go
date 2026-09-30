@@ -86,14 +86,19 @@ func redactEnv(spec map[string]any) {
 }
 
 // Trim reduces an object to what Summarize reads, for use as an informer
-// transform: it drops managedFields and every annotation, pod specs other than
+// transform: it drops managedFields and every annotation (a Job keeps only
+// AnnotationHelmHook, which JobFactsOf groups by), pod specs other than
 // container names and images, and HelmRelease values. The result must only be
 // used for summaries, never for the yaml operation.
 func Trim(k Kind, u *unstructured.Unstructured) {
 	obj := u.Object
 	if meta := mapping(obj, "metadata"); meta != nil {
 		delete(meta, "managedFields")
+		hook := str(meta, "annotations", AnnotationHelmHook)
 		delete(meta, "annotations")
+		if k.Kind == KindJob && hook != "" {
+			meta["annotations"] = map[string]any{AnnotationHelmHook: OneLine(hook, 100)}
+		}
 	}
 	if spec := podSpec(k, obj); spec != nil {
 		var containers []any

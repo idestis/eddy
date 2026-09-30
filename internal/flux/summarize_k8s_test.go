@@ -75,19 +75,23 @@ func TestSummarizeJob(t *testing.T) {
 		want         model.Status
 		wantMsg      string
 		wantReplicas string
+		wantComplete string
 	}{
-		{"complete", tpl, obj{"succeeded": int64(1), "conditions": conds(cond("Complete", "True", "", ""))}, model.StatusReady, "Complete, 1/1 succeeded", "1/1"},
+		{"complete", tpl, obj{"succeeded": int64(1), "startTime": "2026-02-01T00:00:00Z", "completionTime": "2026-02-01T00:02:14Z", "conditions": conds(cond("Complete", "True", "", ""))},
+			model.StatusCompleted, "Completed in 2m14s", "", "1/1"},
+		{"complete without times", tpl, obj{"succeeded": int64(1), "conditions": conds(cond("Complete", "True", "", ""))}, model.StatusCompleted, "Completed", "", "1/1"},
 		{"failed", tpl, obj{"failed": int64(6), "conditions": conds(cond("Failed", "True", "BackoffLimitExceeded", "Job has reached the specified backoff limit"))},
-			model.StatusFailed, "BackoffLimitExceeded: Job has reached the specified backoff limit", "0/1"},
-		{"running", with(obj{"completions": int64(3)}), obj{"active": int64(2), "succeeded": int64(1), "failed": int64(1)}, model.StatusReconciling, "Running: 2 active, 1/3 succeeded, 1 failed", "1/3"},
-		{"suspended", with(obj{"suspend": true}), nil, model.StatusSuspended, "Job suspended", "0/1"},
-		{"pending", tpl, nil, model.StatusReconciling, "Waiting for pods", "0/1"},
+			model.StatusFailed, "BackoffLimitExceeded: Job has reached the specified backoff limit", "", "0/1"},
+		{"running", with(obj{"completions": int64(3)}), obj{"active": int64(2), "succeeded": int64(1), "failed": int64(1)}, model.StatusReconciling, "Running, 2 active, 1/3 succeeded, 1 failed", "1/3", "1/3"},
+		{"running single", tpl, obj{"active": int64(1)}, model.StatusReconciling, "Running, 1 active", "0/1", "0/1"},
+		{"suspended", with(obj{"suspend": true}), nil, model.StatusSuspended, "Job suspended", "0/1", "0/1"},
+		{"pending", tpl, nil, model.StatusReconciling, "Waiting for pods", "0/1", "0/1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := Summarize(mustKind(t, KindJob), newObj("batch/v1", KindJob, "apps", "backup-1", tt.spec, tt.status), nil)
-			if r.Status != tt.want || r.Message != tt.wantMsg || r.Replicas != tt.wantReplicas || !slices.Equal(r.Images, []string{"backup:3"}) {
-				t.Fatalf("got %s %q %q %v", r.Status, r.Message, r.Replicas, r.Images)
+			if r.Status != tt.want || r.Message != tt.wantMsg || r.Replicas != tt.wantReplicas || r.Completions != tt.wantComplete || !slices.Equal(r.Images, []string{"backup:3"}) {
+				t.Fatalf("got %s %q replicas %q completions %q %v", r.Status, r.Message, r.Replicas, r.Completions, r.Images)
 			}
 		})
 	}
@@ -170,7 +174,7 @@ func TestBatchOwnership(t *testing.T) {
 	}
 	pod := newObj("v1", KindPod, "apps", "nightly-29260001-abcde", nil, obj{"phase": "Succeeded"})
 	pod.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "batch/v1", Kind: KindJob, Name: "nightly-29260001", Controller: &yes}})
-	if r := Summarize(mustKind(t, KindPod), pod, nil); r.Owner == nil || r.Owner.Kind != KindJob || r.Owner.Group != GroupBatch {
+	if r := Summarize(mustKind(t, KindPod), pod, nil); r.Owner == nil || r.Owner.Kind != KindJob || r.Owner.Group != GroupBatch || r.Status != model.StatusCompleted {
 		t.Fatalf("pod owner %+v", r.Owner)
 	}
 	svc := newObj("v1", KindService, "apps", "web", obj{"clusterIP": "10.0.0.1"}, nil)
