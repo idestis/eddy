@@ -174,8 +174,25 @@ whole Deployment and it divides them by `replicaCount` (rounding down, at least 
 | `limits.qps` (20) | `EDDY_KUBE_QPS` | client-go QPS. One token bucket for the agent's own clients (discovery, informers, SubjectAccessReviews) and a separate one shared by every impersonated client. |
 | `limits.burst` (40) | `EDDY_KUBE_BURST` | client-go burst, for both buckets. |
 | `limits.concurrency` (16) | `EDDY_MAX_CONCURRENT` | User requests in flight. More get a 503. |
-| `limits.logStreams` (8) | `EDDY_MAX_LOG_STREAMS` | Log streams in flight, counted within the requests. |
+| `limits.logStreams` (8) | `EDDY_MAX_LOG_STREAMS` | Log streams in flight, counted within the requests. A workload log stream (all pods of a Deployment, StatefulSet, DaemonSet or Job) counts as one. |
 | `limits.sarConcurrency` (8) | `EDDY_MAX_SAR_CONCURRENT` | SubjectAccessReviews in flight across all access checks. |
+
+Two more limits apply per log stream and are not divided by `replicaCount`:
+
+| Chart value (default) | Environment variable | What it limits |
+|---|---|---|
+| `workloadLogs.maxPods` (20) | `EDDY_MAX_LOG_PODS` | Pods one workload log stream follows, newest first. It opens one API server log stream per pod and container, at most 3 × this many. |
+| `workloadLogs.lineRate` (2000) | `EDDY_LOG_LINE_RATE` | Lines per second of one workload log stream, across its pods, with a two-second burst. Excess lines are dropped and reported with a `dropped` marker. |
+
+Finished Jobs are kept out of the lists so clusters that never clean them up stay usable. The agent still watches every Job, in its trimmed form:
+
+| Chart value (default) | Environment variable | What it controls |
+|---|---|---|
+| `jobs.history` (5) | `EDDY_JOB_HISTORY` | Finished Jobs listed per group (owner, well-known label, generateName or name prefix); at most 10× this per namespace. |
+| `jobs.failedMaxAge` (24h) | `EDDY_JOB_FAILED_MAX_AGE` | Failed Jobs that finished more recently are always listed. |
+| `jobs.buildupThreshold` (100) | `EDDY_JOB_BUILDUP_THRESHOLD` | A namespace's `job-buildup` finding becomes a warning once it hides more Jobs than this. |
+
+Hidden Jobs are served on demand from the agent's cache (the `hiddenJobs` request), for the namespaces where the hub's SubjectAccessReview says the user may list Jobs.
 
 A request also carries at most 100 access checks. The hub adds its own limits on top
 (per-user rates, SSE and log-stream caps, the 45 s access-check cache).

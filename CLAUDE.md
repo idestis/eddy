@@ -54,8 +54,10 @@ every file is written for outside contributors.
 
 - Agents only dial out. The hub holds no workload-cluster credentials. The agent's
   ServiceAccount has no write RBAC.
-- Every cluster read and write runs impersonated as the requesting user, whether the request
-  comes from the browser, a PAT over MCP, or Ask AI.
+- Every direct cluster read (YAML, events, logs, Get) and every write runs impersonated as the
+  requesting user, whether the request comes from the browser, a PAT over MCP, or Ask AI.
+  Summaries served from the agent's shared cache (lists, counts, hidden Jobs, findings) are
+  not impersonated. Instead, the hub SAR-filters them per user before they leave the hub.
 - Never impersonate `system:*` users or groups. Groups get the `eddy:` prefix and must match
   `allowedGroupPrefixes`. `denyUserPrefixes` is enforced on the hub, and the agent checks again.
 - Never cache or send Secret or ConfigMap data. Send summaries only. YAML reads use a kind

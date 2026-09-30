@@ -65,7 +65,9 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | Method and path | Response |
 |---|---|
 | `GET /api/v1/clusters` | `{items: ClusterInfo[]}`, counts filtered by RBAC. Agents in dev local mode add `mode: "local"`, `readOnly` and `context`. Writes to a `readOnly` cluster return 403. |
-| `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot. `kind` may repeat or be comma-separated. An unknown kind or status gives 400. `resourceVersion` is an opaque hub counter. |
+| `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot. `kind` may repeat or be comma-separated. An unknown kind or status gives 400. `resourceVersion` is an opaque hub counter. Finished Jobs the agent hides are not in it; see [Jobs](#jobs-completed-status-hidden-jobs-and-findings). |
+| `GET …/resources?kind=Job&includeHidden=1&namespace=&limit=&cursor=` | `{items, resourceVersion, hidden: {total, next?}}`. Without `cursor`: the listed Jobs plus the first page of hidden ones. With `cursor=hidden.next`: hidden Jobs only (`resourceVersion` is `""`). `limit` is 1–1000 (default 500) hidden Jobs per page. `includeHidden` without `kind=Job` gives 400. |
+| `GET /api/v1/clusters/{c}/findings` | `{items: Finding[]}`, the cluster's findings the user may see. The same list is `ClusterInfo.findings`. |
 | `GET /api/v1/clusters/{c}/objects/{kind}/{ns}/{name}` | `Resource` |
 | `GET …/objects/{kind}/{ns}/{name}/children` | `{items: Resource[]}`. Mainly for MCP. The UI builds trees from each summary's `owner`, which is filled from ownerReferences, Flux labels and inventory when known. |
 | `GET …/objects/{kind}/{ns}/{name}/yaml` | `{yaml}`, redacted, with a kind allowlist |
@@ -74,6 +76,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | `POST …/objects/{kind}/{ns}/{name}/suspend` | body `{confirm?: string}` → 202. Protected cluster without `confirm == cluster` gives 428. |
 | `POST …/objects/{kind}/{ns}/{name}/resume` | body `{confirm?: string}` → 202 |
 | `GET /api/v1/clusters/{c}/pods/{ns}/{name}/logs?container=&tail=&follow=` | SSE `log` events `{lines: string[]}`, then `end` with `{}` or `{error:{code,message}}` (including when a followed pod stops). `tail` defaults to 500 and must be 1–5000. `follow` is a boolean. At most 4 streams per user, beyond that 429. Works with the session cookie alone, since EventSource cannot send headers. Pod summaries list `containers` for the picker. |
+| `GET /api/v1/clusters/{c}/workloads/{kind}/{ns}/{name}/logs?container=&pods=&allContainers=&tail=&since=&follow=` | SSE logs of every pod of a Deployment, StatefulSet, DaemonSet or Job; see [Workload logs](#workload-logs). |
 
 ### Resource fields and inventory-only rows
 
@@ -83,6 +86,79 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
   - **Endpoints:** `GET …/objects/{kind}/…` works for them. `/yaml` and `/events` return 403 `forbidden` for inventory-only rows and for kinds outside the table.
   - **Counts** exclude them.
 - **Kinds added** to the table: Service, PersistentVolumeClaim (core), Ingress (networking.k8s.io), Job, CronJob (batch) and HorizontalPodAutoscaler (autoscaling).
+- **Statuses:** `ready`, `failed`, `reconciling`, `suspended`, `unknown` and `completed`. `completed` is a finished run: a Job with the `Complete` condition or a Pod in phase `Succeeded`. It is healthy (not "needs attention") and has its own bucket in `ClusterInfo.counts`. `?status=completed` filters on it.
+- **OCI HelmRepositories** (`spec.type: oci`) without a `Ready` condition are `ready` with the message "OCI repository · not reconciled by source-controller": since Flux 2.1 source-controller leaves them alone and helm-controller pulls their charts directly. Suspended ones stay `suspended`.
+
+### Jobs: completed status, hidden Jobs and findings
+
+- **Job summaries:**
+  - A completed Job has status `completed` and a message such as `Completed in 2m14s`; its age is `lastChanged`, the finish time.
+  - A running Job is `reconciling`, `Running, 1 active`. A failed Job is `failed` with the reason.
+  - `completions` is `"succeeded/completions"` (`"1/1"`) on every Job. `replicas` carries the same only while the Job has not finished, so a finished Job does not look like it has live pods.
+- **Hidden Jobs:** clusters that never clean up finished Jobs can hold tens of thousands of them. The agent watches every Job but lists only:
+  - Jobs that have not finished;
+  - failed Jobs that finished within `EDDY_JOB_FAILED_MAX_AGE` (24h);
+  - the newest `EDDY_JOB_HISTORY` (5) finished Jobs of each group, and at most 10× that per namespace.
+
+  A group is, in this order: the controlling owner (a CronJob); a well-known label (`batch.kubernetes.io/cronjob-name`, `prefect.io/deployment-name`, `prefect.io/work-pool-name`, the release of a Helm hook Job, `app.kubernetes.io/instance` with `app.kubernetes.io/name`, `app.kubernetes.io/name`, `helm.sh/chart`); `metadata.generateName`; the name without a numeric or random suffix; the namespace. Every other finished Job is hidden: it is not in snapshots, deltas or counts, and `includeHidden=1` fetches it. A hidden Job's pods, if any, are still listed and still name it as their owner.
+- **Findings** are not resources and never appear as rows. `ClusterInfo.findings` and `GET …/findings` carry them, filtered: a `job-buildup` finding is visible to whoever may list Jobs in its namespace.
+
+  ```jsonc
+  {
+    "id": "job-buildup/prefect",
+    "kind": "job-buildup",
+    "severity": "warning",        // "warning" needs attention; "info" is context only
+    "namespace": "prefect",
+    "message": "15,083 finished Jobs in prefect (15,068 hidden), 15,083 without ttlSecondsAfterFinished; 84 failed standalone Jobs are never garbage-collected",
+    "recommendation": "set ttlSecondsAfterFinished on the Job template (for Prefect, in the work pool's job variables) or add a cleanup policy",
+    "jobs": {
+      "hidden": 15068, "finished": 15083, "succeeded": 14999, "failed": 84,
+      "withoutTTL": 15083, "standaloneFailed": 84,
+      "oldest": "2025-11-02T04:00:00Z", "newest": "2026-09-30T11:58:00Z",
+      "threshold": 100,
+      "groups": [   // the largest five
+        {"by": "label", "name": "prefect.io/deployment-name=application-domain-expire-applications-job",
+         "label": "prefect deployment application-domain-expire-applications-job", "count": 15078, "failed": 84, "withoutTTL": 15078}
+      ]
+    }
+  }
+  ```
+
+  There is one `job-buildup` finding per namespace with hidden Jobs. It is a `warning` once more than `EDDY_JOB_BUILDUP_THRESHOLD` (100) are hidden, and `info` (message `12 older finished Jobs hidden`, no recommendation) otherwise. `groups[].by` is `owner` (with `owner`), `label`, `generateName`, `prefix` or `namespace`. Counts cover every finished Job in the namespace except `hidden`. Warning findings count toward "needs attention"; the UI shows them on the cluster card and above the Jobs list. Findings change live: the SSE `clusters` event carries them.
+
+### Workload logs
+
+`GET /api/v1/clusters/{c}/workloads/{kind}/{ns}/{name}/logs` streams the logs of every current pod of a `Deployment`, `StatefulSet`, `DaemonSet` or `Job` (any other kind gives 400) as SSE. `features.workloadLogs` in `/me` says the hub has it; an older agent answers `end` with a 400 error.
+
+| Query | Meaning |
+|---|---|
+| `container` | Only this container of each pod (pods without it are skipped). |
+| `allContainers` | Default `true`: every container of each pod when `container` is empty; `false` streams the first container only. |
+| `pods` | Comma-separated or repeated pod names, at most 20: only these pods of the workload. |
+| `tail` | Lines per pod and container, 1–1000, default 100. |
+| `since` | Start each stream this many seconds back (1 to 30 days). |
+| `follow` | Keep streaming, pick up new pods and end the streams of deleted ones. |
+
+Events:
+
+| Event | Data |
+|---|---|
+| `pods` | `{pods: [{name, containers: string[], status, createdAt}], total, limit}`: the streamed pods, newest first. Sent first and again whenever the set (or a pod's status) changes. `total > limit` means only the newest `limit` pods are streamed (`EDDY_MAX_LOG_PODS`, default 20). |
+| `log` | `{entries: [{pod, container, line, ts?, marker?}]}`. `ts` is the kubelet timestamp (RFC 3339) when the line had one, so the UI can merge pods in time order. |
+| `end` | `{}`, or `{error: {code, message}}`. |
+
+Entries with a `marker` are not log lines; `line` explains them:
+
+- `forbidden`: the user may not read this pod's logs (`pods/log`). The pod is skipped; the marker is sent once.
+- `ended`: the pod was deleted (`line: "pod deleted"`) or left the newest `limit` pods.
+- `error`: a container stream failed (for example too many containers for one request).
+- `dropped`: `pod` is empty; `line` says how many lines the stream's rate limit dropped (`EDDY_LOG_LINE_RATE`, default 2000 lines per second per stream, with a burst of two seconds).
+
+Access and limits:
+
+- The user must be able to get or list the workload. Each pod's logs are read impersonating the user, so `pods/log` RBAC applies per pod. Pods the user may neither list nor get are removed from `pods` and their lines are dropped at the hub.
+- A workload stream counts as one of the user's 4 log streams on the hub, and as one of the agent's `EDDY_MAX_LOG_STREAMS`. Inside it the agent opens one API server stream per pod and container, at most 3 × `EDDY_MAX_LOG_PODS`.
+- Lines are not redacted for the browser, exactly like pod logs. The stream works across hub replicas through the peer relay.
 
 ## Clusters: onboarding (ADR-0005)
 
@@ -117,7 +193,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | Event | Data |
 |---|---|
 | `hello` | `{}` |
-| `clusters` | `{items: ClusterInfo[]}` when connection state or counts change (at most once a second) |
+| `clusters` | `{items: ClusterInfo[]}` when connection state, counts or findings change (at most once a second) |
 | `change` | `{cluster, upserts: Resource[], deletes: string[]}`, filtered per user |
 | `resync` | `{cluster}`: the client refetches that cluster's resources |
 | `thread` | `{threadId, ref}`: a thread the user can see changed |
