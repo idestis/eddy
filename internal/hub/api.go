@@ -1,0 +1,83 @@
+package hub
+
+import (
+	"log/slog"
+	"net/http"
+
+	"github.com/eddy-gitops/eddy/internal/ai"
+	"github.com/eddy-gitops/eddy/internal/auth"
+	"github.com/eddy-gitops/eddy/internal/config"
+	"github.com/eddy-gitops/eddy/internal/runtimeflags"
+	"github.com/eddy-gitops/eddy/internal/store"
+	"github.com/eddy-gitops/eddy/internal/threads"
+)
+
+// api holds the UI listener's handlers.
+type api struct {
+	cfg        *config.Hub
+	log        *slog.Logger
+	auth       *auth.Service
+	fleet      *fleetService
+	reg        *Registry
+	threads    *threads.Service
+	ai         *ai.Service
+	store      store.Store
+	flags      runtimeflags.Source
+	bus        *bus
+	metrics    *metrics
+	streams    *concurrencyLimiter
+	logStreams *concurrencyLimiter
+	shutdown   <-chan struct{}
+	ephemeral  bool
+}
+
+// routes builds the UI listener's handler:
+//
+//	/api/…   Authenticate → RequireUser → RequireCSRF → API routes
+//	/auth/…  Authenticate → sign-in routes (they check CSRF themselves)
+//	/mcp     the MCP handler, which does its own bearer auth (no cookies)
+//	/healthz liveness
+//	/        the embedded SPA
+//
+// Everything is wrapped in the access log, panic recovery, body cap and
+// security headers.
+func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
+	m := http.NewServeMux()
+	m.HandleFunc("GET /api/v1/me", a.handleMe)
+	m.HandleFunc("GET /api/v1/clusters", a.handleClusters)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/resources", a.handleResources)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}", a.handleObject)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}/children", a.handleChildren)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}/yaml", a.handleYAML)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}/events", a.handleEvents)
+	m.HandleFunc("POST /api/v1/clusters/{cluster}/objects/{kind}/{ns}/{name}/{action}", a.handleAction)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/pods/{ns}/{name}/logs", a.handleLogs)
+	m.HandleFunc("GET /api/v1/stream", a.handleStream)
+
+	m.HandleFunc("GET /api/v1/threads", a.handleListThreads)
+	m.HandleFunc("POST /api/v1/threads", a.handleCreateThread)
+	m.HandleFunc("GET /api/v1/threads/{id}", a.handleGetThread)
+	m.HandleFunc("POST /api/v1/threads/{id}/messages", a.handleReply)
+	m.HandleFunc("POST /api/v1/threads/{id}/resolve", a.handleResolve)
+	m.HandleFunc("POST /api/v1/threads/{id}/reopen", a.handleReopen)
+	m.HandleFunc("DELETE /api/v1/threads/{id}", a.handleDeleteThread)
+
+	m.HandleFunc("POST /api/v1/ai/ask", a.handleAsk)
+	m.HandleFunc("GET /api/v1/audit", a.handleAudit)
+	a.auth.TokenRoutes(m)
+	m.HandleFunc("/api/", notFoundAPI)
+	apiH := a.auth.Authenticate(a.auth.RequireUser(recordUser(a.auth.RequireCSRF(m))))
+
+	am := http.NewServeMux()
+	a.auth.Routes(am)
+	am.HandleFunc("/auth/", notFoundAPI)
+	authH := a.auth.Authenticate(recordUser(am))
+
+	root := http.NewServeMux()
+	root.Handle("/api/", apiH)
+	root.Handle("/auth/", authH)
+	root.Handle("/mcp", mcpHandler)
+	root.HandleFunc("GET /healthz", healthz)
+	root.Handle("/", spa)
+	return observe(a.log, a.metrics, securityHeaders(a.cfg.SecureCookies(), root))
+}
