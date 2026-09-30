@@ -205,7 +205,7 @@ Conventions and security invariants live in [CLAUDE.md](CLAUDE.md).
 
 ## Roadmap
 
-1. **v1.0:** the scope in this spec as amended by ADR-0002 and ADR-0003: local and proxy auth, SQLite store, threads, MCP, Anthropic and Bedrock
-2. **v1.1:** GitHub OAuth2, OIDC and SAML sign-in; MCP OAuth; multiple hub replicas (ADR-0004); mTLS for agents; `eddy register` CLI
+1. **v1.0:** the scope in this spec as amended by ADR-0003, ADR-0004 (PostgreSQL, active/active hubs, agent replicas) and ADR-0005 (the Add cluster wizard): local and proxy auth, SQLite store, threads, MCP, Anthropic and Bedrock
+2. **v1.1:** GitHub OAuth2, OIDC and SAML sign-in; MCP OAuth; mTLS for agents
 3. **v1.2:** diff view (`flux diff`), image automation kinds, notification-controller alerts in the UI
 4. **Later:** streaming Ask AI, audit webhook, Backstage plugin

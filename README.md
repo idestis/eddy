@@ -36,7 +36,7 @@ yours.
 
 | Area | Ready in v1.0 | Next (v1.1+) |
 |---|---|---|
-| Clusters | Hub and agents over outbound WebSocket, `Cluster` CRD, token auth | mTLS for agents, `eddy register` CLI |
+| Clusters | Hub and agents over outbound WebSocket; **Add cluster wizard** with install guide, one-time join tokens and a live connection checklist; 1..N agent replicas per cluster | mTLS for agents |
 | Flux | Kustomization, HelmRelease, Git/OCI/Helm repositories, HelmChart, Bucket; workloads and pods; inventory tree | Image automation, notification alerts, `flux diff` view |
 | Actions | Reconcile (with source), suspend, resume; typed confirmation on protected clusters | Workload restart, bulk actions |
 | UI | Keyboard-first SPA (TanStack Router, Query and Virtual), `⌘K` palette, fleet overview, detail views (YAML, events, logs), dark mode | Saved views, graph view |
@@ -45,7 +45,7 @@ yours.
 | MCP | `/mcp` with fleet-wide read tools, guarded actions and thread tools | Log follow, subscriptions |
 | Threads | Review threads on any resource or cluster, from people, Claude Code and Ask AI | Mentions, notifications, webhooks |
 | Ask AI | Anthropic API or AWS Bedrock (IRSA, Guardrails), read-only tools, redaction | Streaming answers |
-| Storage | Embedded SQLite, no external database needed | Multiple hub replicas (HA) |
+| Storage and HA | PostgreSQL (bring your own, for example CloudNativePG); **multiple hub replicas**, active/active | Read replicas |
 | Ops | Helm charts, internal ingress examples, audit log, runtime kill switches | Prometheus dashboards, audit webhook |
 
 ## Architecture
