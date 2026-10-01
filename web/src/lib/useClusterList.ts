@@ -63,14 +63,21 @@ export function useListMode(cluster: string, enabled: boolean) {
   return { mode, firstPage, total: probe.data?.page?.total, error: probe.error };
 }
 
-const EMPTY_COUNTS: StatusCounts = { attention: 0, failed: 0, reconciling: 0, suspended: 0, completed: 0 };
+const EMPTY_COUNTS: StatusCounts = {
+  ready: 0,
+  attention: 0,
+  failed: 0,
+  reconciling: 0,
+  suspended: 0,
+  completed: 0,
+};
 
 function countsOfFacet(statuses: Partial<Record<Status, number>> | undefined): StatusCounts | undefined {
   if (!statuses) return undefined;
   const out = { ...EMPTY_COUNTS };
   for (const [s, n = 0] of Object.entries(statuses) as Array<[Status, number | undefined]>) {
     if (s !== "ready" && s !== "completed") out.attention += n;
-    if (s !== "ready" && s !== "unknown") out[s] += n;
+    if (s !== "unknown") out[s] += n;
   }
   return out;
 }

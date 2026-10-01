@@ -117,11 +117,12 @@ function listLabel(
   return `${k}${where}`;
 }
 
-const CHIPS = ["attention", "failed", "reconciling", "suspended", "completed"] as const;
+const CHIPS = ["ready", "attention", "failed", "reconciling", "suspended", "completed"] as const;
 type ChipStatus = (typeof CHIPS)[number];
 
 /** Chip colours come from the status tokens; the active chip is tinted with its colour. */
 const CHIP_TONE: Record<ChipStatus, string> = {
+  ready: "aria-pressed:border-ok/60 aria-pressed:bg-ok/12 [&_.n]:text-ok",
   attention: "aria-pressed:border-attn/60 aria-pressed:bg-attn/12 [&_.n]:text-attn",
   failed: "aria-pressed:border-bad/60 aria-pressed:bg-bad/12 [&_.n]:text-bad",
   reconciling: "aria-pressed:border-run/60 aria-pressed:bg-run/12 [&_.n]:text-run",
@@ -315,7 +316,8 @@ function ClusterPage() {
 
   const statusItems = useMemo<OverflowItem[]>(
     () =>
-      CHIPS.map((s) => ({
+      // Only Jobs complete, so the Completed chip shows only when the list has some.
+      CHIPS.filter((s) => s !== "completed" || counts.completed > 0 || search.status === s).map((s) => ({
         key: s,
         text: statusLabel(s),
         active: search.status === s,

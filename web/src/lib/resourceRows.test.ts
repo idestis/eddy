@@ -94,7 +94,7 @@ describe("completed rows", () => {
 
   it("have their own count and filter", () => {
     const counts = statusCounts([...items, done, pod]);
-    expect(counts).toEqual({ attention: 2, failed: 1, reconciling: 0, suspended: 1, completed: 2 });
+    expect(counts).toEqual({ ready: 2, attention: 2, failed: 1, reconciling: 0, suspended: 1, completed: 2 });
     expect(filterResources([...items, done, pod], { status: "completed" }).map((r) => r.name)).toEqual([
       "backup-1",
       "backup-1-x7k2p",
@@ -123,7 +123,7 @@ describe("summaryCounts", () => {
   it("gives the total and chips from the cluster's counts before any row loads", () => {
     expect(summaryCounts(cluster, {})).toEqual({
       total: 10,
-      counts: { attention: 3, failed: 1, reconciling: 2, suspended: 0, completed: 3 },
+      counts: { ready: 4, attention: 3, failed: 1, reconciling: 2, suspended: 0, completed: 3 },
     });
   });
 

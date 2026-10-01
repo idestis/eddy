@@ -36,6 +36,7 @@ export function matchesStatus(r: Resource, status: StatusFilter | undefined): bo
 }
 
 export interface StatusCounts {
+  ready: number;
   attention: number;
   failed: number;
   reconciling: number;
@@ -64,22 +65,36 @@ export function summaryCounts(
     }
   }
   if (!byStatus) return undefined;
-  const counts: StatusCounts = { attention: 0, failed: 0, reconciling: 0, suspended: 0, completed: 0 };
+  const counts: StatusCounts = {
+    ready: 0,
+    attention: 0,
+    failed: 0,
+    reconciling: 0,
+    suspended: 0,
+    completed: 0,
+  };
   let total = 0;
   for (const [st, n = 0] of Object.entries(byStatus) as Array<[Status, number | undefined]>) {
     total += n;
     if (!isHealthy(st)) counts.attention += n;
-    if (st !== "ready" && st !== "unknown") counts[st] += n;
+    if (st !== "unknown") counts[st] += n;
   }
   return { total, counts };
 }
 
 export function statusCounts(items: readonly Resource[]): StatusCounts {
-  const counts: StatusCounts = { attention: 0, failed: 0, reconciling: 0, suspended: 0, completed: 0 };
+  const counts: StatusCounts = {
+    ready: 0,
+    attention: 0,
+    failed: 0,
+    reconciling: 0,
+    suspended: 0,
+    completed: 0,
+  };
   for (const r of items) {
     if (r.inventoryOnly) continue;
     if (needsAttention(r)) counts.attention++;
-    if (r.status !== "ready" && r.status !== "unknown") counts[r.status]++;
+    if (r.status !== "unknown") counts[r.status]++;
   }
   return counts;
 }
