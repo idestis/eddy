@@ -17,7 +17,7 @@ COPY web/ ./
 RUN pnpm run build
 
 # ---- Go binaries ----------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
