@@ -21,6 +21,59 @@ type HubOptions struct {
 	Postgres bool
 	// AI is "" (Ask AI off), "anthropic" or "bedrock"; see AIFromEnv.
 	AI AIOptions
+	// GitHub adds GitHub sign-in next to the dev users; see GitHubFromEnv.
+	GitHub GitHubOptions
+}
+
+// GitHubOptions turn on GitHub sign-in for a local hub. The callback is
+// http://localhost:5173/auth/github/callback (Vite proxies /auth to the hub).
+type GitHubOptions struct {
+	ClientID      string   // empty = GitHub sign-in off
+	Organizations []string // required unless AllowAll
+	Teams         []string // optional "org/team" allowlist
+	BaseURL       string   // GitHub Enterprise Server, optional
+	AllowAll      bool
+}
+
+// GitHubFromEnv reads EDDY_GITHUB_CLIENT_ID (empty = off), GITHUB_CLIENT_SECRET
+// (required, read by the hub at runtime and never written to the file),
+// EDDY_GITHUB_ORGS and EDDY_GITHUB_TEAMS (comma-separated), EDDY_GITHUB_BASE_URL
+// and EDDY_GITHUB_ALLOW_ALL=1.
+func GitHubFromEnv(getenv func(string) string) (GitHubOptions, error) {
+	o := GitHubOptions{ClientID: strings.TrimSpace(getenv("EDDY_GITHUB_CLIENT_ID"))}
+	if o.ClientID == "" {
+		return o, nil
+	}
+	o.Organizations = splitList(getenv("EDDY_GITHUB_ORGS"))
+	o.Teams = splitList(getenv("EDDY_GITHUB_TEAMS"))
+	o.BaseURL = strings.TrimSpace(getenv("EDDY_GITHUB_BASE_URL"))
+	o.AllowAll, _ = strconv.ParseBool(strings.TrimSpace(getenv("EDDY_GITHUB_ALLOW_ALL")))
+	if getenv("GITHUB_CLIENT_SECRET") == "" {
+		return o, errors.New("EDDY_GITHUB_CLIENT_ID needs GITHUB_CLIENT_SECRET")
+	}
+	if len(o.Organizations) == 0 && !o.AllowAll {
+		return o, errors.New("EDDY_GITHUB_CLIENT_ID needs EDDY_GITHUB_ORGS (or EDDY_GITHUB_ALLOW_ALL=1, which lets any GitHub account in)")
+	}
+	return o, nil
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// qList renders a flow sequence of quoted strings.
+func qList(vs []string) string {
+	qs := make([]string, len(vs))
+	for i, v := range vs {
+		qs[i] = q(v)
+	}
+	return "[" + strings.Join(qs, ", ") + "]"
 }
 
 // AIOptions select the Ask AI provider of a local hub.
@@ -95,6 +148,19 @@ func RenderHub(o HubOptions) []byte {
 	w("publicURL: http://localhost:5173\n")
 	w("listen:\n  ui: 127.0.0.1:8080\n  agents: 127.0.0.1:8443\n  metrics: 127.0.0.1:9090\n")
 	w("auth:\n  local:\n    enabled: true\n    usersFile: %s\n  keyFile: %s\n", q(o.UsersFile), q(o.KeyFile))
+	if gh := o.GitHub; gh.ClientID != "" {
+		w("  github:\n    enabled: true\n    clientID: %s\n    clientSecretEnv: GITHUB_CLIENT_SECRET\n", q(gh.ClientID))
+		w("    allowedOrganizations: %s\n", qList(gh.Organizations))
+		if len(gh.Teams) > 0 {
+			w("    allowedTeams: %s\n", qList(gh.Teams))
+		}
+		if gh.BaseURL != "" {
+			w("    baseURL: %s\n", q(gh.BaseURL))
+		}
+		if gh.AllowAll {
+			w("    allowAllUsers: true\n")
+		}
+	}
 	if o.Postgres {
 		w("store:\n  driver: postgres\n  postgres:\n    dsnEnv: EDDY_DATABASE_URL\n")
 	} else {

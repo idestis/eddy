@@ -61,6 +61,11 @@ func devConfig(args []string, getenv func(string) string, stdout, stderr io.Writ
 		return fail(err)
 	}
 	o.AI = ai
+	gh, err := devlocal.GitHubFromEnv(getenv)
+	if err != nil {
+		return fail(err)
+	}
+	o.GitHub = gh
 	b := devlocal.RenderHub(o)
 	if *pg && getenv("EDDY_DATABASE_URL") == "" {
 		return fail(fmt.Errorf("--postgres needs EDDY_DATABASE_URL (start one with: task dev:pg)"))
@@ -88,6 +93,9 @@ func devConfig(args []string, getenv func(string) string, stdout, stderr io.Writ
 		fmt.Fprintf(stdout, "  cluster %-24s context %s (%s)\n", t.Cluster, t.Context, state)
 	}
 	fmt.Fprintln(stdout, "  "+aiNote(ai))
+	if gh.ClientID != "" {
+		fmt.Fprintln(stdout, "  GitHub sign-in: on (callback http://localhost:5173/auth/github/callback)")
+	}
 	return 0
 }
 

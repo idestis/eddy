@@ -173,6 +173,28 @@ Ask AI is off unless you choose a provider. Set it in `.env`, then run `task dev
 required setting. The generated `ai:` block names only the variable (`ANTHROPIC_API_KEY`),
 never the key itself.
 
+## GitHub sign-in in local dev
+
+To try the real sign-in flow locally, create a GitHub OAuth App (Settings → Developer settings
+→ OAuth Apps) or a GitHub App with:
+
+- Homepage URL `http://localhost:5173`
+- Authorization callback URL `http://localhost:5173/auth/github/callback` (Vite proxies
+  `/auth` to the hub)
+
+Then set in `.env` and run `task dev` again:
+
+- `EDDY_GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`
+- `EDDY_GITHUB_ORGS`: comma-separated organizations whose members may sign in (required;
+  `EDDY_GITHUB_ALLOW_ALL=1` lets any account in, for testing only)
+- Optionally `EDDY_GITHUB_TEAMS` (`org/team`) and `EDDY_GITHUB_BASE_URL` for GitHub
+  Enterprise Server
+
+The login page then shows "Continue with GitHub" next to the dev users. The generated
+`auth.github` block names only `GITHUB_CLIENT_SECRET`, never the secret itself. In local mode
+the agent acts as your kubeconfig identity and checks access with SelfSubjectAccessReviews, so
+GitHub groups do not change what you can see or do in a cluster. See [auth.md](auth.md) for the full setup.
+
 ## Debugging
 
 - **Logs:** `EDDY_LOG_LEVEL=debug task dev` logs every agent request and hub decision.

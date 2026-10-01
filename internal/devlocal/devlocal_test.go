@@ -3,6 +3,7 @@
 package devlocal
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -205,8 +206,12 @@ func TestRenderHubParses(t *testing.T) {
 		{Context: `we"ird: ctx`, Cluster: "weird"},
 		{Context: "ctx-$HOME", Cluster: "ctx-home"},
 	}
+	t.Setenv("GITHUB_CLIENT_SECRET", "s")
 	for _, o := range []HubOptions{
 		{Targets: targets, UsersFile: "hack/users.dev.yaml", KeyFile: "hack/dev.key"},
+		{Targets: targets, UsersFile: "hack/users.dev.yaml", KeyFile: "hack/dev.key", GitHub: GitHubOptions{
+			ClientID: "Iv23li", Organizations: []string{"acme", `we"ird`}, Teams: []string{"acme/platform"},
+		}},
 		{Targets: targets, UsersFile: "hack/users.dev.yaml", KeyFile: "hack/dev.key", Postgres: true, AI: AIOptions{Provider: "anthropic", AnthropicModel: "claude-x"}},
 		{Targets: targets, UsersFile: "hack/users.dev.yaml", KeyFile: "hack/dev.key", AI: AIOptions{
 			Provider: "bedrock", BedrockRegion: "eu-west-2", BedrockModelID: "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -241,6 +246,12 @@ func TestRenderHubParses(t *testing.T) {
 			if b := h.AI.Bedrock; b.Region != "eu-west-2" || b.ModelID != o.AI.BedrockModelID || b.Guardrail.ID != "gr-1" || b.Guardrail.Version != "1" {
 				t.Fatalf("bedrock %+v", b)
 			}
+		}
+		if gh := h.Auth.GitHub; gh.Enabled != (o.GitHub.ClientID != "") ||
+			(gh.Enabled && (gh.ClientID != o.GitHub.ClientID || gh.ClientSecretEnv != "GITHUB_CLIENT_SECRET" ||
+				strings.Join(gh.AllowedOrganizations, ",") != strings.Join(o.GitHub.Organizations, ",") ||
+				strings.Join(gh.AllowedTeams, ",") != strings.Join(o.GitHub.Teams, ","))) {
+			t.Fatalf("github %+v", gh)
 		}
 		if len(h.StaticClusters) != len(targets) {
 			t.Fatalf("clusters %+v", h.StaticClusters)
@@ -283,6 +294,34 @@ func TestAIFromEnv(t *testing.T) {
 			continue
 		}
 		if err != nil || got != tt.want {
+			t.Errorf("%v: got %+v %v, want %+v", tt.env, got, err, tt.want)
+		}
+	}
+}
+
+func TestGitHubFromEnv(t *testing.T) {
+	tests := []struct {
+		env  map[string]string
+		want GitHubOptions
+		err  string
+	}{
+		{env: map[string]string{"GITHUB_CLIENT_SECRET": "s", "EDDY_GITHUB_ORGS": "acme"}, want: GitHubOptions{}},
+		{env: map[string]string{"EDDY_GITHUB_CLIENT_ID": "c", "EDDY_GITHUB_ORGS": "acme"}, err: "needs GITHUB_CLIENT_SECRET"},
+		{env: map[string]string{"EDDY_GITHUB_CLIENT_ID": "c", "GITHUB_CLIENT_SECRET": "s"}, err: "needs EDDY_GITHUB_ORGS"},
+		{env: map[string]string{"EDDY_GITHUB_CLIENT_ID": "c", "GITHUB_CLIENT_SECRET": "s", "EDDY_GITHUB_ALLOW_ALL": "1"},
+			want: GitHubOptions{ClientID: "c", AllowAll: true}},
+		{env: map[string]string{"EDDY_GITHUB_CLIENT_ID": " c ", "GITHUB_CLIENT_SECRET": "s", "EDDY_GITHUB_ORGS": "acme, beta,", "EDDY_GITHUB_TEAMS": "acme/sre", "EDDY_GITHUB_BASE_URL": "https://ghe.example.com"},
+			want: GitHubOptions{ClientID: "c", Organizations: []string{"acme", "beta"}, Teams: []string{"acme/sre"}, BaseURL: "https://ghe.example.com"}},
+	}
+	for _, tt := range tests {
+		got, err := GitHubFromEnv(func(k string) string { return tt.env[k] })
+		if tt.err != "" {
+			if err == nil || !strings.Contains(err.Error(), tt.err) {
+				t.Errorf("%v: want error %q, got %v", tt.env, tt.err, err)
+			}
+			continue
+		}
+		if err != nil || fmt.Sprint(got) != fmt.Sprint(tt.want) {
 			t.Errorf("%v: got %+v %v, want %+v", tt.env, got, err, tt.want)
 		}
 	}
