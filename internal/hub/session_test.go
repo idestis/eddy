@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -260,4 +261,42 @@ func TestDisconnectFailsPending(t *testing.T) {
 		t.Fatal("pending request not failed on disconnect")
 	}
 	waitFor(t, func() bool { return e.hub.agents.get("dev") == nil })
+}
+
+// TestCancelledRequestKeepsSession checks that a caller giving up while its
+// request frame is being written fails only that request: coder/websocket
+// closes the connection when the context of a write in progress ends, so
+// the session must not bound its writes by the caller's context.
+func TestCancelledRequestKeepsSession(t *testing.T) {
+	e := newEnv(t, "")
+	a := e.connectAgent("dev", testToken, nil)
+	a.onRequest(func(_ protocol.Frame, req protocol.Request) bool { return req.Target.Name == "big" }) // never answered
+	s := e.hub.agents.get("dev")
+	// Every cancelled request sends a Cancel; keep the fake agent reading.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-a.cancelled:
+			case <-stop:
+				return
+			}
+		}
+	}()
+	big, _ := json.Marshal(map[string]string{"pad": strings.Repeat("x", 256<<10)})
+	for i := range 10 {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = s.do(ctx, protocol.Request{Op: protocol.OpEvents, Target: model.Ref{Name: "big"}, Args: big})
+		}()
+		time.Sleep(time.Duration(i%5) * 100 * time.Microsecond)
+		cancel()
+		<-done
+		if _, err := s.do(context.Background(), protocol.Request{Op: protocol.OpEvents, Target: model.Ref{Name: "ok"}}); err != nil {
+			t.Fatalf("round %d: the session did not survive a cancelled request: %v", i, err)
+		}
+	}
 }

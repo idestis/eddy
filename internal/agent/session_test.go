@@ -425,3 +425,73 @@ func TestSessionSendsFindings(t *testing.T) {
 		t.Fatalf("an empty set must be sent explicitly: %s", f.Payload)
 	}
 }
+
+// firehoseHandler streams log chunks until the request is cancelled, so a
+// cancel from the hub lands while a chunk is being written.
+type firehoseHandler struct{}
+
+func (firehoseHandler) Handle(ctx context.Context, req protocol.Request, stream func(protocol.LogChunk) error) (json.RawMessage, *protocol.Error) {
+	if req.Op != protocol.OpLogs {
+		return fakeHandler{}.Handle(ctx, req, stream)
+	}
+	line := strings.Repeat("x", 512)
+	for ctx.Err() == nil {
+		if err := stream(protocol.LogChunk{Lines: []string{line}}); err != nil {
+			return nil, &protocol.Error{Code: 500, Message: err.Error()}
+		}
+	}
+	return nil, nil
+}
+
+// TestCancelDuringStreamWrite checks that cancelling one log stream ends
+// only that stream: a cancel that arrives while a chunk is in flight must
+// not close the connection the other requests share.
+func TestCancelDuringStreamWrite(t *testing.T) {
+	conns := make(chan *websocket.Conn, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		c.SetReadLimit(protocol.MaxFrameBytes)
+		conns <- c
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+	s := &Session{
+		URL: "ws" + strings.TrimPrefix(srv.URL, "http"), Cluster: "c", Token: "t",
+		Source: &fakeSource{}, Handler: firehoseHandler{}, Logger: discardLogger(),
+		PingInterval: time.Hour,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	hub := hubConn{t: t, conn: <-conns}
+	hub.read() // hello
+	hub.read() // snapshot
+	pod := model.Ref{Kind: "Pod", Namespace: "apps", Name: "p"}
+	args, _ := json.Marshal(protocol.LogsArgs{Follow: true})
+	for i := range 20 {
+		id := fmt.Sprintf("l%d", i)
+		hub.send(protocol.TypeRequest, id, protocol.Request{Op: protocol.OpLogs, Identity: alice, Target: pod, Args: args})
+		if f := hub.read(); f.Type != protocol.TypeStream || f.ID != id {
+			t.Fatalf("stream %s: %+v", id, f)
+		}
+		hub.send(protocol.TypeCancel, id, nil)
+		for {
+			f := hub.read()
+			if f.ID != id || (f.Type != protocol.TypeStream && f.Type != protocol.TypeStreamEnd) {
+				t.Fatalf("stream %s: unexpected frame %+v", id, f)
+			}
+			if f.Type == protocol.TypeStreamEnd {
+				break
+			}
+		}
+		hub.send(protocol.TypeRequest, "y"+id, protocol.Request{Op: protocol.OpYAML, Identity: alice, Target: pod})
+		if f := hub.read(); f.Type != protocol.TypeResponse || f.ID != "y"+id {
+			t.Fatalf("yaml after cancelling %s: %+v", id, f)
+		}
+	}
+}

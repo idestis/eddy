@@ -402,7 +402,15 @@ func (s *agentSession) applyDelta(d protocol.Delta) {
 
 // --- requests -------------------------------------------------------------
 
+// send writes one frame to the agent. ctx, usually the caller's request,
+// only decides whether the frame is still wanted: coder/websocket closes the
+// connection when the context of a write in progress ends, so a caller that
+// gives up mid-write would otherwise disconnect the cluster for everyone.
+// The write itself is bounded by frameWriteTimeout, and close ends it.
 func (s *agentSession) send(ctx context.Context, typ protocol.FrameType, id string, payload any) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("hub: write to agent %s: %w", s.cluster, err)
+	}
 	f := protocol.Frame{Type: typ, ID: id}
 	if payload != nil {
 		b, err := json.Marshal(payload)
@@ -418,7 +426,7 @@ func (s *agentSession) send(ctx context.Context, typ protocol.FrameType, id stri
 	if len(b) > protocol.MaxFrameBytes {
 		return fmt.Errorf("hub: %s frame of %d bytes exceeds the frame limit", typ, len(b))
 	}
-	wctx, cancel := context.WithTimeout(ctx, frameWriteTimeout)
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), frameWriteTimeout)
 	defer cancel()
 	if err := s.conn.Write(wctx, websocket.MessageText, b); err != nil {
 		return fmt.Errorf("hub: write to agent %s: %w", s.cluster, err)

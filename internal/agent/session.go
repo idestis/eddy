@@ -223,7 +223,7 @@ func (s *Session) connectOnce(ctx context.Context) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	c := &sessionConn{conn: conn}
+	c := &sessionConn{conn: conn, ctx: ctx}
 
 	hello := s.Hello
 	hello.Protocol, hello.Cluster = protocol.Version, s.Cluster
@@ -549,12 +549,24 @@ func (s *Session) reply(ctx context.Context, c *sessionConn, id string, result j
 // sessionConn writes frames. coder/websocket allows concurrent writers.
 type sessionConn struct {
 	conn *websocket.Conn
+	// ctx is the connection's context. coder/websocket closes the whole
+	// connection when the context of a write in progress is done, so every
+	// write is bounded by ctx and writeTimeout only, never by the context of
+	// one request: a hub Cancel that lands mid-write must end that request,
+	// not the connection all requests share.
+	ctx context.Context
 	// findingsVer is the findings version last sent on this connection;
 	// only the snapshot and then the delta loop touch it, in that order.
 	findingsVer uint64
 }
 
+// send writes one frame. ctx (a request's context, or the connection's)
+// only decides whether the frame is still wanted; it does not bound the
+// write, see sessionConn.ctx.
 func (c *sessionConn) send(ctx context.Context, typ protocol.FrameType, id string, payload any) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("agent: write %s frame: %w", typ, err)
+	}
 	f := protocol.Frame{Type: typ, ID: id}
 	if payload != nil {
 		b, err := json.Marshal(payload)
@@ -570,7 +582,7 @@ func (c *sessionConn) send(ctx context.Context, typ protocol.FrameType, id strin
 	if len(b) > protocol.MaxFrameBytes {
 		return fmt.Errorf("agent: %s frame of %d bytes exceeds the frame limit", typ, len(b))
 	}
-	wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	wctx, cancel := context.WithTimeout(c.ctx, writeTimeout)
 	defer cancel()
 	if err := c.conn.Write(wctx, websocket.MessageText, b); err != nil {
 		return fmt.Errorf("agent: write %s frame: %w", typ, err)
