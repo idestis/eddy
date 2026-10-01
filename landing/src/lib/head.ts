@@ -10,6 +10,9 @@ export interface HeadData {
   links: LinkTag[];
 }
 
+const OG_ALT =
+  "Eddy: a fast, keyboard-first, multi-cluster UI for Flux, with status rows and environment colour chips.";
+
 export const SITE_TITLE = "Eddy: a fast, keyboard-first, multi-cluster UI for Flux";
 
 interface PageHeadInput {
@@ -40,18 +43,21 @@ export function pageHead(input: PageHeadInput): HeadData {
     meta.push({ property: "og:url", content: url });
   }
   meta.push(
-    { property: "og:type", content: "website" },
+    { property: "og:type", content: input.path?.startsWith("/docs/") ? "article" : "website" },
+    { property: "og:locale", content: "en_US" },
     { property: "og:site_name", content: "Eddy" },
     { property: "og:title", content: ogTitle },
     { property: "og:description", content: ogDescription },
     { property: "og:image", content: OG_IMAGE },
     { property: "og:image:width", content: "1200" },
     { property: "og:image:height", content: "630" },
-    { property: "og:image:alt", content: "Eddy: a fast, keyboard-first, multi-cluster UI for Flux." },
+    { property: "og:image:type", content: "image/png" },
+    { property: "og:image:alt", content: OG_ALT },
     { name: "twitter:card", content: "summary_large_image" },
     { name: "twitter:title", content: ogTitle },
     { name: "twitter:description", content: input.twitterDescription ?? ogDescription },
     { name: "twitter:image", content: OG_IMAGE },
+    { name: "twitter:image:alt", content: OG_ALT },
   );
   if (input.jsonLd) meta.push({ "script:ld+json": input.jsonLd });
   return { meta, links };

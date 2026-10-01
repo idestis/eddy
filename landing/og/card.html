@@ -1,0 +1,289 @@
+<!doctype html>
+<!--
+  Source of public/assets/og.png (1200x630), the favicon PNGs and the manifest icons.
+  Colours are the dark values from design/tokens.css. To regenerate, open this file in a browser
+  and screenshot the elements #card (1200x630), #icon (512x512, then resize for 32/180/192) without
+  page scaling (device pixel ratio 1). The PNGs are committed, so CI needs no browser.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Eddy social card</title>
+    <style>
+      @font-face {
+        font-family: "Geist";
+        src: url("../public/assets/fonts/geist-latin-wght-normal.woff2") format("woff2");
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: "Geist Mono";
+        src: url("../public/assets/fonts/geist-mono-latin-wght-normal.woff2") format("woff2");
+        font-weight: 100 900;
+      }
+      :root {
+        --page: #0b0d11;
+        --surface: #14171c;
+        --sunken: #1b1f26;
+        --ink: #eceef2;
+        --ink-2: #b9bfcb;
+        --ink-3: #969eac;
+        --line: #252a32;
+        --line-strong: #363c47;
+        --ok: #4ade80;
+        --bad: #fb7185;
+        --run: #7aa2ff;
+        --off: #9ca3af;
+        --accent: #a78bfa;
+        --accent-2: #ec4899;
+        --prod: #fb923c;
+        --prod-2: #f59e0b;
+        --stage: #a78bfa;
+        --stage-2: #ec4899;
+        --dev: #2dd4bf;
+        --dev-2: #3b82f6;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        background: #333;
+        font-family: "Geist", sans-serif;
+      }
+      #card {
+        position: relative;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        color: var(--ink);
+        background:
+          radial-gradient(800px 500px at 0 0, rgb(109 40 217 / 0.55), transparent 70%),
+          radial-gradient(800px 500px at 100% 100%, rgb(219 39 119 / 0.45), transparent 70%), var(--page);
+      }
+      .brand {
+        position: absolute;
+        top: 64px;
+        left: 72px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 52px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .brand svg {
+        width: 64px;
+        height: 64px;
+      }
+      h1 {
+        position: absolute;
+        top: 196px;
+        left: 72px;
+        width: 620px;
+        font-size: 62px;
+        font-weight: 700;
+        line-height: 1.08;
+        text-wrap: balance;
+        letter-spacing: -0.035em;
+      }
+      h1 span {
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .sub {
+        position: absolute;
+        top: 458px;
+        left: 72px;
+        font-size: 28px;
+        color: var(--ink-2);
+      }
+      .sub b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .win {
+        position: absolute;
+        top: 116px;
+        left: 724px;
+        width: 408px;
+        border: 1px solid var(--line-strong);
+        border-radius: 20px;
+        background: var(--surface);
+        box-shadow: 0 30px 60px -20px rgb(0 0 0 / 0.7);
+        overflow: hidden;
+      }
+      .win .bar {
+        height: 6px;
+        background: linear-gradient(90deg, var(--stage), var(--stage-2));
+      }
+      .chips {
+        display: flex;
+        gap: 10px;
+        padding: 20px 22px 14px;
+      }
+      .env {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 14px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        background: var(--sunken);
+        color: var(--ink-2);
+        font-size: 18px;
+        font-weight: 550;
+      }
+      .env i {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+      .env.p i {
+        background: linear-gradient(135deg, var(--prod), var(--prod-2));
+      }
+      .env.s i {
+        background: linear-gradient(135deg, var(--stage), var(--stage-2));
+      }
+      .env.d i {
+        background: linear-gradient(135deg, var(--dev), var(--dev-2));
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 15px 22px;
+        border-top: 1px solid var(--line);
+        font-family: "Geist Mono", monospace;
+        font-size: 21px;
+        font-weight: 560;
+      }
+      .row.sel {
+        background: rgb(167 139 250 / 0.14);
+      }
+      .row .dot {
+        flex: none;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+      }
+      .row .nm {
+        flex: 1;
+      }
+      .row .st {
+        font-family: "Geist", sans-serif;
+        font-size: 18px;
+        font-weight: 500;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .bad {
+        color: var(--bad);
+      }
+      .run {
+        color: var(--run);
+      }
+      .off {
+        color: var(--off);
+      }
+      .dot.ok {
+        background: var(--ok);
+      }
+      .dot.bad {
+        background: var(--bad);
+      }
+      .dot.run {
+        background: transparent;
+        border: 3px solid var(--run);
+        border-top-color: transparent;
+      }
+      .dot.off {
+        background: transparent;
+        border: 3px solid var(--off);
+      }
+      .foot {
+        display: flex;
+        gap: 10px;
+        padding: 16px 22px 20px;
+        border-top: 1px solid var(--line);
+        color: var(--ink-3);
+        font-size: 17px;
+      }
+      kbd {
+        padding: 3px 9px;
+        border: 1px solid var(--line-strong);
+        border-bottom-width: 2px;
+        border-radius: 7px;
+        background: var(--sunken);
+        color: var(--ink-2);
+        font: 600 17px "Geist Mono", monospace;
+      }
+      .gbar {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: 14px;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2) 55%, var(--prod));
+      }
+      #icon {
+        position: relative;
+        width: 512px;
+        height: 512px;
+        margin-top: 24px;
+        background: var(--page);
+        display: grid;
+        place-items: center;
+      }
+      #icon svg {
+        width: 74%;
+        height: 74%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="card">
+      <div class="brand">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="2.4" stroke-linecap="round">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#a78bfa" />
+              <stop offset="1" stop-color="#ec4899" />
+            </linearGradient>
+          </defs>
+          <path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2" />
+        </svg>
+        Eddy
+      </div>
+      <h1>A fast, keyboard-first, <span>multi-cluster</span> UI for Flux</h1>
+      <p class="sub">Open source. <b>Agents dial out.</b> RBAC decides.</p>
+      <div class="win">
+        <div class="bar"></div>
+        <div class="chips">
+          <span class="env p"><i></i>Production</span>
+          <span class="env s"><i></i>Staging</span>
+          <span class="env d"><i></i>Dev</span>
+        </div>
+        <div class="row sel"><span class="dot ok"></span><span class="nm">apps</span><span class="st ok">Ready</span></div>
+        <div class="row"><span class="dot bad"></span><span class="nm">payments-api</span><span class="st bad">Failed</span></div>
+        <div class="row"><span class="dot run"></span><span class="nm">podinfo</span><span class="st run">Reconciling</span></div>
+        <div class="row"><span class="dot off"></span><span class="nm">batch-jobs</span><span class="st off">Suspended</span></div>
+        <div class="foot"><kbd>⌘K</kbd> search <kbd>r</kbd> reconcile <kbd>s</kbd> suspend</div>
+      </div>
+      <div class="gbar"></div>
+    </div>
+    <div id="icon">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="url(#g2)" stroke-width="2.4" stroke-linecap="round">
+        <defs>
+          <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#a78bfa" />
+            <stop offset="1" stop-color="#ec4899" />
+          </linearGradient>
+        </defs>
+        <path d="M12 3a9 9 0 1 0 9 9 6 6 0 0 0-6-6 4 4 0 0 0-4 4 2 2 0 0 0 2 2" />
+      </svg>
+    </div>
+  </body>
+</html>

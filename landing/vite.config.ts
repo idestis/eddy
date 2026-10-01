@@ -16,8 +16,9 @@ export default defineConfig(({ isPreview }) => ({
     // The router plugin must run before the React plugin.
     tanstackRouter({
       target: "react",
-      // The whole site is a few KB of text: one JS bundle beats a chunk waterfall on hydration.
-      autoCodeSplitting: false,
+      // Each route's component is its own chunk. Pages are prerendered and the router loads the
+      // matched route's chunk before hydrating, so there is no waterfall on first paint.
+      autoCodeSplitting: true,
       routesDirectory: "./src/routes",
       generatedRouteTree: "./src/routeTree.gen.ts",
       quoteStyle: "double",

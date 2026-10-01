@@ -657,6 +657,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.win .ph-short,
+.win .scope .sm {
+  display: none;
+}
 .win .scope {
   display: flex;
   flex: none;
@@ -831,12 +835,10 @@
   white-space: nowrap;
 }
 .win .gscroll {
-  overflow-x: auto;
   padding: 0 16px 16px;
 }
 .win .gcanvas {
   position: relative;
-  min-width: 720px;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-card);
   background-color: var(--color-surface-side);
@@ -847,6 +849,10 @@
   display: block;
   width: 100%;
   height: auto;
+}
+/* two layouts of the same graph: left-to-right by default, top-to-bottom when narrow */
+.win .gcanvas > svg.gv {
+  display: none;
 }
 .win .gedge {
   fill: none;
@@ -956,9 +962,13 @@
 
 .mock-toggle {
   display: inline-flex;
-  padding: 3px;
+  max-width: 100%;
+  margin: 0;
+  /* room inside the border for the focus ring, so it never reads as a second border */
+  padding: 4px;
+  gap: 2px;
   border: 1px solid var(--color-line);
-  border-radius: 12px;
+  border-radius: 13px;
   background: var(--color-surface);
   box-shadow: var(--shadow-control);
 }
@@ -971,12 +981,26 @@
   color: var(--color-ink-2);
   font: inherit;
   font-size: 0.85rem;
+  white-space: nowrap;
   cursor: pointer;
 }
+.mock-toggle button:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+}
+/* selected: a filled pill. Focus: a separate accent ring, only for keyboard focus. */
 .mock-toggle button[aria-pressed="true"] {
   background: var(--color-ink);
   color: var(--color-page);
   font-weight: 600;
+}
+.mock-toggle button:focus {
+  outline: none;
+}
+.mock-toggle button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 9px;
 }
 
 /* narrower figure: drop the detail panel, then the sidebar and cards */
@@ -985,6 +1009,41 @@
     grid-template-columns: 196px minmax(0, 1fr);
   }
   .win .detail {
+    display: none;
+  }
+}
+@container (max-width: 760px) {
+  .win .gcanvas > svg.gh {
+    display: none;
+  }
+  .win .gcanvas > svg.gv {
+    display: block;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+  .win .ghead {
+    flex-wrap: wrap;
+    padding: 12px 12px 8px;
+  }
+  .win .ghead small,
+  .win .ghead .cnt {
+    display: none;
+  }
+  .win .ghead .seg {
+    flex: none;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+  .win .gscroll {
+    padding: 0 12px 12px;
+  }
+  .win .glegend {
+    position: static;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin: 0 10px 10px;
+  }
+  .win .gzoom {
     display: none;
   }
 }
@@ -1008,11 +1067,35 @@
   .win .pal-foot span:nth-child(n + 3) {
     display: none;
   }
-  .win .pal-in .ph {
+  .win .ph-long {
     display: none;
+  }
+  .win .ph-short {
+    display: inline;
+  }
+  .win .scrim {
+    background: color-mix(in oklab, var(--color-scrim) 30%, transparent);
   }
   .win .pal {
     top: 12px;
+  }
+  .win .pal-it.cur,
+  .win .pal-foot span:nth-child(n + 2) {
+    display: none;
+  }
+  .win .pal-in {
+    gap: 8px;
+    padding: 9px 10px;
+  }
+  .win .scope span {
+    padding: 3px 7px;
+    gap: 5px;
+  }
+  .win .scope .lg {
+    display: none;
+  }
+  .win .scope .sm {
+    display: inline;
   }
   .win .envtag,
   .win .count {
@@ -1025,9 +1108,6 @@
   }
   .win .row {
     grid-template-columns: minmax(0, 1fr) 74px 30px;
-  }
-  .win .scope span:not(.on) {
-    display: none;
   }
   .win .row .ms,
   .win .row.head .ms,

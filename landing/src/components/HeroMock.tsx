@@ -380,13 +380,18 @@ function ListView() {
       <div className="pal">
         <div className="pal-in">
           <Ic n="search" />
-          <span className="ph">Search staging, or type : for commands</span>
+          <span className="ph">
+            <span className="ph-long">Search staging, or type : for commands</span>
+            <span className="ph-short">Search…</span>
+          </span>
           <span className="scope">
             <span className="on">
               <i /> staging
             </span>
             <span>
-              <Ic n="globe" /> All clusters
+              <Ic n="globe" />
+              <span className="lg">All clusters</span>
+              <span className="sm">All</span>
             </span>
           </span>
         </div>
@@ -561,6 +566,28 @@ const gedges: { a: string; b: string; cls: "" | "src" | "app" | "wait" }[] = [
   { a: "ap", b: "es", cls: "app" },
 ];
 
+/** Top-to-bottom layout for narrow figures: one row per dependency layer, centred. */
+const VW = 104;
+const VH = 40;
+const VROW: Record<string, { x: number; row: number }> & Record<"gr", { x: number; row: number }> = {
+  gr: { x: 123, row: 0 },
+  cv: { x: 65, row: 1 },
+  so: { x: 181, row: 1 },
+  in: { x: 7, row: 2 },
+  ss: { x: 123, row: 2 },
+  cm: { x: 239, row: 2 },
+  ap: { x: 123, row: 3 },
+  hr: { x: 7, row: 4 },
+  ns: { x: 123, row: 4 },
+  es: { x: 239, row: 4 },
+};
+const vpos = (id: string) => {
+  const p = VROW[id] ?? VROW.gr;
+  return { x: p.x, y: 6 + p.row * 66 };
+};
+
+const edgeClass = (cls: string) => `gedge${cls ? ` ${cls}` : ""}`;
+
 function GraphView() {
   const byId = new Map(gnodes.map((n) => [n.id, n]));
   return (
@@ -577,7 +604,7 @@ function GraphView() {
       </div>
       <div className="gscroll">
         <div className="gcanvas">
-          <svg viewBox="0 0 1030 330" role="presentation">
+          <svg className="gh" viewBox="0 0 1030 330" role="presentation">
             {gedges.map((e) => {
               const a = byId.get(e.a);
               const b = byId.get(e.b);
@@ -590,7 +617,7 @@ function GraphView() {
               return (
                 <path
                   key={`${e.a}-${e.b}`}
-                  className={`gedge${e.cls ? ` ${e.cls}` : ""}`}
+                  className={edgeClass(e.cls)}
                   d={`M${x1} ${y1}C${m} ${y1} ${m} ${y2} ${x2} ${y2}`}
                 />
               );
@@ -630,6 +657,50 @@ function GraphView() {
                 )}
               </g>
             ))}
+          </svg>
+          <svg className="gv" viewBox="0 0 350 330" role="presentation">
+            {gedges.map((e) => {
+              const a = vpos(e.a);
+              const b = vpos(e.b);
+              const x1 = a.x + VW / 2;
+              const y1 = a.y + VH;
+              const x2 = b.x + VW / 2;
+              const y2 = b.y;
+              const m = (y1 + y2) / 2;
+              return (
+                <path
+                  key={`${e.a}-${e.b}`}
+                  className={edgeClass(e.cls)}
+                  d={`M${x1} ${y1}C${x1} ${m} ${x2} ${m} ${x2} ${y2}`}
+                />
+              );
+            })}
+            {gnodes.map((n) => {
+              const { x, y } = vpos(n.id);
+              return (
+                <g key={n.id}>
+                  <rect className={`gnode${n.sel ? " sel" : ""}`} x={x} y={y} width={VW} height={VH} rx={9} />
+                  <circle className={n.tone ?? "ok"} cx={x + 13} cy={y + 13} r={5.5} />
+                  <path
+                    d={`M${x + 10.2} ${y + 13.2}l1.9 1.9 3.7-3.9`}
+                    fill="none"
+                    stroke="var(--color-surface)"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                  />
+                  <rect className="kb" x={x + 24} y={y + 7} width={22} height={13} rx={4} />
+                  <text className="kb" x={x + 35} y={y + 16.5} textAnchor="middle">
+                    {n.kind}
+                  </text>
+                  <text className="sub" x={x + VW - 8} y={y + 17} textAnchor="end">
+                    {n.age}
+                  </text>
+                  <text x={x + 9} y={y + 33}>
+                    {n.name}
+                  </text>
+                </g>
+              );
+            })}
           </svg>
           <div className="glegend">
             <span>
