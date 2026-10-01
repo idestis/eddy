@@ -385,6 +385,37 @@
       max-width: 100%;
       white-space: pre;
     }
+    & .md-h {
+      margin-top: 12px;
+    }
+    & .md-table {
+      margin: 0 0 8px;
+      max-width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--color-line);
+      border-radius: var(--radius-control);
+      & table {
+        border-collapse: collapse;
+        min-width: 100%;
+        font-size: var(--text-12-5);
+      }
+      & th,
+      & td {
+        padding: 6px 10px;
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid var(--color-line);
+        overflow-wrap: normal;
+      }
+      & th {
+        font-weight: 600;
+        background: var(--color-surface-sunken);
+        white-space: nowrap;
+      }
+      & tr:last-child td {
+        border-bottom: 0;
+      }
+    }
     & .md-pre {
       margin: 0 0 8px;
       max-width: 100%;

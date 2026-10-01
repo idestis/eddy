@@ -23,6 +23,27 @@ describe("Markdown", () => {
     expect(c.querySelector(".md-pre button[aria-label='Copy code']")).not.toBeNull();
   });
 
+  it("renders tables and headings, with inline formatting and no HTML", () => {
+    const c = html(
+      "### Health\n\n| Category | Status |\n|---|:---:|\n| **Flux** | ✅ `v2.7.2` |\n| a \\| b | <b>x</b> |\n\nAfter",
+    );
+    expect(c.querySelector(".md-h strong")?.textContent).toBe("Health");
+    expect([...c.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Category", "Status"]);
+    const rows = c.querySelectorAll("tbody tr");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.querySelector("strong")?.textContent).toBe("Flux");
+    expect(rows[0]?.querySelector("code")?.textContent).toBe("v2.7.2");
+    expect(rows[1]?.querySelector("td")?.textContent).toBe("a | b");
+    expect(c.querySelector("b")).toBeNull();
+    expect(c.querySelector("p:last-child")?.textContent).toBe("After");
+  });
+
+  it("keeps pipes without a rule line as a paragraph", () => {
+    const c = html("| not | a table |\nstill text");
+    expect(c.querySelector("table")).toBeNull();
+    expect(c.querySelector("p")?.textContent).toContain("| not | a table |");
+  });
+
   it("never renders images", () => {
     const c = html("look ![tracking pixel](https://evil.example/p.png) here");
     expect(c.querySelector("img")).toBeNull();
@@ -59,10 +80,11 @@ describe("Markdown", () => {
     }
   });
 
-  it("renders headings as plain paragraphs", () => {
+  it("renders headings as bold lines, not heading elements", () => {
     const c = html("# Title\ntext");
     expect(c.querySelector("h1")).toBeNull();
-    expect(c.querySelector("p")?.textContent).toBe("Title text");
+    expect(c.querySelector(".md-h")?.textContent).toBe("Title");
+    expect(c.querySelector("p:last-child")?.textContent).toBe("text");
   });
 });
 

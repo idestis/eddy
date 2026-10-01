@@ -56,6 +56,47 @@ export function Markdown({ source, className = "md" }: { source: string; classNa
             </div>
           );
         }
+        if (b.t === "h") {
+          return (
+            <p key={key} className="md-h">
+              <strong>
+                <InlineNodes nodes={b.children} />
+              </strong>
+            </p>
+          );
+        }
+        if (b.t === "table") {
+          // Wide tables scroll inside their own box instead of widening the panel.
+          return (
+            <div key={key} className="md-table">
+              <table>
+                <thead>
+                  <tr>
+                    {b.head.map((cell, j) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: columns have no identity beyond position
+                      <th key={j} scope="col">
+                        <InlineNodes nodes={cell} />
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {b.rows.map((row, r) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity beyond position
+                    <tr key={r}>
+                      {row.map((cell, j) => (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: columns have no identity beyond position
+                        <td key={j}>
+                          <InlineNodes nodes={cell} />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
         if (b.t === "p") {
           return (
             <p key={key}>

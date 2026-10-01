@@ -1,6 +1,6 @@
 // A deliberately small Markdown subset for AI answers and thread bodies:
-// paragraphs, bullet and numbered lists, fenced code, inline code, bold,
-// italic and http(s) links. Everything else, including raw HTML and images,
+// paragraphs, headings (shown as bold lines), bullet and numbered lists,
+// GitHub-style tables, fenced code, inline code, bold, italic and http(s) links. Everything else, including raw HTML and images,
 // stays plain text. The output is a tree of plain objects that the Markdown
 // component renders with React, so nothing is ever injected as HTML.
 
@@ -14,7 +14,9 @@ export type Inline =
 export type Block =
   | { t: "p"; children: Inline[] }
   | { t: "ul" | "ol"; items: Inline[][] }
-  | { t: "pre"; text: string };
+  | { t: "pre"; text: string }
+  | { t: "h"; children: Inline[] }
+  | { t: "table"; head: Inline[][]; rows: Inline[][][] };
 
 /** Returns the URL if it is an absolute http(s) link, otherwise null. */
 export function safeHref(raw: string): string | null {
@@ -71,6 +73,16 @@ export function parseInline(src: string): Inline[] {
 const FENCE = /^\s*```/;
 const BULLET = /^\s*[-*•+]\s+(.*)$/;
 const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
+const HEADING = /^\s*#{1,6}\s+(.*)$/;
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_RULE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const MAX_TABLE_ROWS = 200;
+
+/** Splits "| a | b \| c |" into cells, keeping escaped pipes. */
+function cells(line: string): string[] {
+  const inner = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return inner.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, "|").trim());
+}
 
 export function parseMarkdown(src: string): Block[] {
   const lines = src.replace(/\r\n?/g, "\n").split("\n");
@@ -99,6 +111,29 @@ export function parseMarkdown(src: string): Block[] {
       blocks.push({ t: "pre", text: code.join("\n") });
       continue;
     }
+    // A table is a header row, a |---| rule, then rows; anything else stays a paragraph.
+    if (TABLE_ROW.test(line) && TABLE_RULE.test(lines[i + 1] ?? "")) {
+      flushPara();
+      flushList();
+      const head = cells(line);
+      const rows: Inline[][][] = [];
+      i += 2;
+      while (i < lines.length && TABLE_ROW.test(lines[i] ?? "") && rows.length < MAX_TABLE_ROWS) {
+        const row = cells(lines[i] ?? "");
+        rows.push(head.map((_, c) => parseInline(row[c] ?? "")));
+        i++;
+      }
+      i--;
+      blocks.push({ t: "table", head: head.map((h) => parseInline(h)), rows });
+      continue;
+    }
+    const heading = line.match(HEADING);
+    if (heading) {
+      flushPara();
+      flushList();
+      blocks.push({ t: "h", children: parseInline(heading[1] ?? "") });
+      continue;
+    }
     const bullet = line.match(BULLET);
     const numbered = bullet ? null : line.match(NUMBERED);
     if (bullet || numbered) {
@@ -117,8 +152,7 @@ export function parseMarkdown(src: string): Block[] {
       continue;
     }
     flushList();
-    // Headings render as plain paragraphs; answers are short.
-    para.push(line.replace(/^\s*#{1,6}\s+/, "").trim());
+    para.push(line.trim());
   }
   flushPara();
   flushList();
