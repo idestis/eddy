@@ -23,7 +23,8 @@ Requirements:
 
 ```sh
 cp .env.example .env   # local settings; .env is gitignored and loaded by Task
-task check             # everything CI runs: lint, tests, UI build
+task ci                # exactly what CI runs (hack/ci.sh); DOCKER=0 skips image builds
+task check             # quicker: lint, tests, UI build
 ```
 
 ## Run Eddy locally against your own clusters

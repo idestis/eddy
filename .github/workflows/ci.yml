@@ -1,5 +1,7 @@
 name: CI
 
+# Every check lives in hack/ci.sh (one function per job), so `task ci` runs exactly the same
+# commands locally.
 # Runs on every PR and push to main. `changes` decides which areas of the monorepo changed, and
 # each job runs only for its area. `ci-ok` (shown as "CI") is the single required check: a job
 # skipped because its files didn't change counts as passed.
@@ -44,7 +46,7 @@ jobs:
           fi
           echo "$files"
           out() { grep -qE "$2" <<<"$files" && echo "$1=true" >> "$GITHUB_OUTPUT" || echo "$1=false" >> "$GITHUB_OUTPUT"; }
-          wf='\.github/workflows/ci\.yml'
+          wf='(\.github/workflows/ci\.yml|hack/ci\.sh)'
           out go      "^(cmd/|internal/|api/|go\.mod|go\.sum|Taskfile\.yml|$wf)"
           out web     "^(web/|$wf)"
           out charts  "^(deploy/|config/crd/|$wf)"
@@ -79,11 +81,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
-      - name: gofmt
-        run: test -z "$(gofmt -l cmd internal)" || (gofmt -l cmd internal && exit 1)
-      - run: go vet ./...
-      - run: go run "$STATICCHECK" ./...
-      - run: go test -race -count=1 ./...
+      - run: hack/ci.sh go
 
   govulncheck:
     needs: changes
@@ -97,16 +95,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
-      - run: go run "$GOVULNCHECK" ./...
+      - run: hack/ci.sh vuln
 
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     name: Web (lint, typecheck, test, build)
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -120,11 +115,7 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run lint
-      - run: pnpm run typecheck
-      - run: pnpm run test
-      - run: pnpm run build
+      - run: hack/ci.sh web
 
   helm:
     needs: changes
@@ -136,50 +127,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-      - run: helm lint deploy/charts/eddy-hub deploy/charts/eddy-agent --set store.postgres.dsnSecret.name=eddy-db
-      # PostgreSQL is required unless the evaluation-only memory store is chosen.
-      - run: helm template eddy deploy/charts/eddy-hub --set store.postgres.dsnSecret.name=eddy-db > /dev/null
-      - run: helm template eddy deploy/charts/eddy-hub --set store.driver=memory > /dev/null
-      - name: Hub chart without a DSN Secret must fail
-        run: "! helm template eddy deploy/charts/eddy-hub > /dev/null 2>&1"
-      - run: >
-          helm template eddy deploy/charts/eddy-agent
-          --set cluster.name=test
-          --set hub.url=wss://hub.example.com/agent/v1/connect
-          --set token.value=x > /dev/null
-      - run: >
-          helm template eddy deploy/charts/eddy-agent
-          --set cluster.name=test
-          --set hub.url=wss://hub.example.com/agent/v1/connect
-          --set token.existingSecret=agent-token
-          --set replicaCount=3 --set limits.qps=30
-          --set 'impersonation.groups={eddy:authenticated,eddy:platform}' > /dev/null
-      - name: Agent chart with a join token (ADR-0005)
-        run: >
-          helm template eddy deploy/charts/eddy-agent
-          --set cluster.name=test
-          --set hub.url=wss://hub.example.com/agent/v1/connect
-          --set joinToken=eddy_join_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > /dev/null
-      - name: Agent chart with a join token and a token must fail
-        run: >
-          ! helm template eddy deploy/charts/eddy-agent --set cluster.name=test
-          --set joinToken=eddy_join_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-          --set token.value=x > /dev/null 2>&1
-      - run: helm template eddy deploy/charts/eddy-hub --set store.postgres.dsnSecret.name=eddy-db --set onboarding.enabled=false > /dev/null
-      - name: Hub chart with every optional block enabled
-        run: >
-          helm template eddy deploy/charts/eddy-hub
-          --set store.postgres.dsnSecret.name=eddy-db-app --set store.postgres.dsnSecret.key=uri
-          --set replicaCount=3
-          --set 'networkPolicy.egress.postgresTo[0].podSelector.matchLabels.cnpg\.io/cluster=eddy-db'
-          --set credentialsSecret=creds
-          --set oauth2Proxy.enabled=true --set oauth2Proxy.existingSecret=o2p
-          --set ingress.ui.enabled=true --set 'ingress.ui.hosts={eddy.example.com}'
-          --set ingress.agents.enabled=true --set 'ingress.agents.hosts={agents.example.com}'
-          --set networkPolicy.enabled=true
-          --set 'clusters[0].name=prod' > /dev/null
-      - name: Chart CRD matches config/crd
-        run: diff -u config/crd/gitops.eddy.dev_clusters.yaml deploy/charts/eddy-hub/crds/gitops.eddy.dev_clusters.yaml
+      - run: hack/ci.sh charts
 
   docker:
     needs: changes
@@ -209,9 +157,6 @@ jobs:
     if: needs.changes.outputs.landing == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: landing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -225,12 +170,7 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: landing/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run lint
-      - run: pnpm run typecheck
-      - run: pnpm run build
-      - name: Check internal links in dist
-        run: pnpm run check:links
+      - run: hack/ci.sh landing
 
   ci-ok:
     name: CI

@@ -38,7 +38,9 @@ every file is written for outside contributors.
 
 ## Commands (Taskfile)
 
-- `task check`: lint, test and build the UI. Run it before you say you are done.
+- `task ci`: exactly what GitHub CI runs (`hack/ci.sh`): Go with Postgres, govulncheck, web,
+  landing, charts and images (`DOCKER=0` skips images). Run it before you say you are done.
+- `task check`: the quicker lint, test and UI build.
 - `task test` / `task lint`: Go tests with `-race` / `go vet` and staticcheck.
 - `task ui` / `task ui:dev`: build the SPA / run Vite on :5173, proxying to the hub on :8080.
 - `task dev [CONTEXTS=a,b]`: hub, agent and web with air hot reload, using local mode

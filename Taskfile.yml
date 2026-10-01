@@ -41,6 +41,26 @@ tasks:
       - go run {{.STATICCHECK}} ./...
       - task: ui:lint
 
+  ci:
+    desc: "Run exactly what CI runs (hack/ci.sh): Go with Postgres, govulncheck, web, landing, charts, images. DOCKER=0 skips images, PG=0 skips Postgres"
+    env:
+      DOCKER: '{{.DOCKER | default "1"}}'
+      PG: '{{.PG | default "1"}}'
+    cmds: [hack/ci.sh all]
+
+  ci:go:
+    desc: "CI Go job: gofmt, vet, staticcheck and race tests (starts a throwaway Postgres if Docker is available)"
+    cmds: [hack/ci.sh go]
+
+  ci:web:
+    cmds: [hack/ci.sh web]
+
+  ci:landing:
+    cmds: [hack/ci.sh landing]
+
+  ci:charts:
+    cmds: [hack/ci.sh charts]
+
   ui:install:
     dir: web
     sources: [package.json, pnpm-lock.yaml]
