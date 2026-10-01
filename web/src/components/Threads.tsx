@@ -313,6 +313,7 @@ export function ResourceThreads({
   const { data, isPending, error } = useQuery(
     threadsQuery({
       cluster: target.cluster,
+      group: target.kind ? target.group || "core" : undefined,
       kind: target.kind,
       namespace: target.namespace,
       name: target.name,

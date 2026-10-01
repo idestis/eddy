@@ -114,6 +114,20 @@ export function LogLines({
   const [textRange, setTextRange] = useState<Range | null>(null);
   const [pos, setPos] = useState<ToolbarPos | null>(null);
   const autoScrollAt = useRef(0);
+  // One fixed width for the pod column, sized to the longest short pod name, so rows line up.
+  // With a single pod the column says nothing and is hidden (the header names the pod).
+  const podCol = useMemo(() => {
+    if (!workload) return null;
+    const pods = new Set<string>();
+    let width = 0;
+    for (const l of lines) {
+      if (!l.pod) continue;
+      pods.add(l.pod);
+      const label = podLabel(l.pod, workload) + (l.container && showContainer ? `/${l.container}` : "");
+      width = Math.max(width, label.length);
+    }
+    return pods.size > 1 ? `${Math.min(Math.max(width, 6), 24)}ch` : null;
+  }, [lines, workload, showContainer]);
 
   const virtualizer = useVirtualizer({
     count: lines.length,
@@ -362,12 +376,12 @@ export function LogLines({
                 style={{ transform: `translateY(${v.start}px)` }}
               >
                 <div
-                  className={`flex gap-2.5 py-px ${l.marker ? `lg-marker lg-marker-${l.marker}` : `lg-${l.level}`}`}
+                  className={`flex items-start gap-3 py-px ${l.marker ? `lg-marker lg-marker-${l.marker}` : `lg-${l.level}`}`}
                 >
                   <button
                     type="button"
                     tabIndex={-1}
-                    className="w-[62px] shrink-0 cursor-pointer select-none pl-3 text-left text-code-dim tabular-nums hover:text-code-ink"
+                    className="box-content block w-[8ch] shrink-0 cursor-pointer self-start pl-3 text-left leading-[inherit] text-code-dim tabular-nums select-none hover:text-code-ink"
                     title="Select this line (shift+click to select a range)"
                     aria-label={`Select line ${v.index + 1}`}
                     onMouseDown={(e) => e.shiftKey && e.preventDefault()}
@@ -375,10 +389,10 @@ export function LogLines({
                   >
                     {clock(l.ts) || "·"}
                   </button>
-                  {workload && l.pod && (
+                  {podCol && l.pod && (
                     <span
-                      className="lg-pod w-[20ch] shrink-0 truncate"
-                      style={podStyle(l.pod)}
+                      className="lg-pod shrink-0 truncate"
+                      style={{ ...podStyle(l.pod), width: podCol }}
                       title={`${l.pod}${l.container ? `/${l.container}` : ""}`}
                     >
                       {podLabel(l.pod, workload)}

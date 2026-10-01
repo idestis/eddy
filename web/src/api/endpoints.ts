@@ -126,6 +126,8 @@ export const postAction = (cluster: string, r: Ref, action: Action, body: Action
 
 export interface ThreadQuery {
   cluster?: string;
+  /** API group of `kind` ("core" for the core group), so kinds outside the table resolve. */
+  group?: string;
   kind?: string;
   namespace?: string;
   name?: string;
