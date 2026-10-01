@@ -11,7 +11,7 @@ import type { ClusterGraphHandle } from "../../../../components/graph";
 import { Icon } from "../../../../components/Icon";
 import { OverflowChips, type OverflowItem } from "../../../../components/OverflowChips";
 import { RemovableChip } from "../../../../components/RemovableChip";
-import { ResourceList, type ResourceListHandle } from "../../../../components/ResourceList";
+import { ResourceList, type ResourceListHandle, type SortControl } from "../../../../components/ResourceList";
 import {
   EventsList,
   ResourceActions,
@@ -32,6 +32,15 @@ import { useKeys } from "../../../../lib/keys";
 import { filterLabel, isFluxFilter, type NavNode, navNode } from "../../../../lib/kinds";
 import { type DetailView, detailLink } from "../../../../lib/links";
 import { recallList, rememberList } from "../../../../lib/listMemory";
+import {
+  hubSortable,
+  isSortKey,
+  isSortOrder,
+  nextSort,
+  resolveSort,
+  type SortKey,
+  sortPageKey,
+} from "../../../../lib/listSort";
 import { useClusterMotion, useRequested, withLeaving } from "../../../../lib/liveMotion";
 import {
   buildRows,
@@ -44,7 +53,14 @@ import {
 import { useListMode, useWindowedList } from "../../../../lib/useClusterList";
 import { useNav } from "../../../../lib/useNav";
 import { useResourceActions } from "../../../../lib/useResourceActions";
-import { type ListView, resolvePref, setViewPrefs, useViewPrefs } from "../../../../lib/viewPrefs";
+import {
+  type ListView,
+  resolvePref,
+  savedSort,
+  setSavedSort,
+  setViewPrefs,
+  useViewPrefs,
+} from "../../../../lib/viewPrefs";
 import { WORKLOAD_LOG_KINDS } from "../../../../lib/workloadLogs";
 
 const searchSchema = z.object({
@@ -56,6 +72,19 @@ const searchSchema = z.object({
     .optional()
     .catch(undefined),
   view: z.enum(["grouped", "flat", "graph", "outline"]).optional().catch(undefined),
+  // The flat list's column sort; the URL wins over the saved one.
+  sort: z
+    .string()
+    .refine(isSortKey)
+    .transform((v) => v as SortKey)
+    .optional()
+    .catch(undefined),
+  order: z
+    .string()
+    .refine(isSortOrder)
+    .transform((v) => v as "asc" | "desc")
+    .optional()
+    .catch(undefined),
 });
 
 // The graph and its layout code load only when a graph is shown.
@@ -196,7 +225,8 @@ function ClusterPage() {
   // Typing stays instant; the 5k-row filter runs at a lower priority.
   const text = useDeferredValue(search.filter ?? "");
   // The URL wins when it names a view (shared links); otherwise the saved choice.
-  const savedView = useViewPrefs().listView;
+  const viewPrefs = useViewPrefs();
+  const savedView = viewPrefs.listView;
   const fluxPage = isFluxFilter(search.kind);
   const wanted = resolvePref(search.view, savedView, "grouped");
   // The graph (and its outline) is a view of Flux pages; elsewhere a saved one reads as grouped.
@@ -206,6 +236,10 @@ function ClusterPage() {
   const graphMode = listView === "graph" || listView === "outline";
   // A windowed list comes sorted by kind from the hub, without group headers.
   const grouped = listView !== "flat" && !windowed;
+  // The column sort applies to the flat list. A windowed list can only take the hub's sorts.
+  const pageKey = sortPageKey(search.kind);
+  const chosenSort = resolveSort(search, savedSort(viewPrefs, pageKey));
+  const sort = windowed && chosenSort && !hubSortable(chosenSort.key) ? undefined : chosenSort;
   const viewSeg = useTabIndicator<HTMLFieldSetElement>(listView);
   // Rows deleted by a live delta stay for their exit animation; counts never include them.
   const motion = useClusterMotion(name);
@@ -217,10 +251,10 @@ function ClusterPage() {
   );
   const win = useWindowedList(
     name,
-    { kind: search.kind, status: search.status, namespace, text },
+    { kind: search.kind, status: search.status, namespace, text, sort },
     readable && windowed,
   );
-  const built = useMemo(() => buildRows(filtered, grouped), [filtered, grouped]);
+  const built = useMemo(() => buildRows(filtered, grouped, sort), [filtered, grouped, sort]);
   const rows: ListRow[] = windowed ? win.rows : built;
   const filteredCount = windowed
     ? win.total
@@ -264,6 +298,19 @@ function ClusterPage() {
     (patch: Partial<z.infer<typeof searchSchema>>) =>
       void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true }),
     [navigate],
+  );
+
+  const sorting = useMemo(
+    (): SortControl => ({
+      sort,
+      onSort: (key) => {
+        const next = nextSort(sort, key);
+        setSavedSort(pageKey, next);
+        setSearch({ sort: next?.key, order: next?.order });
+      },
+      disabled: windowed ? (key) => !hubSortable(key) : undefined,
+    }),
+    [sort, pageKey, windowed, setSearch],
   );
 
   const statusItems = useMemo<OverflowItem[]>(
@@ -597,6 +644,7 @@ function ClusterPage() {
             requested={requested}
             stale={!cluster.connected}
             onRange={win.onRange}
+            sorting={sorting}
           />
         )
       ) : mode === "probing" || (isPending && !listed) ? (
@@ -623,6 +671,7 @@ function ClusterPage() {
           motion={motion}
           requested={requested}
           stale={!cluster.connected}
+          sorting={sorting}
         />
       )}
     </Screen>

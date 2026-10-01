@@ -22,6 +22,7 @@ import {
   WINDOW_PAGE,
   WINDOW_THRESHOLD,
 } from "./indexRows";
+import { hubSort, type ListSort } from "./listSort";
 import type { ListRow, StatusCounts, StatusFilter } from "./resourceRows";
 
 export type ListMode = "probing" | "legacy" | "fill" | "windowed";
@@ -79,6 +80,8 @@ export interface WindowFilter {
   status?: StatusFilter;
   namespace?: string;
   text?: string;
+  /** The column sort; one the hub cannot do reads as the default (kind). */
+  sort?: ListSort;
 }
 
 /** The windowed list: rows for [0, total), loaded pages filled in, the rest placeholders. */
@@ -90,9 +93,9 @@ export function useWindowedList(cluster: string, filter: WindowFilter, enabled: 
       status: filter.status,
       namespace: filter.namespace,
       q: filter.text || undefined,
-      sort: "kind",
+      ...hubSort(filter.sort),
     }),
-    [filter.kind, filter.status, filter.namespace, filter.text],
+    [filter.kind, filter.status, filter.namespace, filter.text, filter.sort],
   );
   const queryKey = JSON.stringify(query);
   const [range, setRange] = useState<[number, number]>([0, 60]);

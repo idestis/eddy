@@ -87,7 +87,8 @@ export interface IndexQuery {
   status?: string;
   namespace?: string;
   q?: string;
-  sort?: "kind" | "status" | "name" | "changed";
+  sort?: "kind" | "status" | "name" | "age";
+  order?: "asc" | "desc";
   offset?: number;
   cursor?: string;
   limit?: number;

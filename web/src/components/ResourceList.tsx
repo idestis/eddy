@@ -14,6 +14,7 @@ import {
 import type { Resource } from "../api/types";
 import { age, listMessage, revisionOf, revisionTitle } from "../lib/format";
 import { kindHeading, kindInfo } from "../lib/kinds";
+import { type ListSort, type SortKey, WINDOWED_SORT_HINT } from "../lib/listSort";
 import { type ClusterMotion, NO_MOTION, type Requested } from "../lib/liveMotion";
 import type { ListRow } from "../lib/resourceRows";
 import { Icon } from "./Icon";
@@ -36,7 +37,7 @@ const TRACKS: Record<ColumnId, string> = {
   replicas: "64px",
   message: "minmax(120px,1fr)",
   version: "minmax(110px,200px)",
-  age: "44px",
+  age: "56px",
 };
 
 export interface Columns {
@@ -102,6 +103,73 @@ const HEADER: Record<ColumnId, string> = {
   age: "Age",
 };
 
+const SORT_OF: Record<ColumnId, SortKey> = {
+  name: "name",
+  kind: "kind",
+  status: "status",
+  replicas: "ready",
+  message: "message",
+  version: "version",
+  age: "age",
+};
+
+/** Sorting by a column header (the flat list only). */
+export interface SortControl {
+  sort: ListSort | undefined;
+  onSort: (key: SortKey) => void;
+  /** Columns that cannot be sorted here: shown disabled, with a tooltip. */
+  disabled?: (key: SortKey) => boolean;
+}
+
+function SortHeader({ columns, control }: { columns: Columns; control: SortControl }) {
+  return (
+    <table className="block shrink-0">
+      <thead className="block">
+        <tr
+          className="grid shrink-0 items-center gap-3.5 border-b border-line bg-surface-side py-[9px] pr-4 pl-4 text-12 text-ink-3"
+          style={{ gridTemplateColumns: columns.template }}
+        >
+          {columns.ids.map((id) => {
+            const key = SORT_OF[id];
+            const label =
+              id === "version"
+                ? columns.versionLabel
+                : id === "replicas"
+                  ? columns.replicasLabel
+                  : HEADER[id];
+            const active = control.sort?.key === key ? control.sort.order : undefined;
+            const disabled = control.disabled?.(key) ?? false;
+            return (
+              <th
+                key={id}
+                scope="col"
+                aria-sort={active ? (active === "asc" ? "ascending" : "descending") : "none"}
+                className={`block min-w-0 font-normal ${id === "age" ? "text-right" : "text-left"}`}
+              >
+                <button
+                  type="button"
+                  disabled={disabled}
+                  title={disabled ? WINDOWED_SORT_HINT : `Sort by ${label.toLowerCase()}`}
+                  onClick={() => control.onSort(key)}
+                  className={`inline-flex max-w-full items-center gap-1 rounded px-1 py-0.5 -mx-1 hover:text-ink focus-visible:outline-2 focus-visible:outline-c disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:text-ink-3 ${active ? "font-semibold text-ink" : ""}`}
+                >
+                  <span className="truncate">{label}</span>
+                  <span
+                    className="inline-flex size-3 shrink-0 items-center justify-center"
+                    aria-hidden="true"
+                  >
+                    {active === "asc" ? "↑" : active === "desc" ? "↓" : ""}
+                  </span>
+                </button>
+              </th>
+            );
+          })}
+        </tr>
+      </thead>
+    </table>
+  );
+}
+
 interface ResourceListProps {
   rows: ListRow[];
   grouped: boolean;
@@ -118,6 +186,8 @@ interface ResourceListProps {
   stale?: boolean;
   /** The rows on screen (first and last index) changed: a windowed list loads their pages. */
   onRange?: (start: number, end: number) => void;
+  /** Clickable column headers; without it the headers are plain labels (grouped view). */
+  sorting?: SortControl;
 }
 
 export interface ResourceListHandle {
@@ -286,6 +356,7 @@ export function ResourceList({
   requested,
   stale = false,
   onRange,
+  sorting,
 }: ResourceListProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -323,17 +394,25 @@ export function ResourceList({
       className="stale-able flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface"
       data-stale={stale}
     >
-      <div
-        className="grid shrink-0 items-center gap-3.5 border-b border-line bg-surface-side py-[9px] pr-4 pl-4 text-12 text-ink-3"
-        style={{ gridTemplateColumns: columns.template }}
-        aria-hidden="true"
-      >
-        {columns.ids.map((id) => (
-          <span key={id} className={id === "age" ? "text-right" : "truncate"}>
-            {id === "version" ? columns.versionLabel : id === "replicas" ? columns.replicasLabel : HEADER[id]}
-          </span>
-        ))}
-      </div>
+      {sorting && !grouped ? (
+        <SortHeader columns={columns} control={sorting} />
+      ) : (
+        <div
+          className="grid shrink-0 items-center gap-3.5 border-b border-line bg-surface-side py-[9px] pr-4 pl-4 text-12 text-ink-3"
+          style={{ gridTemplateColumns: columns.template }}
+          aria-hidden="true"
+        >
+          {columns.ids.map((id) => (
+            <span key={id} className={id === "age" ? "text-right" : "truncate"}>
+              {id === "version"
+                ? columns.versionLabel
+                : id === "replicas"
+                  ? columns.replicasLabel
+                  : HEADER[id]}
+            </span>
+          ))}
+        </div>
+      )}
       <div
         ref={scroller}
         className="min-h-0 flex-1 overflow-auto outline-none [contain:strict] focus-visible:rounded-b-card focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-c"

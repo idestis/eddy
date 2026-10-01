@@ -4,6 +4,7 @@
 import type { ClusterInfo, Resource, Status } from "../api/types";
 import { STATUS_RANK } from "./format";
 import { kindInfo, matchesKindFilter } from "./kinds";
+import { type ListSort, sortResources } from "./listSort";
 
 /** "attention" means anything that is not ready (or completed). */
 export type StatusFilter = Status | "attention";
@@ -119,9 +120,15 @@ function compare(a: Resource, b: Resource): number {
 // Inventory-only rows sort after everything with a status.
 const rankOf = (r: Resource) => (r.inventoryOnly ? 9 : STATUS_RANK[r.status]);
 
-/** Sorts by kind, then what needs attention, then namespace/name; optionally adds kind headers. */
-export function buildRows(items: readonly Resource[], grouped: boolean): Row[] {
-  const sorted = [...items].sort(grouped ? compare : (a, b) => rankOf(a) - rankOf(b) || compare(a, b));
+/**
+ * Sorts by kind, then what needs attention, then namespace/name; optionally adds kind headers.
+ * A flat list takes the user's column sort instead; a grouped list ignores it.
+ */
+export function buildRows(items: readonly Resource[], grouped: boolean, sort?: ListSort): Row[] {
+  const sorted =
+    !grouped && sort
+      ? sortResources(items, sort)
+      : [...items].sort(grouped ? compare : (a, b) => rankOf(a) - rankOf(b) || compare(a, b));
   if (!grouped) return sorted.map((r) => ({ type: "resource", key: r.id, resource: r }));
   const rows: Row[] = [];
   let header: Extract<Row, { type: "group" }> | undefined;

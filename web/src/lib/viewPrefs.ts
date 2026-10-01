@@ -5,6 +5,7 @@
 // default). An explicit URL search parameter still wins, so shared links keep their view.
 
 import { useSyncExternalStore } from "react";
+import { decodeSort, encodeSort, type ListSort } from "./listSort";
 
 /** "graph" and "outline" (the graph as steps) are offered on Flux pages only; elsewhere they read as "grouped". */
 export type ListView = "grouped" | "flat" | "graph" | "outline";
@@ -15,6 +16,8 @@ export interface ViewPrefs {
   listView?: ListView;
   /** The detail page's "Manages" section: the ownership tree, the dependency graph or its outline. */
   managesView?: ManagesView;
+  /** The flat list's column sort per page (the kind filter, "" for the cluster), as "name:asc". */
+  listSort?: Record<string, string>;
   /** Focus-mode hops in the graph (1–3). */
   graphHops?: number;
   logFormat?: LogFormat;
@@ -44,6 +47,15 @@ export function parseViewPrefs(raw: unknown): ViewPrefs {
   const out: ViewPrefs = {};
   const listView = oneOf(r.listView, ["grouped", "flat", "graph", "outline"] as const);
   if (listView) out.listView = listView;
+  if (r.listSort && typeof r.listSort === "object" && !Array.isArray(r.listSort)) {
+    const sorts: Record<string, string> = {};
+    let n = 0;
+    for (const [k, v] of Object.entries(r.listSort as Record<string, unknown>)) {
+      const sort = decodeSort(v);
+      if (sort && k.length <= 64 && n++ < 64) sorts[k] = encodeSort(sort);
+    }
+    if (n > 0) out.listSort = sorts;
+  }
   const managesView = oneOf(r.managesView, ["tree", "graph", "outline"] as const);
   if (managesView) out.managesView = managesView;
   if (typeof r.graphHops === "number" && [1, 2, 3].includes(r.graphHops)) out.graphHops = r.graphHops;
@@ -131,4 +143,16 @@ export function useViewPrefs(): ViewPrefs {
 export function reloadViewPrefs(): void {
   state = load();
   for (const l of listeners) l();
+}
+
+/** The saved sort of a list page. */
+export const savedSort = (prefs: ViewPrefs, page: string): ListSort | undefined =>
+  decodeSort(prefs.listSort?.[page]);
+
+/** Saves (or, with undefined, forgets) the sort of a list page. */
+export function setSavedSort(page: string, sort: ListSort | undefined): void {
+  const next = { ...getViewPrefs().listSort };
+  if (sort) next[page] = encodeSort(sort);
+  else delete next[page];
+  setViewPrefs({ listSort: Object.keys(next).length ? next : undefined });
 }

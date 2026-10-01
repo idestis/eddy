@@ -134,3 +134,10 @@ Audit notes:
 - `n` is bound on the fleet page only.
 - The graph keys reuse the Move around keys while the graph has focus. `0`, `+` `=` and `-` are off in the Outline view.
 - Inside ⌘K, `↑` `↓` (and `Ctrl N` / `Ctrl P`, `Ctrl J` / `Ctrl K`) move and wrap, `↵` runs, `Tab` switches This cluster / All clusters, and `1`…`9` switch cluster while the input is empty. These are the combobox's own keys, not global bindings.
+
+## Flat-list sorting
+
+- **Headers:** in the flat list, column headers sort the list: ascending, then descending, then back to the default attention-first order. Grouped view keeps plain labels.
+- **Remembered:** the sort is saved per list page (`listSort` in view prefs) and mirrored in the URL as `?sort=&order=`. The URL wins when present.
+- **Clusters up to 25k rows:** sorting is instant and local.
+- **Windowed clusters (over 25k rows):** the hub sorts name, kind, status and age and the pages refetch. Message, version and ready columns are disabled there, with a tooltip.
