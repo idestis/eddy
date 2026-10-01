@@ -37,3 +37,4 @@ internal/ui/dist/*
 
 # Task checksum cache
 .task/
+/eddy-loadgen
