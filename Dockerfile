@@ -6,7 +6,7 @@
 
 # ---- SPA ----------------------------------------------------------------
 # The Vite build writes to ../internal/ui/dist (relative to web/), which the hub embeds.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:26-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/pnpm-lock.yaml ./
 # Node 25+ no longer ships corepack: install the pnpm version package.json pins.
