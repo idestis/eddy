@@ -18,9 +18,9 @@ const keys: KeyItem[] = [
 ];
 
 /**
- * Every item is one row: a fixed-width key column and a label that never wraps on wider screens, so
- * the columns line up whatever the label length. On phones it becomes a two-column list where the
- * keys sit above the label.
+ * Every item is one row: a fixed-width key column and a label that wraps inside its cell, so the
+ * columns line up and a long label never widens the page. On phones it becomes a two-column list
+ * where the keys sit above the label.
  */
 export function Keymap({ items = keys, label = "Key bindings" }: { items?: KeyItem[]; label?: string }) {
   return (
@@ -31,7 +31,7 @@ export function Keymap({ items = keys, label = "Key bindings" }: { items?: KeyIt
       {items.map((k) => (
         <li
           key={k.label}
-          className="flex flex-col items-start gap-1.5 border-b border-dashed border-line py-3 text-[0.93rem] text-ink-2 sm:min-h-12 sm:flex-row sm:items-center sm:gap-3 sm:py-2"
+          className="flex min-w-0 flex-col items-start gap-1.5 border-b border-dashed border-line py-3 text-[0.93rem] text-ink-2 sm:min-h-12 sm:flex-row sm:items-center sm:gap-3 sm:py-2"
         >
           <span className="flex gap-1 sm:w-[5.5rem] sm:shrink-0">
             {k.keys.map((key) => (
@@ -40,7 +40,7 @@ export function Keymap({ items = keys, label = "Key bindings" }: { items?: KeyIt
               </kbd>
             ))}
           </span>
-          <span className="sm:whitespace-nowrap">{k.label}</span>
+          <span className="min-w-0 break-words">{k.label}</span>
         </li>
       ))}
     </ul>
