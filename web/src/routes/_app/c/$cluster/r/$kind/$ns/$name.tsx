@@ -253,7 +253,7 @@ function DetailPage() {
     body = (
       <div className="@container stale-able flex flex-col" data-stale={!cluster.connected}>
         <ResourceHeader r={r} large cluster={params.cluster} />
-        <ResourceActions cluster={cluster} r={r} actions={actions} onLogs={() => setView("logs")} />
+        <ResourceActions cluster={cluster} r={r} actions={actions} />
         <div
           ref={tabList.list}
           className="no-scrollbar relative mb-3.5 flex gap-0.5 overflow-x-auto border-b border-line"
