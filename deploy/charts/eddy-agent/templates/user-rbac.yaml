@@ -1,0 +1,40 @@
+{{- if .Values.userRBAC.create }}
+{{- $u := .Values.userRBAC }}
+# User-facing RBAC (userRBAC). These roles are for people, never for the agent: the agent
+# impersonates the signed-in user and the API server checks these rules. The agent's own
+# ServiceAccount keeps its read-only ClusterRole (rbac.yaml) and is never a subject here.
+# deploy/rbac/eddy-user-rbac.yaml mirrors the defaults for non-Helm installs; a test keeps them equal.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $u.roleNames.viewer }}
+  labels:
+    {{- include "eddy-agent.userRBAC.labels" . | nindent 4 }}
+rules:
+  {{- include "eddy-agent.userRBAC.rules" (dict "root" . "operator" false) | nindent 2 }}
+  {{- with $u.extraRules.viewer }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $u.roleNames.operator }}
+  labels:
+    {{- include "eddy-agent.userRBAC.labels" . | nindent 4 }}
+rules:
+  # Everything a viewer can do, plus patch on the Flux kinds: reconcile (requestedAt
+  # annotation), suspend and resume.
+  {{- include "eddy-agent.userRBAC.rules" (dict "root" . "operator" true) | nindent 2 }}
+  {{- with $u.extraRules.operator }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+{{- include "eddy-agent.userRBAC.binding" (dict "root" . "name" $u.roleNames.viewer "role" $u.roleNames.viewer "groups" $u.viewer.groups "users" $u.viewer.users "namespaces" $u.namespaces) }}
+{{- include "eddy-agent.userRBAC.binding" (dict "root" . "name" $u.roleNames.operator "role" $u.roleNames.operator "groups" $u.operator.groups "users" $u.operator.users "namespaces" $u.namespaces) }}
+{{- range $u.bindings }}
+{{- $role := get $u.roleNames .role }}
+{{- $ns := $u.namespaces }}
+{{- if hasKey . "namespaces" }}{{ $ns = .namespaces }}{{ end }}
+{{- include "eddy-agent.userRBAC.binding" (dict "root" $ "name" (printf "%s-%s" $role .name) "role" $role "groups" (.groups | default (list)) "users" (.users | default (list)) "namespaces" $ns) }}
+{{- end }}
+{{- end }}

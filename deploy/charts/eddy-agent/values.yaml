@@ -104,7 +104,49 @@ serviceAccount:
   annotations: {}
 
 rbac:
+  create: true        # the agent's own read-only ClusterRole (never touched by userRBAC)
+
+# RBAC for the people who use Eddy. The agent impersonates the signed-in user, so this is what
+# decides what each person sees and may do in this cluster. The chart creates two ClusterRoles,
+# eddy-viewer (get/list/watch on every watched kind and pods/log, never Secrets or ConfigMaps)
+# and eddy-operator (viewer plus patch on the Flux kinds: reconcile, suspend, resume), and binds
+# them to the subjects below. A binding with no subjects is not rendered; the roles always are.
+# deploy/rbac/eddy-user-rbac.yaml holds the same defaults for installs without Helm.
+userRBAC:
   create: true
+  # The hub's auth.groups.prefix. Every group below must start with it, and it must start with
+  # one of impersonation.allowedGroupPrefixes. system: groups and users are always refused.
+  groupPrefix: "eddy:"
+  # eddy:authenticated is carried by every signed-in user (one who passed the hub's org,
+  # team and domain allowlists), so by default everyone can read Flux and workload summaries
+  # here. Set groups: [] to grant nothing by default.
+  viewer:
+    groups: ["eddy:authenticated"]
+    users: []
+  # e.g. groups: ["eddy:github:acme/platform"]
+  operator:
+    groups: []
+    users: []
+  # Empty: ClusterRoleBindings. A list: RoleBindings to the ClusterRoles in each of these
+  # namespaces instead (they must exist), for teams limited to some namespaces. Cluster-scoped
+  # kinds (Namespaces, StorageClasses, NodePools, ...) are then not visible.
+  namespaces: []
+  # Extra RBAC rules appended to each role, e.g. read on a CRD of your own.
+  extraRules:
+    viewer: []
+    operator: []
+  # Rename the roles when several releases share a cluster.
+  roleNames:
+    viewer: eddy-viewer
+    operator: eddy-operator
+  # Extra bindings, named <role name>-<name>. namespaces, when set (even []), replaces
+  # userRBAC.namespaces for this binding.
+  bindings: []
+  # - name: prod-eu
+  #   role: operator          # viewer | operator
+  #   groups: ["eddy:operators:prod-eu"]
+  #   users: []
+  #   namespaces: []
 
 podAnnotations: {}
 podLabels: {}

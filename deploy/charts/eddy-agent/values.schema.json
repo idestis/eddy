@@ -1,6 +1,29 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
+  "definitions": {
+    "groups": {"type": "array", "items": {"type": "string", "minLength": 1, "not": {"pattern": "^system:"}}},
+    "users": {"type": "array", "items": {"type": "string", "minLength": 1, "not": {"pattern": "^system:"}}},
+    "subjects": {
+      "type": "object",
+      "properties": {"groups": {"$ref": "#/definitions/groups"}, "users": {"$ref": "#/definitions/users"}},
+      "additionalProperties": false
+    },
+    "namespaces": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63}},
+    "rbacName": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9.:]*[a-z0-9])?$", "maxLength": 200},
+    "policyRule": {
+      "type": "object",
+      "properties": {
+        "apiGroups": {"type": "array", "items": {"type": "string"}},
+        "resources": {"type": "array", "items": {"type": "string"}},
+        "resourceNames": {"type": "array", "items": {"type": "string"}},
+        "nonResourceURLs": {"type": "array", "items": {"type": "string"}},
+        "verbs": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+      },
+      "required": ["verbs"],
+      "additionalProperties": false
+    }
+  },
   "properties": {
     "cluster": {
       "type": "object",
@@ -38,6 +61,49 @@
         "allowedGroupPrefixes": {"type": "array", "items": {"type": "string", "pattern": ":$", "not": {"pattern": "^system:"}}},
         "groups": {"type": "array", "items": {"type": "string", "minLength": 1, "not": {"pattern": "^system:"}}}
       }
+    },
+    "userRBAC": {
+      "type": "object",
+      "properties": {
+        "create": {"type": "boolean"},
+        "groupPrefix": {"type": "string", "pattern": ":$", "not": {"pattern": "^system:"}},
+        "viewer": {"$ref": "#/definitions/subjects"},
+        "operator": {"$ref": "#/definitions/subjects"},
+        "namespaces": {"$ref": "#/definitions/namespaces"},
+        "extraRules": {
+          "type": "object",
+          "properties": {
+            "viewer": {"type": "array", "items": {"$ref": "#/definitions/policyRule"}},
+            "operator": {"type": "array", "items": {"$ref": "#/definitions/policyRule"}}
+          },
+          "additionalProperties": false
+        },
+        "roleNames": {
+          "type": "object",
+          "properties": {
+            "viewer": {"$ref": "#/definitions/rbacName"},
+            "operator": {"$ref": "#/definitions/rbacName"}
+          },
+          "required": ["viewer", "operator"],
+          "additionalProperties": false
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$", "maxLength": 200},
+              "role": {"type": "string", "enum": ["viewer", "operator"]},
+              "groups": {"$ref": "#/definitions/groups"},
+              "users": {"$ref": "#/definitions/users"},
+              "namespaces": {"$ref": "#/definitions/namespaces"}
+            },
+            "required": ["name", "role"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "replicaCount": {"type": "integer", "minimum": 0},
     "strategy": {"type": "object"},

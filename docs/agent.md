@@ -64,7 +64,8 @@ Each preset adds its kinds to the agent's cache, only for kinds the cluster serv
 
 Unknown preset names fail the chart schema and the agent's start. `task dev` (local mode)
 enables every preset; set `EDDY_AGENT_PRESETS` to a list, or `none`, to change that. Users need
-matching read RBAC to see these kinds (see `deploy/rbac/eddy-user-rbac.yaml`).
+matching read RBAC to see these kinds: the chart's `eddy-viewer` and `eddy-operator` roles
+(below) add the rules of exactly the presets you enable.
 
 ### Reads outside the watched kinds
 
@@ -72,6 +73,29 @@ YAML and events of objects known only from a Kustomization inventory (ConfigMaps
 CRDs, …) run impersonated like every other read. The agent maps the kind through discovery
 with its own client (a cached RESTMapper, refreshed on a miss at most every 30 s). Secret YAML
 is refused before anything is read; ConfigMap YAML has `data` and `binaryData` removed.
+
+## User RBAC (`userRBAC`)
+
+The agent's own permissions above never change. What *people* may do is a separate set of
+roles that the chart also creates, because every user request is impersonated and checked
+against them. They are bound to users and groups only, never to the agent's ServiceAccount.
+
+| Value | Default | Meaning |
+|---|---|---|
+| `userRBAC.create` | `true` | Create the roles and bindings below. `false` if you manage user RBAC yourself (`deploy/rbac/eddy-user-rbac.yaml` has the same roles). |
+| `userRBAC.groupPrefix` | `"eddy:"` | The hub's `auth.groups.prefix`. Every bound group must start with it, and it must start with one of `impersonation.allowedGroupPrefixes`. |
+| `userRBAC.viewer.groups` / `.users` | `["eddy:authenticated"]` / `[]` | Who gets `eddy-viewer`: get, list, watch on every watched kind (preset kinds only when enabled) and `pods/log`, never Secrets or ConfigMaps. `eddy:authenticated` is every signed-in user; set `[]` to opt out. |
+| `userRBAC.operator.groups` / `.users` | `[]` / `[]` | Who gets `eddy-operator`: the viewer rules plus `patch` on Flux kinds (reconcile, suspend, resume). |
+| `userRBAC.namespaces` | `[]` | Empty: ClusterRoleBindings. A list: RoleBindings to the ClusterRoles in each namespace instead, for teams limited to some namespaces. |
+| `userRBAC.bindings` | `[]` | Extra bindings `{name, role: viewer\|operator, groups, users, namespaces}`, rendered as `<role name>-<name>`, for example per-cluster operators like `eddy:operators:prod-eu`. `namespaces`, when set (even `[]`), replaces `userRBAC.namespaces` for that binding. |
+| `userRBAC.extraRules.viewer` / `.operator` | `[]` | Rules appended to each role. |
+| `userRBAC.roleNames.viewer` / `.operator` | `eddy-viewer` / `eddy-operator` | Role names, so several releases in one cluster do not clash. |
+
+A binding without subjects is not rendered; the roles always are. The chart refuses `system:`
+users and groups, the agent's own ServiceAccount, users matching
+`impersonation.denyUserPrefixes` and groups without `groupPrefix`. NOTES list who got which
+role and warn about bound groups missing from a pinned `impersonation.groups`. See
+[install.md](install.md#5-grant-people-access-userrbac) for examples.
 
 ## How it connects: outbound only
 
@@ -236,7 +260,7 @@ connection wins, so run only one replica of an older agent.
 
 - [ ] Install the agent in its own namespace, labelled with Pod Security `restricted`.
 - [ ] Set `impersonation.groups` so group impersonation is pinned.
-- [ ] Bind people to `eddy:`-prefixed groups, not to individual users.
+- [ ] Bind people to `eddy:`-prefixed groups (`userRBAC.*.groups`), not to individual users.
 - [ ] Enable `networkPolicy` (egress only) and set `hubTo` to the hub endpoint's CIDR.
 - [ ] Use PrivateLink or a private path. If the agent endpoint must be public, restrict it by source CIDR.
 - [ ] Rotate the agent token (`token` → `previousToken`, or **Regenerate join token** in the Connection panel), as described in [install.md](install.md).

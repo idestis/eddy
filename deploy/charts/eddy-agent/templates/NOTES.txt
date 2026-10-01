@@ -31,4 +31,47 @@ Check the connection:
 The cluster should show as Connected in the hub UI (kubectl get clusters.gitops.eddy.dev on the hub).
 
 The agent can read Flux objects and workloads, but it can do nothing on its own: every user
-request is impersonated. Apply deploy/rbac/eddy-user-rbac.yaml so people can see and act on things.
+request is impersonated, so the user RBAC below decides what people see and may do here.
+{{- $u := .Values.userRBAC }}
+{{- if $u.create }}
+
+User RBAC (userRBAC): ClusterRoles {{ $u.roleNames.viewer }} (read, never Secrets) and {{ $u.roleNames.operator }} (read plus
+reconcile, suspend and resume), bound
+{{- if $u.namespaces }} in namespaces {{ join ", " $u.namespaces }}{{ else }} cluster-wide{{ end }}:
+{{- range list (list "viewer" $u.viewer) (list "operator" $u.operator) }}
+{{- $role := get $u.roleNames (index . 0) }}
+{{- $s := index . 1 }}
+  {{ $role }}: {{ if or $s.groups $s.users }}{{ concat ($s.groups | default (list)) ($s.users | default (list)) | join ", " }}{{ else }}nobody{{ end }}
+{{- end }}
+{{- range $u.bindings }}
+{{- if or .groups .users }}
+  {{ get $u.roleNames .role }} ({{ printf "%s-%s" (get $u.roleNames .role) .name }}{{ if hasKey . "namespaces" }}{{ if .namespaces }}, in {{ join ", " .namespaces }}{{ else }}, cluster-wide{{ end }}{{ end }}): {{ concat (.groups | default (list)) (.users | default (list)) | join ", " }}
+{{- end }}
+{{- end }}
+{{- if has (printf "%sauthenticated" $u.groupPrefix) ($u.viewer.groups | default (list)) }}
+
+{{ printf "%sauthenticated" $u.groupPrefix }} is every signed-in user: all of them can read Flux and workload summaries here.
+Opt out with userRBAC.viewer.groups: [].
+{{- end }}
+{{- if not (or $u.operator.groups $u.operator.users) }}
+
+Nobody may reconcile or suspend yet. Grant operator to a group, for example:
+  helm upgrade {{ .Release.Name }} oci://ghcr.io/idestis/charts/eddy-agent --version {{ .Chart.Version }} -n {{ .Release.Namespace }} --reuse-values \
+    --set 'userRBAC.operator.groups={ {{- $u.groupPrefix }}github:acme/platform}'
+{{- end }}
+{{- with .Values.impersonation.groups }}
+{{- $pinned := . }}
+{{- range (include "eddy-agent.userRBAC.subjectSets" $ | fromJson).sets }}
+{{- range .groups }}
+{{- if not (has . $pinned) }}
+
+WARNING: {{ . }} is bound to a user role but not in impersonation.groups, so the agent
+cannot impersonate it and the binding has no effect.
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- else }}
+
+userRBAC.create is false: grant user RBAC yourself (deploy/rbac/eddy-user-rbac.yaml is a start).
+{{- end }}

@@ -1,14 +1,19 @@
-# Example RBAC for Eddy users. Apply in EVERY workload cluster (kubectl apply -f).
+# Eddy user RBAC for installs WITHOUT Helm. The eddy-agent chart creates these roles and
+# bindings itself (values: userRBAC); with the chart, do not apply this file.
+#
+# The two ClusterRoles mirror the chart's default eddy-viewer and eddy-operator with every
+# watch.presets enabled (internal/flux/userrbac_test.go fails if they drift). The bindings at the
+# end are examples: the chart binds eddy-viewer to eddy:authenticated and, by default, nothing
+# to eddy-operator. Apply in EVERY workload cluster (kubectl apply -f) and edit the subjects.
 #
 # Eddy never invents permissions: the agent impersonates the signed-in user and the API server
 # decides. Users and groups arrive as:
 #   user   local:<username>  (local auth) or <userPrefix><header value> (proxy auth)
 #   groups eddy:<group>      (prefix from auth.groups.prefix), plus eddy:authenticated for all
 #
-# Edit the subjects to match your groups. Bind to a namespace-scoped RoleBinding instead of the
-# ClusterRoleBinding below to limit a team to some namespaces.
-#
-# Adding a kind to Eddy means extending both ClusterRoles.
+# Bind to a namespace-scoped RoleBinding instead of the ClusterRoleBindings below to limit a
+# team to some namespaces. Never bind these roles to system: users or groups, or to the agent's
+# own ServiceAccount.
 #
 # YAML and events of any object (watched kinds and objects known only from a Kustomization
 # inventory) are read as the user, so they need `get` on that kind (and `list` on events).
@@ -66,7 +71,7 @@ rules:
   - apiGroups: [external-secrets.io]
     resources: [externalsecrets, clusterexternalsecrets, secretstores, clustersecretstores, pushsecrets]
     verbs: [get, list, watch]
-  # Logs are only readable in the UI when this is granted (and over MCP when mcp.allowLogs is on).
+  # Logs are readable in the UI only with this (and over MCP only when mcp.allowLogs is on).
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
@@ -78,7 +83,8 @@ metadata:
   labels:
     app.kubernetes.io/part-of: eddy
 rules:
-  # Everything a viewer can do...
+  # Everything a viewer can do, plus patch on the Flux kinds: reconcile (requestedAt
+  # annotation), suspend and resume.
   - apiGroups: [kustomize.toolkit.fluxcd.io]
     resources: [kustomizations]
     verbs: [get, list, watch, patch]
@@ -120,11 +126,12 @@ rules:
   - apiGroups: [external-secrets.io]
     resources: [externalsecrets, clusterexternalsecrets, secretstores, clustersecretstores, pushsecrets]
     verbs: [get, list, watch]
+  # Logs are readable in the UI only with this (and over MCP only when mcp.allowLogs is on).
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
-  # ...plus patch on the Flux kinds: reconcile (requestedAt annotation), suspend and resume.
 ---
+# Every signed-in user may read (the chart's default, userRBAC.viewer.groups).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -140,6 +147,8 @@ subjects:
     kind: Group
     name: eddy:authenticated
 ---
+# Example: the group eddy:platform may reconcile, suspend and resume. The chart has no
+# operator binding by default (userRBAC.operator.groups).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:

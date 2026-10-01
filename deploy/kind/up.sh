@@ -132,6 +132,7 @@ kctl -n "$HUB_NS" get secret eddy-agents-tls -o jsonpath='{.data.tls\.crt}' | ba
 log "Eddy hub"
 cat >"$tmp/hub-values.yaml" <<YAML
 publicURL: http://localhost:8080
+agentsPublicURL: https://eddy-hub-agents.${HUB_NS}.svc:443
 image: {tag: ${IMAGE_TAG}, pullPolicy: Never}
 replicaCount: 2
 store:
@@ -150,7 +151,14 @@ YAML
 hlm upgrade --install eddy-hub "$ROOT/deploy/charts/eddy-hub" \
   --namespace "$HUB_NS" --values "$tmp/hub-values.yaml" --wait --timeout 5m
 
-log "Eddy agent"
+log "Eddy agent (user RBAC from the chart: dev is in group eddy:platform, so it gets eddy-operator)"
+# Clusters created before the chart owned the user RBAC have it from kubectl apply; let Helm adopt it.
+for obj in clusterrole/eddy-viewer clusterrole/eddy-operator clusterrolebinding/eddy-viewer clusterrolebinding/eddy-operator; do
+  if kctl get "$obj" >/dev/null 2>&1; then
+    kctl annotate --overwrite "$obj" meta.helm.sh/release-name=eddy-agent meta.helm.sh/release-namespace="$AGENT_NS" >/dev/null
+    kctl label --overwrite "$obj" app.kubernetes.io/managed-by=Helm >/dev/null
+  fi
+done
 token="$(kctl -n "$HUB_NS" get secret eddy-agent-kind -o jsonpath='{.data.token}' | base64 -d)"
 hlm upgrade --install eddy-agent "$ROOT/deploy/charts/eddy-agent" \
   --namespace "$AGENT_NS" --create-namespace \
@@ -159,10 +167,8 @@ hlm upgrade --install eddy-agent "$ROOT/deploy/charts/eddy-agent" \
   --set "hub.url=wss://eddy-hub-agents.${HUB_NS}.svc:443/agent/v1/connect" \
   --set-file hub.caBundle="$tmp/ca.crt" \
   --set-string token.value="$token" \
+  --set 'userRBAC.operator.groups={eddy:platform}' \
   --wait --timeout 5m
-
-log "User RBAC (dev user is in group eddy:platform, so it gets eddy-operator)"
-kctl apply -f "$ROOT/deploy/rbac/eddy-user-rbac.yaml"
 
 cat <<EOF
 
