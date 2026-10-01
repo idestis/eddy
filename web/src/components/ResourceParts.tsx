@@ -189,7 +189,7 @@ export function ResourceActions({ cluster, r, actions, onLogs, onOpen, onAsk }: 
         {onLogs &&
           ((r.kind === "Pod" && me?.features.logs) ||
             (WORKLOAD_LOG_KINDS.has(r.kind) && me?.features.workloadLogs)) && (
-            <ActionButton icon="term" label="Logs" keyId="logs" primary onClick={onLogs} />
+            <ActionButton icon="term" label="Logs" keyId="logs" onClick={onLogs} />
           )}
         {onOpen && <ActionButton icon="open" label="Open" keyId="open" onClick={onOpen} />}
         {onAsk && me?.features.ai && (
