@@ -367,6 +367,13 @@
     & li {
       margin: 2px 0;
     }
+    & li > ul,
+    & li > ol {
+      margin: 2px 0 0;
+    }
+    & li > ul {
+      list-style: circle;
+    }
     & code {
       font-size: var(--text-12);
       /* Long inline code (paths, image refs) wraps instead of widening the answer. */
@@ -445,6 +452,19 @@
     }
     & em {
       font-style: italic;
+    }
+    /* Inline code that names a resource from the answer's refs: a link to its page. */
+    & a.md-ref {
+      text-decoration: none;
+      & code {
+        color: var(--c);
+        font-family: var(--font-mono);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      &:hover code {
+        border-color: var(--c);
+      }
     }
   }
 

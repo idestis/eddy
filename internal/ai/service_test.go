@@ -635,7 +635,7 @@ func TestSearchAcrossClustersAndLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items := out.(map[string]any)["items"].([]searchItem)
+	items := out.(searchResult).Items
 	if len(items) != 2 {
 		t.Errorf("fleet-wide search items = %+v", items)
 	}

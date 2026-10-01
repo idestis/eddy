@@ -1265,9 +1265,10 @@ export class MockHub {
       this.contextVisible(r) ? "ok" : "hidden",
     );
     const seen = chat.context.filter((_, i) => contextStatus[i] === "ok");
-    const { text, steps } = this.answer(seen, attachments);
+    const { text, steps, refs: answerRefs } = this.answer(seen, attachments);
     const message = this.chatMessage(chat, aiAuthor, text, 0, {
       steps,
+      refs: answerRefs,
       usage: { inputTokens: 2310, outputTokens: 164 },
     });
     this.record("ai.ask", seen[0], "ok", { chatId: chat.id, context: chat.context });
@@ -1278,12 +1279,17 @@ export class MockHub {
   private answer(
     refs: ResourceRef[],
     attachments: AskAttachment[] | undefined,
-  ): { text: string; steps: AskStep[] } {
+  ): { text: string; steps: AskStep[]; refs: ResourceRef[] } {
     const steps: AskStep[] = [];
-    const named = (r: ResourceRef) =>
-      r.kind
-        ? `\`${kindInfo(r.kind).abbr} ${r.namespace ? `${r.namespace}/` : ""}${r.name}\` on ${r.cluster}`
-        : `\`${r.cluster}\``;
+    // meta.refs: like the hub, only what the "tools" returned (the visible context and the
+    // objects read below), so `Kind/ns/name` spans in the text become links.
+    const out: ResourceRef[] = [];
+    const cite = (cluster: string, x: Pick<ResourceRef, "group" | "kind" | "namespace" | "name">) => {
+      if (!out.some((o) => o.cluster === cluster && refKey(o) === refKey(x)))
+        out.push({ cluster, group: x.group, kind: x.kind, namespace: x.namespace, name: x.name });
+      return `\`${x.kind}/${x.namespace ? `${x.namespace}/` : ""}${x.name}\``;
+    };
+    const named = (r: ResourceRef) => (r.kind ? `${cite(r.cluster, r)} on ${r.cluster}` : `\`${r.cluster}\``);
     const intro = refs.length
       ? `Looking at ${refs.map(named).join(", ")}.\n\n`
       : "No resource is in this chat's context, so I looked across the fleet.\n\n";
@@ -1294,6 +1300,7 @@ export class MockHub {
       const sources = attachments.map((a) => `\`${a.source}\``).join(", ");
       return {
         steps,
+        refs: out,
         text: `${intro}I read ${all.length} line${all.length === 1 ? "" : "s"} from ${sources}.\n\n- ${errors.length} error${errors.length === 1 ? "" : "s"} and ${warns.length} warning${warns.length === 1 ? "" : "s"}.${errors[0] ? `\n- The first error:\n\n\`\`\`\n${errors[0]}\n\`\`\`` : "\n- Nothing in these lines looks like a failure."}\n- If this repeats, check the events and recent rollouts.`,
       };
     }
@@ -1310,7 +1317,7 @@ export class MockHub {
           bad.length
             ? `**${ref.cluster}**: ${bad.length} object${bad.length === 1 ? " needs" : "s need"} attention.\n${bad
                 .slice(0, 4)
-                .map((x) => `- \`${x.kind}/${x.name}\` is ${x.status}: ${x.message ?? ""}`)
+                .map((x) => `- ${cite(ref.cluster, x)} is ${x.status}: ${x.message ?? ""}`)
                 .join("\n")}`
             : `**${ref.cluster}**: everything is ready. Flux ${cl.info.fluxVersion ?? ""} on Kubernetes ${cl.info.kubernetesVersion ?? ""}.`,
         );
@@ -1320,17 +1327,31 @@ export class MockHub {
       if (!r) continue;
       steps.push({ tool: "get_resource", args: { cluster: ref.cluster, id: r.id }, bytes: 1830 });
       steps.push({ tool: "get_events", args: { cluster: ref.cluster, id: r.id }, bytes: 942 });
+      const kids = [...cl.resources.values()].filter((x) => x.owner && refKey(x.owner) === refKey(r));
+      const byKind = new Map<string, MockResource[]>();
+      for (const k of kids) byKind.set(k.kind, [...(byKind.get(k.kind) ?? []), k]);
+      const manages = [...byKind]
+        .slice(0, 4)
+        .map(
+          ([kind, xs]) =>
+            `- **${kindInfo(kind).plural}**\n${xs
+              .slice(0, 4)
+              .map((x) => `  - ${cite(ref.cluster, x)}`)
+              .join("\n")}`,
+        )
+        .join("\n");
+      if (manages) parts.push(`${cite(ref.cluster, r)} manages:\n${manages}`);
       if (r.status === "failed")
         parts.push(
-          `\`${r.name}\` is failing: ${r.message ?? "no message"}\n- Latest event: \`${r.events[0]?.reason ?? "none"}\`, seen ${r.events[0]?.count ?? 0} times.\n- Check what changed in the source, then reconcile with source (press R).`,
+          `${cite(ref.cluster, r)} is failing: ${r.message ?? "no message"}\n- Latest event: \`${r.events[0]?.reason ?? "none"}\`, seen ${r.events[0]?.count ?? 0} times.\n- Check what changed in the source, then reconcile with source (press R).`,
         );
       else if (r.status === "suspended")
         parts.push(
-          `\`${r.name}\` is suspended, so Flux is not applying changes. ${r.events[0]?.message ?? ""}\n- Resume it with \`flux resume ${r.kind.toLowerCase()} ${r.name} -n ${r.namespace}\` (press s).`,
+          `${cite(ref.cluster, r)} is suspended, so Flux is not applying changes. ${r.events[0]?.message ?? ""}\n- Resume it with \`flux resume ${r.kind.toLowerCase()} ${r.name} -n ${r.namespace}\` (press s).`,
         );
       else
         parts.push(
-          `\`${r.name}\` is **${r.status}**. ${r.message ?? ""}\n- ${r.chart ? `Chart \`${r.chart}\`` : r.revision ? `Revision \`${r.revision.slice(0, 20)}\`` : `Images: \`${r.images?.join(", ") ?? "n/a"}\``}\n- No warning events in the last hour.`,
+          `${cite(ref.cluster, r)} is **${r.status}**. ${r.message ?? ""}\n- ${r.chart ? `Chart \`${r.chart}\`` : r.revision ? `Revision \`${r.revision.slice(0, 20)}\`` : `Images: \`${r.images?.join(", ") ?? "n/a"}\``}\n- No warning events in the last hour.`,
         );
     }
     if (!refs.length) {
@@ -1338,7 +1359,7 @@ export class MockHub {
       const bad = this.clusters.flatMap((c) =>
         [...c.resources.values()]
           .filter((x) => x.status === "failed")
-          .map((x) => `- \`${x.kind}/${x.name}\` on ${c.info.name}`),
+          .map((x) => `- ${cite(c.info.name, x)} on ${c.info.name}`),
       );
       parts.push(
         bad.length
@@ -1346,7 +1367,7 @@ export class MockHub {
           : "Nothing is failing across the fleet.",
       );
     }
-    return { steps, text: intro + parts.join("\n\n") };
+    return { steps, refs: out, text: intro + parts.join("\n\n") };
   }
 
   private seedChats(): void {
@@ -1366,9 +1387,9 @@ export class MockHub {
     this.chatMessage(
       a,
       aiAuthor,
-      "Looking at `HR apps/podinfo` on staging.\n\nOne replica is stuck in `ImagePullBackOff`: the values point at the `6.7.2-debug` tag, which was never pushed.",
+      "Looking at `HelmRelease/apps/podinfo` on staging.\n\nOne replica is stuck in `ImagePullBackOff`: the values point at the `6.7.2-debug` tag, which was never pushed.",
       60 * 26,
-      { steps: [{ tool: "get_events", args: { cluster: "staging" }, bytes: 942 }] },
+      { steps: [{ tool: "get_events", args: { cluster: "staging" }, bytes: 942 }], refs: [podinfo] },
     );
     const b = this.newChat(
       [{ cluster: "prod-eu", group: "", kind: "", namespace: "", name: "" }],

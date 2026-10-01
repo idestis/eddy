@@ -1,6 +1,6 @@
 // A deliberately small Markdown subset for AI answers and thread bodies:
-// paragraphs, headings (shown as bold lines), bullet and numbered lists,
-// GitHub-style tables, fenced code, inline code, bold, italic and http(s) links. Everything else, including raw HTML and images,
+// paragraphs, headings (shown as bold lines), bullet and numbered lists (one
+// level of nesting), GitHub-style tables, fenced code, inline code, bold, italic and http(s) links. Everything else, including raw HTML and images,
 // stays plain text. The output is a tree of plain objects that the Markdown
 // component renders with React, so nothing is ever injected as HTML.
 
@@ -11,9 +11,15 @@ export type Inline =
   | { t: "em"; children: Inline[] }
   | { t: "link"; href: string; children: Inline[] };
 
+/** A list item: its text and, for a top-level item, an optional nested list. */
+export interface ListItem {
+  children: Inline[];
+  sub?: { t: "ul" | "ol"; items: ListItem[] };
+}
+
 export type Block =
   | { t: "p"; children: Inline[] }
-  | { t: "ul" | "ol"; items: Inline[][] }
+  | { t: "ul" | "ol"; items: ListItem[] }
   | { t: "pre"; text: string }
   | { t: "h"; children: Inline[] }
   | { t: "table"; head: Inline[][]; rows: Inline[][][] };
@@ -71,8 +77,11 @@ export function parseInline(src: string): Inline[] {
 }
 
 const FENCE = /^\s*```/;
-const BULLET = /^\s*[-*•+]\s+(.*)$/;
-const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
+const BULLET = /^(\s*)[-*•+]\s+(.*)$/;
+const NUMBERED = /^(\s*)\d+[.)]\s+(.*)$/;
+
+/** Indent width of a list marker; a tab counts as a nesting step. */
+const indentOf = (ws: string): number => ws.replace(/\t/g, "  ").length;
 const HEADING = /^\s*#{1,6}\s+(.*)$/;
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 const TABLE_RULE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
@@ -89,7 +98,7 @@ export function parseMarkdown(src: string): Block[] {
   const blocks: Block[] = [];
   let para: string[] = [];
   // The cast keeps TypeScript from narrowing to null; the closures below reassign it.
-  let list = null as { t: "ul" | "ol"; items: Inline[][] } | null;
+  let list = null as { t: "ul" | "ol"; items: ListItem[] } | null;
 
   const flushPara = () => {
     if (para.length) blocks.push({ t: "p", children: parseInline(para.join(" ")) });
@@ -139,11 +148,21 @@ export function parseMarkdown(src: string): Block[] {
     if (bullet || numbered) {
       flushPara();
       const kind = bullet ? "ul" : "ol";
+      const m = bullet ?? numbered;
+      const text = parseInline(m?.[2] ?? "");
+      // An item indented by 2+ spaces (or a tab) under an item is a child of that item;
+      const parent = list?.items[list.items.length - 1];
+      // deeper levels, and a change of marker, stay in that one child list.
+      if (parent && indentOf(m?.[1] ?? "") >= 2) {
+        parent.sub ??= { t: kind, items: [] };
+        parent.sub.items.push({ children: text });
+        continue;
+      }
       if (list?.t !== kind) {
         flushList();
         list = { t: kind, items: [] };
       }
-      list.items.push(parseInline((bullet ?? numbered)?.[1] ?? ""));
+      list.items.push({ children: text });
       continue;
     }
     if (!line.trim()) {

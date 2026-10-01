@@ -48,6 +48,10 @@
 - **Audit:** `ai.ask` records the chat id and the context references, never the answer text unless
   `ai.auditPrompts` is set.
 - **@mention search** uses `GET /api/v1/search`, which is already SAR-filtered.
+- **Answer links come from tool data, never from the model.** An answer stores `meta.refs`: the
+  visible context references and the resources the tools returned as the user (at most 200). The
+  UI links an inline code span to a resource page only when it matches exactly one of them, and
+  never turns a URL the model wrote into an internal link.
 
 ## API
 

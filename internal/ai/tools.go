@@ -13,6 +13,7 @@ import (
 	"github.com/idestis/eddy/internal/identity"
 	"github.com/idestis/eddy/internal/model"
 	"github.com/idestis/eddy/internal/redact"
+	"github.com/idestis/eddy/internal/store"
 )
 
 // Tool limits. They keep one answer cheap and bounded regardless of what the
@@ -315,30 +316,59 @@ func searchResources(ctx context.Context, env toolEnv, raw json.RawMessage) (any
 	if a.Cluster != "" {
 		clusters = []string{a.Cluster}
 	}
-	var items []searchItem
-	var skipped []string
+	out := searchResult{Findings: findings}
 	for _, c := range clusters {
 		rs, err := env.fleet.List(ctx, env.principal, c, f)
 		if err != nil {
-			skipped = append(skipped, c+": "+errorText(err))
+			out.Skipped = append(out.Skipped, c+": "+errorText(err))
 			continue
 		}
 		for _, r := range rs {
-			items = append(items, searchItem{Cluster: c, ID: r.ID, Status: r.Status, Message: r.Message, Revision: r.Revision})
+			out.Items = append(out.Items, searchItem{Cluster: c, ID: r.ID, Status: r.Status, Message: r.Message, Revision: r.Revision})
 		}
 	}
-	out := map[string]any{"items": items}
-	if len(items) > limit {
-		out["items"] = items[:limit]
-		out["truncated"] = true
-	}
-	if len(skipped) > 0 {
-		out["skipped"] = skipped
-	}
-	if len(findings) > 0 {
-		out["findings"] = findings
+	if len(out.Items) > limit {
+		out.Items = out.Items[:limit]
+		out.Truncated = true
 	}
 	return out, nil
+}
+
+// searchResult is what search_resources returns.
+type searchResult struct {
+	Items     []searchItem  `json:"items"`
+	Truncated bool          `json:"truncated,omitempty"`
+	Skipped   []string      `json:"skipped,omitempty"`
+	Findings  []findingItem `json:"findings,omitempty"`
+}
+
+// resultRefs returns the resources a successful tool result shows the user:
+// the get_resource target and the children listed with it, and the
+// search_resources hits. Every one of them came back from the fleet as the
+// asking user (impersonated or SAR-filtered), so the user may see it. Events
+// carry no object of their own and add nothing.
+func resultRefs(out any) []store.ResourceRef {
+	var refs []store.ResourceRef
+	switch r := out.(type) {
+	case resourceResult:
+		refs = append(refs, storeRef(r.Cluster, r.Resource.Ref))
+		for _, k := range r.Children {
+			if ref, err := model.ParseRef(k.ID); err == nil {
+				refs = append(refs, storeRef(r.Cluster, ref))
+			}
+		}
+	case searchResult:
+		for _, it := range r.Items {
+			if ref, err := model.ParseRef(it.ID); err == nil {
+				refs = append(refs, storeRef(it.Cluster, ref))
+			}
+		}
+	}
+	return refs
+}
+
+func storeRef(cluster string, r model.Ref) store.ResourceRef {
+	return store.ResourceRef{Cluster: cluster, Group: r.Group, Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
 }
 
 // findingItem is a cluster finding (such as finished Jobs piling up) shown

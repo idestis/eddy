@@ -1,9 +1,41 @@
 import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { parseInline, safeHref } from "../lib/markdown";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vitest";
+import type { ResourceRef } from "../api/types";
+import { parseInline, parseMarkdown, safeHref } from "../lib/markdown";
 import { Markdown } from "./Markdown";
 
-const html = (source: string) => render(<Markdown source={source} />).container;
+// The router Link, reduced to an anchor that exposes its target for assertions.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    children,
+    to,
+    params,
+    search,
+    title,
+    className,
+  }: {
+    children: ReactNode;
+    to: string;
+    params: Record<string, string>;
+    search?: Record<string, string>;
+    title?: string;
+    className?: string;
+  }) => (
+    <a
+      href={to.replace(/\$(\w+)/g, (_, k: string) => params[k] ?? "")}
+      data-internal="true"
+      data-search={JSON.stringify(search ?? {})}
+      title={title}
+      className={className}
+    >
+      {children}
+    </a>
+  ),
+}));
+
+const html = (source: string, refs?: ResourceRef[]) =>
+  render(<Markdown source={source} refs={refs} />).container;
 
 describe("Markdown", () => {
   it("renders paragraphs, lists, code and emphasis", () => {
@@ -105,5 +137,115 @@ describe("safeHref", () => {
 describe("parseInline", () => {
   it("does not parse inside code spans", () => {
     expect(parseInline("`**x**`")).toEqual([{ t: "code", text: "**x**" }]);
+  });
+});
+
+describe("nested lists", () => {
+  const owner = "- **Namespaces**\n  - `apps`\n  - `services`\n- **NodePools**\n  - `apps-amd64`";
+
+  it("parses one level of nesting", () => {
+    const [list] = parseMarkdown(owner);
+    expect(list?.t).toBe("ul");
+    if (list?.t !== "ul") return;
+    expect(list.items).toHaveLength(2);
+    expect(list.items[0]?.sub?.items.map((i) => i.children)).toEqual([
+      [{ t: "code", text: "apps" }],
+      [{ t: "code", text: "services" }],
+    ]);
+    expect(list.items[1]?.sub?.items).toHaveLength(1);
+  });
+
+  it("renders nested ul inside li", () => {
+    const c = html(owner);
+    expect(c.querySelectorAll(".md > ul > li")).toHaveLength(2);
+    expect(c.querySelectorAll(".md > ul > li > ul > li")).toHaveLength(3);
+    expect(c.querySelector(".md > ul > li > strong")?.textContent).toBe("Namespaces");
+  });
+
+  it("flattens deeper levels and accepts tabs and numbered children", () => {
+    const [list] = parseMarkdown("1. one\n\t- a\n      - deep\n2. two\n   1. b");
+    expect(list?.t).toBe("ol");
+    if (list?.t !== "ol") return;
+    expect(list.items).toHaveLength(2);
+    expect(list.items[0]?.sub?.t).toBe("ul");
+    expect(list.items[0]?.sub?.items).toHaveLength(2);
+    expect(list.items[0]?.sub?.items[1]?.sub).toBeUndefined();
+    expect(list.items[1]?.sub?.t).toBe("ol");
+  });
+
+  it("keeps a one-space indent at the top level", () => {
+    const [list] = parseMarkdown("- a\n - b");
+    expect(list?.t === "ul" && list.items.length).toBe(2);
+  });
+});
+
+describe("resource links", () => {
+  const hr: ResourceRef = {
+    cluster: "prod",
+    group: "helm.toolkit.fluxcd.io",
+    kind: "HelmRelease",
+    namespace: "apps",
+    name: "podinfo",
+  };
+  const dep: ResourceRef = { ...hr, group: "apps", kind: "Deployment" };
+  const pool: ResourceRef = {
+    cluster: "dev",
+    group: "karpenter.sh",
+    kind: "NodePool",
+    namespace: "",
+    name: "apps-amd64",
+  };
+  const refs = [hr, dep, pool];
+  const internal = (c: HTMLElement) => [...c.querySelectorAll("a[data-internal]")];
+
+  it("links an exact Kind/namespace/name", () => {
+    const [a, ...rest] = internal(html("See `HelmRelease/apps/podinfo`.", refs));
+    expect(rest).toHaveLength(0);
+    expect(a?.getAttribute("href")).toBe("/c/prod/r/HelmRelease/apps/podinfo");
+    expect(a?.getAttribute("title")).toBe("Open HelmRelease apps/podinfo in prod");
+    expect(a?.className).toBe("md-ref");
+    expect(a?.querySelector("code")?.textContent).toBe("HelmRelease/apps/podinfo");
+    expect(a?.getAttribute("target")).toBeNull();
+  });
+
+  it("accepts a short kind", () => {
+    const [a] = internal(html("`HR/apps/podinfo`", refs));
+    expect(a?.getAttribute("href")).toBe("/c/prod/r/HelmRelease/apps/podinfo");
+  });
+
+  it("leaves an ambiguous name as plain code", () => {
+    const c = html("`podinfo` and `apps/podinfo`", refs);
+    expect(internal(c)).toHaveLength(0);
+    expect(c.querySelectorAll("code")).toHaveLength(2);
+  });
+
+  it("leaves an unknown object as plain code", () => {
+    const c = html("`HelmRelease/apps/ghost`", refs);
+    expect(internal(c)).toHaveLength(0);
+    expect(c.querySelector("code")?.textContent).toBe("HelmRelease/apps/ghost");
+  });
+
+  it("links a ref in another cluster to that cluster", () => {
+    const [a] = internal(html("- **NodePools**\n  - `apps-amd64`", refs));
+    expect(a?.getAttribute("href")).toBe("/c/dev/r/NodePool/_/apps-amd64");
+    expect(a?.closest("li li")).not.toBeNull();
+  });
+
+  it("never makes a model-written URL internal", () => {
+    const c = html(
+      "[podinfo](/c/prod/r/HelmRelease/apps/podinfo) [x](https://eddy.example/c/prod/r/HelmRelease/apps/podinfo) [`HelmRelease/apps/podinfo`](https://evil.example) `/c/prod/r/HelmRelease/apps/podinfo`",
+      refs,
+    );
+    expect(internal(c)).toHaveLength(0);
+    const external = [...c.querySelectorAll("a")];
+    expect(external.map((a) => a.getAttribute("href"))).toEqual([
+      "https://eddy.example/c/prod/r/HelmRelease/apps/podinfo",
+      "https://evil.example/",
+    ]);
+    for (const a of external) expect(a.getAttribute("target")).toBe("_blank");
+  });
+
+  it("links nothing without refs", () => {
+    expect(internal(html("`HelmRelease/apps/podinfo`"))).toHaveLength(0);
   });
 });

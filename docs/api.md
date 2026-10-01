@@ -569,6 +569,13 @@ Chat = {
     question. They are not stored in the chat.
 - The AI message's `author.client` is the model id, and `meta.provider` names the provider. For chat
   messages, `Message.threadId` holds the chat id.
+- **`meta.refs`:** `[{cluster, group, kind, namespace, name}]`, the resources the answer may link
+  to, in first-seen order, deduplicated and capped at 200. They come only from what the user was
+  shown while answering: the visible context references, the `get_resource` target and the
+  children listed with it, and the `search_resources` hits. All of these were read as the user
+  (impersonated or SAR-filtered). Nothing the model writes adds a ref. The UI turns an inline
+  code span such as `HelmRelease/apps/podinfo` into a link to that resource's page only when it
+  matches exactly one ref; anything else stays plain code.
 - **History:** the last 10 messages of the chat (each capped at 2 KiB) go to the model redacted, as
   one untrusted-data block, not as earlier turns, so an earlier answer cannot act as an instruction.
 - **Errors:** over the per-user limit gives 429 `rate_limited`; invalid input gives 400; an unknown

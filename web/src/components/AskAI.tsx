@@ -18,6 +18,7 @@ import { useChat, usePatchChat } from "../api/chats";
 import { isApiError } from "../api/client";
 import { useCluster, useMe } from "../api/queries";
 import type { AskStep, ClusterInfo, Message, Resource, ResourceRef } from "../api/types";
+import { refsOf } from "../lib/answerRefs";
 import { ASK_PANEL_ATTR, useAppState } from "../lib/appState";
 import { caretOffset } from "../lib/caret";
 import {
@@ -109,6 +110,7 @@ function AIMessage({
 }) {
   const model = message.author.client;
   const steps = stepsOf(message);
+  const refs = useMemo(() => refsOf(message.meta), [message.meta]);
   return (
     <div className="min-w-0 max-w-full">
       <div className="mb-1.5 flex items-center gap-1.5 text-11-5 text-ink-3">
@@ -130,7 +132,7 @@ function AIMessage({
           ))}
         </ul>
       )}
-      <Markdown source={message.body} />
+      <Markdown source={message.body} refs={refs} />
       {question !== undefined && targets.length > 0 && (
         <AnswerActions
           message={message}

@@ -367,7 +367,8 @@ describe("mock Ask AI chats", () => {
       messageCount: 2,
     });
     expect(first.data.contextStatus).toEqual(["ok", "hidden"]);
-    expect(first.data.message.body).toContain("KS flux-system/apps");
+    expect(first.data.message.body).toContain("`Kustomization/flux-system/apps`");
+    expect((first.data.message.meta as { refs?: unknown[] }).refs).toContainEqual(apps);
     expect(first.data.message.body).not.toContain("no-such-thing");
 
     const next = await call<AskResponse>(hub, "POST", "/api/v1/ai/ask", { chatId: id, question: "and now?" });

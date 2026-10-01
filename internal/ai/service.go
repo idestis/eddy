@@ -53,6 +53,8 @@ const (
 	toolTimeout = 15 * time.Second
 	// maxStepArgsBytes caps the recorded arguments of one step.
 	maxStepArgsBytes = 1 << 10
+	// MaxAnswerRefs caps meta.refs on one answer.
+	MaxAnswerRefs = 200
 )
 
 // AskRequest is the body of POST /api/v1/ai/ask.
@@ -327,6 +329,7 @@ type askRun struct {
 	summaries  []contextSummary // visible references only, in context order
 	cluster    string           // default cluster for tools
 	steps      []Step
+	refs       refSet // resources the user was shown, for meta.refs
 	usage      Usage
 	rounds     int
 	redactions int
@@ -369,6 +372,7 @@ func (a *askRun) do(ctx context.Context) (AskResponse, error) {
 		"model":      s.provider.Model(),
 		"rounds":     a.rounds,
 		"steps":      a.steps,
+		"refs":       a.refs.items(),
 		"usage":      a.usage,
 		"redactions": a.redactions,
 		"stopReason": a.stop,
@@ -519,6 +523,9 @@ func (a *askRun) checkContext(ctx context.Context) {
 		}
 		a.status[i] = ContextOK
 		a.summaries = append(a.summaries, sum)
+		if ref.Kind != "" {
+			a.refs.add(ref)
+		}
 		if a.cluster == "" {
 			a.cluster = ref.Cluster
 		}
@@ -637,6 +644,11 @@ func (a *askRun) runTool(ctx context.Context, env toolEnv, u Block) Block {
 	defer cancel()
 	out, err := dispatch(tctx, env, a.svc.allowLogs(), u.Name, u.Input)
 	isErr := err != nil
+	if err == nil {
+		for _, r := range resultRefs(out) {
+			a.refs.add(r)
+		}
+	}
 	var body string
 	if err != nil {
 		b, _ := json.Marshal(map[string]string{"error": errorText(err)})
@@ -658,6 +670,34 @@ func (a *askRun) runTool(ctx context.Context, env toolEnv, u Block) Block {
 	a.bytesSent += len(wrapped)
 	a.steps = append(a.steps, Step{Tool: u.Name, Args: stepArgs(u.Input), Bytes: len(wrapped)})
 	return Block{Type: BlockToolResult, ID: u.ID, Content: wrapped, IsError: isErr}
+}
+
+// refSet collects, in order and without duplicates, the resources an answer
+// may link to (meta.refs): the visible context references and the resources
+// that tool results returned as the asking user. Nothing the model writes is
+// ever added, so the UI links only objects the user was shown.
+type refSet struct {
+	seen map[store.ResourceRef]bool
+	list []store.ResourceRef
+}
+
+func (s *refSet) add(r store.ResourceRef) {
+	if r.Cluster == "" || r.Kind == "" || r.Name == "" || len(s.list) >= MaxAnswerRefs || s.seen[r] {
+		return
+	}
+	if s.seen == nil {
+		s.seen = make(map[store.ResourceRef]bool)
+	}
+	s.seen[r] = true
+	s.list = append(s.list, r)
+}
+
+// items is the list for meta.refs; never nil, so it encodes as [].
+func (s *refSet) items() []store.ResourceRef {
+	if s.list == nil {
+		return []store.ResourceRef{}
+	}
+	return s.list
 }
 
 // stepArgs returns redacted, size-capped arguments as valid JSON.

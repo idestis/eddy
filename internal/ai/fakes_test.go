@@ -15,7 +15,8 @@ import (
 // fakeFleet serves fixed data and records the principals it was called with.
 type fakeFleet struct {
 	mu         sync.Mutex
-	resources  map[string]model.Resource // key: cluster + "|" + ref.ID()
+	resources  map[string]model.Resource   // key: cluster + "|" + ref.ID()
+	children   map[string][]model.Resource // key: cluster + "|" + parent ref.ID()
 	events     []model.Event
 	forbidden  map[string]bool
 	logs       []string
@@ -67,9 +68,9 @@ func (f *fakeFleet) Get(_ context.Context, p identity.Principal, cluster string,
 	return r, nil
 }
 
-func (f *fakeFleet) Children(_ context.Context, p identity.Principal, _ string, _ model.Ref) ([]model.Resource, error) {
+func (f *fakeFleet) Children(_ context.Context, p identity.Principal, cluster string, ref model.Ref) ([]model.Resource, error) {
 	f.seen(p)
-	return nil, nil
+	return f.children[cluster+"|"+ref.ID()], nil
 }
 
 func (f *fakeFleet) YAML(_ context.Context, p identity.Principal, _ string, _ model.Ref) (string, error) {
