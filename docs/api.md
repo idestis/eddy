@@ -65,13 +65,14 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | Method and path | Response |
 |---|---|
 | `GET /api/v1/clusters` | `{items: ClusterInfo[]}`, counts filtered by RBAC. Agents in dev local mode add `mode: "local"`, `readOnly` and `context`. Writes to a `readOnly` cluster return 403. |
-| `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot. `kind` may repeat or be comma-separated. An unknown kind or status gives 400. `resourceVersion` is an opaque hub counter. Finished Jobs the agent hides are not in it; see [Jobs](#jobs-completed-status-hidden-jobs-and-findings). |
+| `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot. `kind` may repeat or be comma-separated. A kind outside the table (for example `ConfigMap`) matches inventory-only rows by exact name; a malformed kind or an unknown status gives 400. `resourceVersion` is an opaque hub counter. Finished Jobs the agent hides are not in it; see [Jobs](#jobs-completed-status-hidden-jobs-and-findings). |
 | `GET …/resources?kind=Job&includeHidden=1&namespace=&limit=&cursor=` | `{items, resourceVersion, hidden: {total, next?}}`. Without `cursor`: the listed Jobs plus the first page of hidden ones. With `cursor=hidden.next`: hidden Jobs only (`resourceVersion` is `""`). `limit` is 1–1000 (default 500) hidden Jobs per page. `includeHidden` without `kind=Job` gives 400. |
 | `GET /api/v1/clusters/{c}/findings` | `{items: Finding[]}`, the cluster's findings the user may see. The same list is `ClusterInfo.findings`. |
-| `GET /api/v1/clusters/{c}/objects/{kind}/{ns}/{name}` | `Resource` |
+| `GET /api/v1/clusters/{c}/kinds` | `{items: KindInfo[], projects: Project[], presets: string[]}` for navigation; see [Kinds and projects](#kinds-and-projects). |
+| `GET /api/v1/clusters/{c}/objects/{kind}/{ns}/{name}?group=` | `Resource`. Every `…/objects/…` path takes an optional `group` (the API group; `core` for the core group) to pick between kinds of the same name in several groups. Without it the group comes from the kind table, or from the one visible inventory-only row that matches (several groups give 400). `ns` is `_` for cluster-scoped objects. |
 | `GET …/objects/{kind}/{ns}/{name}/children` | `{items: Resource[]}`. Mainly for MCP. The UI builds trees from each summary's `owner`, which is filled from ownerReferences, Flux labels and inventory when known. |
-| `GET …/objects/{kind}/{ns}/{name}/yaml` | `{yaml}`, redacted, with a kind allowlist |
-| `GET …/objects/{kind}/{ns}/{name}/events` | `{items: Event[]}` |
+| `GET …/objects/{kind}/{ns}/{name}/yaml` | `{yaml}`, sanitized by the agent and redacted by the hub; see [YAML and events](#yaml-and-events). Secrets: always 403. |
+| `GET …/objects/{kind}/{ns}/{name}/events` | `{items: Event[]}`, read as the user. |
 | `POST …/objects/{kind}/{ns}/{name}/reconcile` | body `{withSource?: bool, confirm?: string}` → 202 |
 | `POST …/objects/{kind}/{ns}/{name}/suspend` | body `{confirm?: string}` → 202. Protected cluster without `confirm == cluster` gives 428. |
 | `POST …/objects/{kind}/{ns}/{name}/resume` | body `{confirm?: string}` → 202 |
@@ -83,11 +84,88 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 - **New `Resource` fields:** `ports` (Service), `hosts` (Ingress), `schedule` (CronJob) and `inventoryOnly`.
 - **Inventory-only rows** are objects a Kustomization manages but Eddy does not watch. They carry kind, namespace and name only, with status `unknown`.
   - **Visibility:** you see them if you can list the parent Kustomization, and, for known kinds, also list the row's own kind in its namespace.
-  - **Endpoints:** `GET …/objects/{kind}/…` works for them. `/yaml` and `/events` return 403 `forbidden` for inventory-only rows and for kinds outside the table.
+  - **Endpoints:** `GET …/objects/{kind}/…`, `/yaml` and `/events` work for them (pass `?group=` when the kind name is ambiguous). YAML and events are impersonated reads, so the user's RBAC decides; see [YAML and events](#yaml-and-events).
   - **Counts** exclude them.
 - **Kinds added** to the table: Service, PersistentVolumeClaim (core), Ingress (networking.k8s.io), Job, CronJob (batch) and HorizontalPodAutoscaler (autoscaling).
 - **Statuses:** `ready`, `failed`, `reconciling`, `suspended`, `unknown` and `completed`. `completed` is a finished run: a Job with the `Complete` condition or a Pod in phase `Succeeded`. It is healthy (not "needs attention") and has its own bucket in `ClusterInfo.counts`. `?status=completed` filters on it.
 - **OCI HelmRepositories** (`spec.type: oci`) without a `Ready` condition are `ready` with the message "OCI repository · not reconciled by source-controller": since Flux 2.1 source-controller leaves them alone and helm-controller pulls their charts directly. Suspended ones stay `suspended`.
+
+### YAML and events
+
+- **Who may read:** any watched object, and any object named in a Kustomization inventory, once the
+  user can see its row (the list rules above; otherwise 404). The agent then reads it
+  **impersonating the user**; an API server `Forbidden` is returned as 403 `forbidden` with its message.
+- **Kinds outside the table** are resolved by the agent through discovery (a cached RESTMapper,
+  refreshed on a miss at most every 30 s). A kind the cluster does not serve is 404. Older agents
+  answer 400 for kinds outside the table.
+- **Secrets:** `/yaml` is always 403 (any group, any spelling, whether or not the object exists).
+  `/events` is allowed.
+- **Sanitising** (every kind): `managedFields` and the last-applied annotation are dropped; any
+  top-level `data`, `binaryData` and `stringData` is removed, so a ConfigMap keeps only its
+  metadata; container `env[].value` is `[REDACTED]` wherever a pod spec sits (`spec`,
+  `spec.template.spec`, `spec.jobTemplate.spec.template.spec`); an EC2NodeClass's `spec.userData`
+  and an External Secrets fake provider's values are redacted. The hub runs `redact.YAML` on the
+  result as well.
+- **Events** of cluster-scoped objects are read from the `default` namespace, where Kubernetes
+  records them. Events whose involved object is in another API group are dropped.
+
+### New kinds, presets and details
+
+- **Always watched:** Namespace (Active → `ready`, Terminating → `reconciling`), StorageClass,
+  PodDisruptionBudget, ServiceAccount and NetworkPolicy (all `ready`, with details). A
+  PodDisruptionBudget with fewer healthy pods than required is `reconciling`; zero disruptions
+  allowed is `ready` with the message "0 disruptions allowed · blocks voluntary evictions"; a
+  `DisruptionAllowed=False` condition for a reason other than `InsufficientPods` is `failed`.
+  `Replicas` is `currentHealthy/desiredHealthy`. ConfigMaps and Secrets stay inventory-only rows.
+- **Watch presets** (agent `watch.presets` / `EDDY_WATCH_PRESETS`, opt-in; `task dev` enables both):
+  - `karpenter`: NodePool, NodeClaim (`karpenter.sh`) and EC2NodeClass (`karpenter.k8s.aws`), all cluster-scoped.
+  - `externalSecrets`: ExternalSecret, ClusterExternalSecret, SecretStore, ClusterSecretStore and PushSecret (`external-secrets.io`).
+  A preset kind the agent does not watch (preset off) still appears as an inventory-only row.
+  `ClusterInfo.presets` lists the agent's enabled presets.
+- **Preset status rules:** `spec.suspend` → `suspended`; the first of the `Ready`, `Available`
+  and `Synced` conditions decides (True → `ready`, False → `failed` with "Reason: message",
+  Unknown → `reconciling`); a controller behind `metadata.generation` (status or condition
+  `observedGeneration`) → `reconciling`. A NodeClaim follows Launched → Registered → Initialized
+  → Ready; a False `Launched` is `failed`. A ClusterExternalSecret with failed namespaces is `failed`.
+- **`Resource.details`** (new, optional): `[{label, value}]`, at most 12, one line each, in display
+  order. For example NodePool `Nodes`, `CPU` ("12 / 1000"), `Memory`, `Node class`; NodeClaim
+  `Instance type`, `Capacity type`, `Zone`, `Node`, `Node pool`; ExternalSecret `Target secret`
+  (name only), `Store`, `Refresh interval`, `Last refresh`; StorageClass `Provisioner`,
+  `Default class`, `Reclaim policy`, `Volume binding mode`.
+- ExternalSecret and ClusterExternalSecret put the store in `source` (`{group: external-secrets.io,
+  kind: SecretStore|ClusterSecretStore, …}`) and `spec.refreshInterval` in `interval`.
+- **Labels:** Namespaces also keep `pod-security.kubernetes.io/*`; Karpenter kinds keep
+  `karpenter.sh/nodepool`, `karpenter.sh/capacity-type`, `node.kubernetes.io/instance-type`,
+  `topology.kubernetes.io/zone` and `karpenter.k8s.aws/instance-family`.
+
+### Kinds and projects
+
+Every `Resource` (inventory-only rows too) carries `project`: `kubernetes` for built-in groups
+(core, apps, batch, networking.k8s.io, policy, storage.k8s.io, rbac.authorization.k8s.io,
+autoscaling, …), `flux` for `*.fluxcd.io`, `karpenter` for `karpenter.sh` and `karpenter.k8s.aws`,
+`external-secrets` for `external-secrets.io`, and the API group itself for any other group. The
+hub sets it.
+
+`GET /api/v1/clusters/{c}/kinds`:
+
+```json
+{
+  "items": [
+    {"group": "karpenter.sh", "kind": "NodePool", "plural": "nodepools", "namespaced": false,
+     "project": "karpenter", "watched": true, "preset": "karpenter", "count": 3},
+    {"group": "", "kind": "ConfigMap", "plural": "configmaps", "namespaced": true,
+     "project": "kubernetes", "watched": false, "count": 12}
+  ],
+  "projects": [{"id": "kubernetes", "name": "Kubernetes"}, {"id": "karpenter", "name": "Karpenter"}],
+  "presets": ["karpenter"]
+}
+```
+
+- `items` holds every kind the agent watches (count 0 included) and every other kind with at
+  least one row the user may see. `count` is RBAC-filtered like the resource list.
+- `plural` is omitted when Eddy does not know it. `watched: false` means inventory-only rows.
+- Items are sorted by project (Kubernetes, Flux, Karpenter, External Secrets, then others by id),
+  then kind. `projects` lists the projects of `items` in that order.
 
 ### Jobs: completed status, hidden Jobs and findings
 

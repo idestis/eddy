@@ -16,7 +16,7 @@ Install it in its **own namespace** (`eddy-system`), not in `flux-system`:
 
 | Permission | Why | Guardrail |
 |---|---|---|
-| `get/list/watch` on Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, Pods, Services, Ingresses, HorizontalPodAutoscalers, PersistentVolumeClaims, Events, Namespaces | Informer cache | Read-only. Secrets and ConfigMaps are **not** in the role at all: they appear only by name, from a Kustomization's inventory. |
+| `get/list/watch` on Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, Pods, Services, Ingresses, NetworkPolicies, HorizontalPodAutoscalers, PersistentVolumeClaims, PodDisruptionBudgets, StorageClasses, ServiceAccounts, Events, Namespaces, plus the kinds of enabled [watch presets](#watch-presets) | Informer cache | Read-only. Secrets and ConfigMaps are **not** in the role at all: they appear only by name, from a Kustomization's inventory. |
 | `create subjectaccessreviews` | Answers "may alice list HelmReleases in team-a?" for hub-side filtering | Asks the API server a question. Grants nothing. |
 | `impersonate users`, `impersonate groups` | Every user read or action runs as that user, so the cluster's RBAC decides and its audit log shows the real user | See below. |
 | `get`, `update` on **its own token Secret** (only with `joinToken`) | Stores the permanent token it receives when it joins | A namespaced Role pinned by `resourceNames` to that one Secret. |
@@ -50,6 +50,28 @@ also the agent's largest attack surface.
     available.
 - **Blast radius:** the agent token lets a caller register as *one* cluster name with
   the hub. A stolen token cannot reach other clusters. The hub holds no kube credentials.
+
+## Watch presets
+
+Presets are opt-in groups of extra kinds (`watch.presets`, which sets `EDDY_WATCH_PRESETS`).
+Each preset adds its kinds to the agent's cache, only for kinds the cluster serves, and
+`get/list/watch` on them to the ClusterRole. The agent reports enabled presets in its `hello`.
+
+| Preset | Kinds | ClusterRole rules | Summary |
+|---|---|---|---|
+| `karpenter` | NodePool, NodeClaim (`karpenter.sh`); EC2NodeClass (`karpenter.k8s.aws`) | `karpenter.sh: nodepools, nodeclaims`; `karpenter.k8s.aws: ec2nodeclasses` | Ready condition; NodePool nodes and CPU/memory against limits; NodeClaim lifecycle, instance and capacity type, zone and node; EC2NodeClass AMI alias or family and role. `userData` is never cached and is redacted in YAML. |
+| `externalSecrets` | ExternalSecret, ClusterExternalSecret, SecretStore, ClusterSecretStore, PushSecret (`external-secrets.io`) | `external-secrets.io: externalsecrets, clusterexternalsecrets, secretstores, clustersecretstores, pushsecrets` | Ready condition (for example `SecretSyncedError`), refresh interval, store, target Secret **name**, last refresh. Secret templates and provider configuration are not cached; the Secrets themselves are never read. |
+
+Unknown preset names fail the chart schema and the agent's start. `task dev` (local mode)
+enables every preset; set `EDDY_AGENT_PRESETS` to a list, or `none`, to change that. Users need
+matching read RBAC to see these kinds (see `deploy/rbac/eddy-user-rbac.yaml`).
+
+### Reads outside the watched kinds
+
+YAML and events of objects known only from a Kustomization inventory (ConfigMaps, RBAC,
+CRDs, …) run impersonated like every other read. The agent maps the kind through discovery
+with its own client (a cached RESTMapper, refreshed on a miss at most every 30 s). Secret YAML
+is refused before anything is read; ConfigMap YAML has `data` and `binaryData` removed.
 
 ## How it connects: outbound only
 
