@@ -1,7 +1,7 @@
 # Eddy: spec v1.0
 
 > **v1.0 changes (2026-09-30).** Where this spec and the ADRs disagree, the ADRs win:
-> - Sign-in is local users plus trusted-proxy headers ([ADR-0003](docs/adr/0003-mvp-security.md)). GitHub OAuth, OIDC and SAML move to v1.1.
+> - Sign-in is GitHub, OIDC, local users and trusted-proxy headers ([ADR-0003](docs/adr/0003-mvp-security.md), amended 2026-10-01). SAML is future work.
 > - Hub-owned data (sessions, PATs, threads, audit, rate limits) lives in PostgreSQL, bring your own ([ADR-0004](docs/adr/0004-hub-high-availability.md)). Hubs run active/active and agents 1..N per cluster. Cluster state stays in Kubernetes.
 > - New in v1.0: `/mcp` for Claude Code and other MCP clients, review **threads** on resources, AWS Bedrock as an Ask AI provider, and runtime kill switches.
 > - The API contract is [docs/api.md](docs/api.md).
@@ -36,7 +36,7 @@ Single module `github.com/idestis/eddy` (placeholder org), two binaries, Go 1.26
 | `internal/flux` | Flux kinds, version discovery, status summarizers, inventory parsing |
 | `internal/agent` | Informers, store, WebSocket session, impersonated actions |
 | `internal/hub` | HTTP API, SSE, agent registry, SAR-based filtering, audit, Ask AI |
-| `internal/auth` | Local users, trusted-proxy headers, sessions, CSRF, PATs, group mapping (OIDC/SAML in v1.1) |
+| `internal/auth` | GitHub and OIDC sign-in, local users, trusted-proxy headers, sessions, CSRF, PATs, group mapping |
 | `internal/store` | Hub storage: PostgreSQL and memory backends (ADR-0004) |
 | `internal/threads` | RBAC-aware review threads on resources |
 | `internal/mcp` | MCP server at `/mcp` (streamable HTTP, PAT bearer) |
@@ -93,17 +93,20 @@ Main dependencies: `client-go`, `coder/websocket`, `modelcontextprotocol/go-sdk`
 - **Audit:** JSON log lines with user, groups, cluster, action, target and result. Cluster audit logs also record the real user through impersonation.
 - **Security headers:** strict CSP, `frame-ancestors 'none'`, `nosniff`.
 
-## Auth (v1.1 target; v1.0 uses ADR-0003)
+## Auth (v1.0)
+
+Setup guide: [docs/auth.md](docs/auth.md).
 
 | Provider | Notes |
 |---|---|
-| GitHub (OAuth2 app) | Scopes `read:user user:email read:org`. Restrict with `allowedOrganizations`. Orgs become `github:<org>` and teams become `github:<org>/<team>`. Supports GHES URLs. |
+| GitHub (GitHub App or OAuth App, same web flow) | Scopes `read:user user:email read:org`. `allowedOrganizations` is required (`allowAllUsers` opts out), and only active memberships count; optional `allowedTeams`. Orgs become `github:<org>` and teams `github:<org>/<team>`. The user is the primary verified email, else `github:<login>`. Supports GHES (`baseURL`, API at `/api/v3`). |
 | Google | OIDC preset (`accounts.google.com`, `allowedDomains` checked against the `hd` claim, verified email required). ID tokens carry no groups, so use `groups.static` or put Dex in front. |
-| Generic OIDC | Okta, Entra, Keycloak, Dex, GitLab. Supports `groupsClaim`, `allowedDomains` and `allowedGroups`. |
-| SAML 2.0 | `crewjam/saml`, with IdP metadata URL, SP key pair and email/groups attributes. Serves `/auth/saml/metadata` and `/acs`. |
+| Generic OIDC | Okta, Entra, Keycloak, Dex, GitLab. Presets `google`, `okta`, `entra`, `dex`. Supports `groupsClaim`, `usernameClaim`, `allowedDomains`, `allowedGroups`, `hostedDomainClaim` and `requireVerifiedEmail` (default true). Only claims from the verified ID token are used. |
+| SAML 2.0 | Future, not in v1.0. |
 
-- **Login flow:** state, nonce and PKCE are kept in a signed 10-minute cookie. `returnTo` accepts local paths only.
-- **Session:** an HttpOnly, SameSite=Lax cookie holding a random id, stored server-side in memory for v0.1. That means a single replica; Redis comes later. Unsafe methods require the `X-Eddy-CSRF` header.
+- **Login flow:** authorization code with PKCE. State, nonce and verifier are kept in a single-use, AES-GCM-encrypted 10-minute `__Host-eddy_oauth` cookie (HKDF key `oauth-flow`). ID tokens are checked for signature, `iss`, `aud`/`azp`, `exp` and `nonce`. Failures redirect to `/login?error=<code>` and are rate-limited per IP. `returnTo` accepts local paths only. The IdP never connects to the hub; the hub needs outbound HTTPS to it.
+- **Local passwords:** `auth.local.mode: breakglass` hides the form behind `/login?local=1` and logs every use at WARN; `auth.local.allowedUsers` restricts who may use it.
+- **Session:** an HttpOnly, SameSite=Lax cookie holding a random id, stored server-side in PostgreSQL ([ADR-0004](docs/adr/0004-hub-high-availability.md)). Unsafe methods require the `X-Eddy-CSRF` header. GitHub and OIDC groups are captured at sign-in, and the 24-hour absolute timeout bounds how stale they get. PATs of these users follow the proxy rule: snapshot ∩ latest session groups, at most 30 days.
 - **Group mapping:** every group gets the prefix `eddy:`, `system:*` groups are dropped, and optional `allUsers` and `static` groups are added. The Kubernetes user is the email, or `<provider>:<login>` when there is none.
 - **Dev mode:** `dev.fakeLogin` enables `/auth/dev/login` for local UI work. It must never be enabled in production.
 
@@ -138,10 +141,9 @@ The hub compares the agent's token with the Secret using sha256 and a constant-t
 
 | Value | Purpose |
 |---|---|
-| `publicURL` | Used for OAuth and SAML callbacks and printed agent URLs |
+| `publicURL` | Used for sign-in callbacks (`<publicURL>/auth/<id>/callback`) and printed agent URLs |
 | `config.*` | Rendered to `hub.yaml`, with `${ENV}` expansion |
 | `credentialsSecret` | Supplies env vars such as `GITHUB_CLIENT_SECRET` and `ANTHROPIC_API_KEY` |
-| `samlCertSecret` | SAML service provider key pair |
 | `sessionKeySecret` | Otherwise the chart generates a key and keeps it across upgrades via `lookup` |
 | `clusters[]` | The chart creates each Cluster CR plus a random token Secret; NOTES prints the agent install command |
 | `ingress.*` | Needs long proxy timeouts for WebSockets |
@@ -192,7 +194,7 @@ The hub compares the agent's token with the Secret using sha256 and a constant-t
 2. Features
 3. Architecture diagram
 4. Quickstart on kind: install Flux, then `helm install eddy-hub` with `clusters[]`, then install the agent with the printed token
-5. Auth recipes: GitHub, Google, Okta/Entra through OIDC, SAML
+5. Auth recipes: GitHub, Google, Okta/Entra/Dex through OIDC
 6. RBAC recipe
 7. Security model (see the principles above)
 8. Development: `make dev-hub` with `hub.dev.yaml` and fake login, `make dev-agent` against kind, `npm run dev` proxying to `:8080`
@@ -205,7 +207,7 @@ Conventions and security invariants live in [CLAUDE.md](CLAUDE.md).
 
 ## Roadmap
 
-1. **v1.0:** the scope in this spec as amended by ADR-0003, ADR-0004 (PostgreSQL, active/active hubs, agent replicas) and ADR-0005 (the Add cluster wizard): local and proxy auth, threads, MCP, Anthropic and Bedrock
-2. **v1.1:** GitHub OAuth2, OIDC and SAML sign-in; MCP OAuth; mTLS for agents
+1. **v1.0:** the scope in this spec as amended by ADR-0003, ADR-0004 (PostgreSQL, active/active hubs, agent replicas) and ADR-0005 (the Add cluster wizard): GitHub, OIDC, local and proxy auth, threads, MCP, Anthropic and Bedrock
+2. **v1.1:** hub-managed access, MCP OAuth, mTLS for agents
 3. **v1.2:** diff view (`flux diff`), image automation kinds, notification-controller alerts in the UI
-4. **Later:** streaming Ask AI, audit webhook, Backstage plugin
+4. **Later:** SAML 2.0, OpenAI-compatible Ask AI providers, streaming Ask AI, audit webhook, Backstage plugin

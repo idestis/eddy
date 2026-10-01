@@ -1,7 +1,7 @@
 # ADR-0003: MVP security architecture (auth, PATs, MCP, Ask AI, ingress)
 
 - **Status:** Accepted · **Date:** 2026-09-30 · **Supersedes:** the Auth section of SPEC for v1.0
-- **Context:** SAML, OAuth2 and OIDC move to the next phase. The MVP targets installs behind an internal ingress. It adds PATs, an MCP endpoint and a multi-provider Ask AI. The SPEC's core invariants stay unchanged.
+- **Context:** SAML, OAuth2 and OIDC move to the next phase (GitHub and OIDC were brought into v1.0 by the 2026-10-01 amendment). The MVP targets installs behind an internal ingress. It adds PATs, an MCP endpoint and a multi-provider Ask AI. The SPEC's core invariants stay unchanged.
 
 ## 1. Decision summary
 
@@ -210,9 +210,9 @@ Cache-Control: no-store                 (on /api, /auth, /mcp, index.html; hashe
 
 ## 10. Explicitly deferred
 
-- **Sign-in:** SAML 2.0, GitHub OAuth2, OIDC (Google, Okta, Entra, Dex). MCP OAuth 2.1 authorization (protected-resource metadata), so MCP clients can drop PATs.
+- **Sign-in:** SAML 2.0 (future). MCP OAuth 2.1 authorization (protected-resource metadata), so MCP clients can drop PATs. GitHub and OIDC sign-in shipped in v1.0; see the amendment below.
 - **Agents:** mTLS for the agent channel (v1.1).
-- **Scale:** a Postgres store backend and a multi-replica hub (HA). Until then, one replica with SQLite on a PVC.
+- **Scale:** superseded by ADR-0004, which ships PostgreSQL and active/active hub replicas in v1.0.
 - **Local users:** WebAuthn/TOTP.
 - **PATs:** per-cluster or per-namespace scoping. GitHub secret-scanning partner registration.
 - **AI and MCP:** AI write tools of any kind. Streaming AI. MCP `subscriptions/listen` and log follow.
@@ -257,3 +257,30 @@ Security invariants (never break):
 - Ask AI audit events use `via: askai` (`identity.ViaAskAI`). `maxContextBytes`, `globalDailyAsks` and `auditPrompts` are not implemented in v0.1.
 - The MCP per-token call limit applies to `tools/call`. The concurrency limit (4) applies to every POST.
 - **Agent listener TLS:** when `listen.agentTLS` is unset, the hub accepts plain HTTP on `:8443` and assumes TLS terminates at the NLB, ingress or PrivateLink endpoint in front of it. It logs a startup WARN. With `agentTLS` set, it serves TLS 1.2+ itself. Agents still require `wss://` unless `allowInsecure` is set.
+
+## Amendment (2026-10-01): GitHub and OIDC sign-in in v1.0
+
+- **Decision:** GitHub (OAuth App or GitHub App, the same web flow) and OIDC (presets for Google,
+  Okta, Entra ID and Dex, plus any generic issuer) ship in v1.0. They are configured through the
+  Helm values `config.auth.github` and `config.auth.oidc[]`, with client secrets from
+  `credentialsSecret`. SAML 2.0 moves to future work.
+- **Flow:** authorization code with PKCE. State, nonce, verifier and `returnTo` live in a
+  single-use, AES-256-GCM-encrypted, browser-bound 10-minute cookie (`__Host-eddy_oauth`, HKDF
+  key `oauth-flow`). State is compared in constant time. ID tokens are verified for signature,
+  `iss`, `aud`/`azp`, `exp` and `nonce`, and only their claims are used. Failed callbacks are
+  rate-limited per IP and redirect to `/login?error=<code>`; the reason goes only to the audit log.
+- **Identity:** every provider goes through the one `Mapper` (`eddy:` prefix, `system:*` dropped,
+  `denyUserPrefixes`, caps). Allowlists are required for internet-wide providers: GitHub
+  `allowedOrganizations` (only active memberships count) and Google `allowedDomains` against `hd`,
+  unless `allowAllUsers` is set. Provider tokens are used once and never stored or logged.
+- **Staleness:** groups are captured at sign-in and bounded by the 24-hour absolute session
+  timeout. PATs of these users follow the proxy rule (snapshot ∩ latest session groups, at most
+  30 days). Removing a provider from config ends its sessions and PATs.
+- **Local passwords:** `auth.local.mode: breakglass` hides the form behind `/login?local=1` and logs
+  every use at WARN; `auth.local.allowedUsers` restricts it. Break-glass is refused unless another
+  sign-in method is enabled.
+- **Network:** the IdP never connects to the hub. Callbacks are browser redirects, so a hub on a
+  private network behind a VPN works; it needs only outbound HTTPS to the IdP. SAML's HTTP-POST
+  binding is also browser-mediated; it is deferred for the cost of certificates, metadata and
+  per-IdP attribute mapping, not reachability.
+- Setup guide: [docs/auth.md](../auth.md).

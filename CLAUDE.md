@@ -19,7 +19,7 @@ every file is written for outside contributors.
   - `internal/flux`: kinds, summarizers and inventory.
   - `internal/agent`: informers, impersonated actions and the WebSocket client.
   - `internal/hub`: the HTTP API, SSE, the agent registry (1..N agent sessions per cluster), the peer relay between hub replicas, the SAR authorizer and the threads service.
-  - `internal/auth`: local users, proxy auth, sessions, CSRF and PATs.
+  - `internal/auth`: GitHub and OIDC sign-in, local users, proxy auth, sessions, CSRF and PATs.
   - `internal/store/{postgres,memory,storetest}`: the store backends and their shared tests. PostgreSQL is the production store (ADR-0004); `memory` is for tests and `task dev`.
   - `internal/devlocal`: local-mode helpers (dev builds only).
   - `internal/ai`: the Anthropic and Bedrock providers, the redactor and the tool loop.
