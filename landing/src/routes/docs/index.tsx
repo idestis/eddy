@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { Kbd } from "../../components/Kbd";
 import { Pager } from "../../components/Pager";
 import { pageHead } from "../../lib/head";
 
@@ -45,10 +46,17 @@ function Page() {
         </li>
         <li>Reconcile (with source), suspend and resume, with a typed confirmation on protected clusters.</li>
         <li>
-          A <kbd>⌘K</kbd> command palette across every cluster, detail views for YAML, events and logs, and
+          A <Kbd>⌘K</Kbd> command palette across every cluster, detail views for YAML, events and logs, and
           dark mode.
         </li>
-        <li>Sign-in with local users or trusted reverse-proxy headers (oauth2-proxy, Pomerium).</li>
+        <li>
+          Sign-in with GitHub or OIDC (Google, Okta, Entra, Dex), local users, or trusted reverse-proxy
+          headers.
+        </li>
+        <li>
+          An Add cluster wizard, a live dependency graph, and fleet-wide search. The hub stores its data in
+          PostgreSQL and runs active/active replicas.
+        </li>
         <li>
           An MCP endpoint for Claude Code, review threads, and Ask AI on the Anthropic API or AWS Bedrock.
         </li>

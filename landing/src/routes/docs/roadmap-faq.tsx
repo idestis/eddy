@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Kbd } from "../../components/Kbd";
 import { Pager } from "../../components/Pager";
 import { pageHead } from "../../lib/head";
 
@@ -28,40 +29,84 @@ function Page() {
           </thead>
           <tbody>
             <tr>
-              <th scope="row">Sign-in</th>
-              <td>Local users, trusted proxy headers</td>
-              <td>GitHub OAuth2, OIDC (Google, Okta, Entra, Dex), SAML 2.0</td>
-            </tr>
-            <tr>
               <th scope="row">Clusters</th>
               <td>
-                Outbound WebSocket, <code>Cluster</code> CRD, token auth
+                Hub and agents over outbound WebSocket; <strong>Add cluster wizard</strong> with install
+                guide, one-time join tokens and a live connection checklist; 1..N agent replicas per cluster
               </td>
-              <td>
-                mTLS for agents, <code>eddy register</code> CLI
-              </td>
-            </tr>
-            <tr>
-              <th scope="row">Storage</th>
-              <td>Embedded SQLite, no external database needed</td>
-              <td>Multiple hub replicas (HA)</td>
+              <td>mTLS for agents</td>
             </tr>
             <tr>
               <th scope="row">Flux</th>
-              <td>Kustomization, HelmRelease, sources, HelmChart, Bucket</td>
+              <td>
+                Kustomization, HelmRelease, Git/OCI/Helm repositories, HelmChart, Bucket; Karpenter and
+                External Secrets presets; workloads, pods and core kinds; inventory with YAML and events
+              </td>
               <td>
                 Image automation, notification alerts, <code>flux diff</code> view
               </td>
             </tr>
             <tr>
               <th scope="row">Actions</th>
-              <td>Reconcile, suspend, resume</td>
+              <td>Reconcile (with source), suspend, resume; typed confirmation on protected clusters</td>
               <td>Workload restart, bulk actions</td>
             </tr>
             <tr>
-              <th scope="row">MCP and tokens</th>
-              <td>PATs, fleet-wide tools, threads</td>
-              <td>MCP OAuth 2.1, per-cluster scoping, log follow</td>
+              <th scope="row">UI</th>
+              <td>
+                Keyboard-first SPA, <Kbd>⌘K</Kbd> palette with fleet-wide search,{" "}
+                <strong>live dependency graph</strong>, detail views (YAML, events, workload logs),
+                environment colours, dark mode
+              </td>
+              <td>Saved views</td>
+            </tr>
+            <tr>
+              <th scope="row">Sign-in</th>
+              <td>
+                <strong>GitHub (OAuth App or GitHub App) and OIDC</strong> (Google, Okta, Entra ID, Dex);
+                local users, optionally break-glass only; trusted reverse-proxy headers
+              </td>
+              <td>Hub-managed access (assign users to groups, expiring grants). Future: SAML 2.0</td>
+            </tr>
+            <tr>
+              <th scope="row">Access tokens</th>
+              <td>
+                Personal access tokens (<code>read</code> / <code>operate</code>, mandatory expiry) for MCP
+              </td>
+              <td>MCP OAuth 2.1, per-cluster scoping</td>
+            </tr>
+            <tr>
+              <th scope="row">MCP</th>
+              <td>
+                <code>/mcp</code> with fleet-wide read tools, guarded actions and thread tools
+              </td>
+              <td>Log follow, subscriptions</td>
+            </tr>
+            <tr>
+              <th scope="row">Threads</th>
+              <td>Review threads on any resource or cluster, from people, Claude Code and Ask AI</td>
+              <td>Mentions, notifications, webhooks</td>
+            </tr>
+            <tr>
+              <th scope="row">Ask AI</th>
+              <td>
+                Anthropic API, or AWS Bedrock with any model that supports tool use (IRSA, Guardrails);
+                read-only tools, redaction, log and YAML attachments
+              </td>
+              <td>OpenAI-compatible endpoints (Ollama, vLLM, Azure OpenAI), streaming answers</td>
+            </tr>
+            <tr>
+              <th scope="row">Storage and HA</th>
+              <td>
+                PostgreSQL (bring your own, for example CloudNativePG); <strong>multiple hub replicas</strong>
+                , active/active
+              </td>
+              <td>Read replicas</td>
+            </tr>
+            <tr>
+              <th scope="row">Ops</th>
+              <td>Helm charts, internal ingress examples, audit log, runtime kill switches</td>
+              <td>Prometheus dashboards, audit webhook</td>
             </tr>
           </tbody>
         </table>
@@ -73,8 +118,9 @@ function Page() {
       <h2 id="faq">FAQ</h2>
       <h3>What is the status?</h3>
       <p>
-        Eddy is v1.0, an early release. The core is stable, and sign-in providers and high availability arrive
-        in v1.1. Until then the hub runs a single replica with embedded SQLite, so plan for that.
+        Eddy is v1.0, an early release. It already includes GitHub and OIDC sign-in and active/active hub
+        replicas on PostgreSQL, which you provide. mTLS for agents, MCP OAuth and hub-managed access are
+        planned next.
       </p>
       <h3>Do you need to expose workload clusters?</h3>
       <p>No. Agents dial out to the hub. The hub holds no workload-cluster credentials.</p>
@@ -92,8 +138,9 @@ function Page() {
       </p>
       <h3>Can I use my company login?</h3>
       <p>
-        Today through a reverse proxy such as oauth2-proxy or Pomerium. Native GitHub, OIDC and SAML sign-in
-        are planned for v1.1.
+        Yes. Eddy signs in with GitHub or OIDC (Google, Okta, Entra, Dex) natively, and a trusted reverse
+        proxy such as oauth2-proxy also works. SAML 2.0 is a possible future addition. See the{" "}
+        <a href="https://github.com/idestis/eddy/blob/HEAD/docs/auth.md">sign-in guide</a>.
       </p>
       <h3>How do I contribute or report a problem?</h3>
       <p>

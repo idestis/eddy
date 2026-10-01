@@ -54,8 +54,9 @@ function Page() {
       <h2 id="signin">Signing in and tokens</h2>
       <ul>
         <li>
-          v1.0 supports local users (argon2id) and trusted reverse-proxy headers. Native OIDC and SAML are
-          planned.
+          v1.0 supports GitHub and OIDC sign-in (Google, Okta, Entra, Dex), local users (argon2id) and trusted
+          reverse-proxy headers. SAML 2.0 is a possible future addition. See the{" "}
+          <a href="https://github.com/idestis/eddy/blob/HEAD/docs/auth.md">sign-in guide</a>.
         </li>
         <li>
           Sessions are server-side behind a <code>__Host-</code> cookie, with CSRF protection and a strict

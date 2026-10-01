@@ -1,14 +1,20 @@
-/* Decorative illustration of the Eddy UI in the hero. Pure HTML/CSS, aria-hidden inside. */
+/*
+ * Decorative illustration of the Eddy UI in the hero. Pure HTML/CSS/SVG, aria-hidden inside.
+ * It mirrors the app's layout (sidebar, list, detail panel, graph) and reads the same tokens.
+ * Responsive through container queries on .win, so it simplifies as the figure narrows.
+ */
 .win {
   --c: var(--color-stage);
   --c2: var(--color-stage-2);
+  --c-soft: color-mix(in oklab, var(--c) 11%, var(--color-surface));
   position: relative;
   overflow: hidden;
+  container-type: inline-size;
   border: 1px solid color-mix(in oklab, var(--c) 25%, var(--color-line));
-  border-radius: 18px;
+  border-radius: var(--radius-window);
   background: var(--color-surface);
   box-shadow: var(--shadow-window);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4;
   text-align: left;
 }
@@ -16,147 +22,458 @@
   height: 3px;
   background: linear-gradient(90deg, var(--c), var(--c2));
 }
+.win svg.ic {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.win svg.st {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.win .st.ok {
+  color: var(--color-ok);
+}
+.win .st.bad {
+  color: var(--color-bad);
+}
+.win .st.run {
+  color: var(--color-run);
+}
+.win .st.off {
+  color: var(--color-off);
+}
+.win .st.attn {
+  color: var(--color-attn);
+}
+.win kbd {
+  font-size: 10.5px;
+}
+
+/* three columns: sidebar, main, detail */
 .win .shell {
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-columns: 196px minmax(0, 1fr) 256px;
+  height: 590px;
 }
+
+/* sidebar */
 .win .side {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 12px 10px;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 8px;
   border-right: 1px solid var(--color-line);
   background: var(--color-surface-side);
 }
 .win .logo {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 6px;
-  font-size: 15px;
-  font-weight: 680;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: 14px;
+  font-weight: 650;
 }
 .win .logo svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   color: var(--c);
 }
 .win .sw-row {
-  display: grid;
-  grid-template-columns: 32px 1fr;
+  display: flex;
   align-items: center;
-  gap: 0 9px;
-  padding: 7px;
+  gap: 8px;
+  padding: 6px;
   border: 1px solid var(--color-line);
   border-radius: 12px;
   background: var(--color-surface);
+  box-shadow: var(--shadow-control);
 }
 .win .sw {
   display: grid;
-  grid-row: 1 / 3;
+  flex: none;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   background: linear-gradient(135deg, var(--c), var(--c2));
-  color: #fff;
-  font-size: 13px;
+  color: var(--color-on-accent);
+  font-size: 11.5px;
   font-weight: 700;
 }
+.win .sw-row .nm {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
 .win .sw-row b {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 650;
 }
-.win .sw-row span {
+.win .sw-row small {
   color: var(--color-ink-3);
-  font-size: 11.5px;
+  font-size: 10.5px;
+}
+.win .sw-row .ic {
+  color: var(--color-ink-3);
+}
+.win .lbl {
+  padding: 2px 6px 0;
+  color: var(--color-ink-3);
+  font-size: 10.5px;
 }
 .win .snav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  min-height: 0;
 }
-.win .snav div {
+.win .it {
   display: flex;
-  justify-content: space-between;
-  padding: 7px 9px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 7px;
   border-radius: 8px;
   color: var(--color-ink-2);
+  white-space: nowrap;
 }
-.win .snav div.cur {
-  background: color-mix(in oklab, var(--c) 11%, var(--color-surface));
+.win .it span.t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.win .it .n {
+  color: var(--color-ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.win .it .n.attn {
+  color: var(--color-attn);
+  font-weight: 650;
+}
+.win .it .chev {
+  width: 11px;
+  height: 11px;
+  color: var(--color-ink-3);
+}
+.win .it.cur {
+  background: var(--c-soft);
   color: var(--color-ink);
   font-weight: 560;
 }
-.win .snav .n {
-  color: var(--color-ink-3);
-  font-variant-numeric: tabular-nums;
+.win .it.lead {
+  color: var(--color-ink);
 }
-.win .snav .n.bad {
-  color: var(--color-bad);
-  font-weight: 650;
+.win .kids {
+  margin-left: 11px;
 }
+.win .kid {
+  position: relative;
+  padding-left: 9px;
+}
+.win .kid::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 50%;
+  left: 0;
+  width: 8px;
+  border-bottom: 1px solid var(--color-line-strong);
+  border-left: 1px solid var(--color-line-strong);
+  border-bottom-left-radius: 5px;
+}
+.win .kid:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  bottom: -1px;
+  left: 0;
+  border-left: 1px solid var(--color-line-strong);
+}
+
+/* main column */
 .win .main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 12px 12px;
 }
 .win .top {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  margin: 0 -12px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--color-line);
 }
 .win .crumb {
   flex: 1;
-  font-size: 14px;
+  min-width: 0;
+  overflow: hidden;
   font-weight: 620;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .win .crumb span {
   color: var(--color-ink-3);
   font-weight: 450;
 }
+.win .envtag {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--c), var(--c2));
+  color: var(--color-on-accent);
+  font-size: 10.5px;
+  font-weight: 650;
+}
 .win .search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 6px 8px 6px 11px;
+  gap: 7px;
+  padding: 5px 7px 5px 9px;
   border: 1px solid var(--color-line);
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   background: var(--color-surface-sunken);
   color: var(--color-ink-3);
-  font-size: 12.5px;
+  white-space: nowrap;
 }
-.win .rows {
-  padding: 6px 8px 10px;
+.win .search kbd {
+  margin-left: 12px;
+}
+.win .cards {
+  display: grid;
+  grid-template-columns: 0.8fr 1fr 1.25fr;
+  gap: 10px;
+}
+.win .tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  height: 100px;
+  overflow: hidden;
+  padding: 9px 11px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+.win .tile h5 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.win .tile p {
+  margin: 0;
+  color: var(--color-ink-3);
+  font-size: 11px;
+}
+.win .tile .kv {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  font-size: 10.5px;
+}
+.win .tile .kv dt {
+  color: var(--color-ink-3);
+}
+.win .tile .kv dd {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.win .tile.ai {
+  background: linear-gradient(
+    160deg,
+    color-mix(in oklab, var(--color-accent) 9%, var(--color-surface)),
+    color-mix(in oklab, var(--color-accent-2) 7%, var(--color-surface))
+  );
+}
+.win .tile.ai h5 svg {
+  color: var(--color-accent);
+}
+.win .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.win .chips span {
+  padding: 3px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-ink-2);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.win .btn-s {
+  align-self: flex-start;
+  margin-top: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 8px;
+  font-size: 10.5px;
+  font-weight: 560;
+}
+
+/* filter bar */
+.win .filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.win .filter-in {
+  display: flex;
+  flex: none;
+  width: 122px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px 4px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  color: var(--color-ink-3);
+  white-space: nowrap;
+}
+.win .filter-in kbd {
+  margin-left: auto;
+}
+.win .fc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  color: var(--color-ink-2);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.win .fc b {
+  font-weight: 650;
+}
+.win .fc.x {
+  display: none;
+}
+@container (min-width: 1100px) {
+  .win .fc.x {
+    display: inline-flex;
+  }
+}
+.win .fc .st {
+  width: 12px;
+  height: 12px;
+}
+.win .count {
+  margin-left: auto;
+  color: var(--color-ink-3);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.win .seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface);
+  font-size: 10.5px;
+}
+.win .seg span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  color: var(--color-ink-2);
+}
+.win .seg span.on {
+  background: var(--color-ink);
+  color: var(--color-page);
+  font-weight: 600;
+}
+
+/* table */
+.win .table {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
 }
 .win .row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1.4fr) 92px minmax(0, 1.6fr) 62px;
+  grid-template-columns: minmax(190px, 1.5fr) 84px 20px minmax(0, 1fr) 70px 30px;
   align-items: center;
   gap: 10px;
-  padding: 8px;
+  margin: 0 3px;
+  padding: 0 9px;
+  height: 30px;
   border-radius: 9px;
 }
 .win .row.head {
-  padding-bottom: 4px;
+  height: 30px;
+  margin: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-line);
+  border-radius: 0;
+  background: var(--color-surface-side);
   color: var(--color-ink-3);
-  font-size: 11.5px;
+  font-size: 11px;
+}
+.win .row.grp {
+  display: flex;
+  gap: 6px;
+  height: 28px;
+  padding-top: 6px;
+  color: var(--color-ink-3);
+  font-size: 11px;
+  font-weight: 650;
 }
 .win .row.sel {
-  background: color-mix(in oklab, var(--c) 11%, var(--color-surface));
-  box-shadow: inset 2px 0 0 var(--c);
+  background: var(--c-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c) 32%, transparent);
 }
 .win .row .nm {
   overflow: hidden;
   font-family: var(--font-mono);
-  font-weight: 500;
+  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.win .row .ns,
+.win .row .nm i {
+  color: var(--color-ink-3);
+  font-style: normal;
+}
+.win .row .nm b {
+  font-weight: 560;
+}
+.win .row .stt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-ink-2);
+}
 .win .row .ms,
+.win .row .ver,
+.win .row .rd,
 .win .row .ago {
   overflow: hidden;
   color: var(--color-ink-3);
@@ -164,123 +481,567 @@
   white-space: nowrap;
 }
 .win .row .ms {
+  color: var(--color-ink-2);
+  font-size: 11px;
+}
+.win .row .ms.bad {
+  color: var(--color-bad);
+}
+.win .row .ver {
   font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.win .row .ago {
+  text-align: right;
+}
+
+/* detail panel */
+.win .detail {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 12px;
+  border-left: 1px solid var(--color-line);
+}
+.win .detail .seg {
+  display: flex;
+}
+.win .detail .seg span {
+  flex: 1;
+  justify-content: center;
+  padding: 4px 8px;
+}
+.win .kindline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-ink-3);
+  font-size: 10.5px;
+}
+.win .kbadge {
+  padding: 1px 4px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 5px;
+  background: var(--color-surface-sunken);
+  color: var(--color-ink-2);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+}
+.win .big {
+  margin: -2px 0 0;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 650;
+}
+.win .okbox {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  font-size: 11px;
+}
+.win .okbox small {
+  display: block;
+  overflow: hidden;
+  color: var(--color-ink-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.win .acts {
+  display: flex;
+  gap: 8px;
+}
+.win .acts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 560;
+}
+.win .acts span.ask {
+  border-color: color-mix(in oklab, var(--color-accent) 40%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 8%, var(--color-surface));
+}
+.win .acts kbd {
+  padding: 0 4px;
+}
+.win .dkv {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 5px 8px;
+  margin: 0;
+  font-size: 10.5px;
+}
+.win .dkv dt {
+  color: var(--color-ink-3);
+}
+.win .dkv dd {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.win .dkv dd.lk {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+.win .detail h6 {
+  margin: 2px 0 0;
   font-size: 11.5px;
+  font-weight: 650;
 }
-.win .dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--color-ok);
+.win .ev {
+  padding: 6px 9px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  font-size: 10.5px;
 }
-.win .dot.bad {
-  background: var(--color-bad);
+.win .ev b {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
 }
-.win .dot.run {
-  background: var(--color-run);
+.win .ev b span {
+  color: var(--color-ink-3);
+  font-weight: 450;
 }
-.win .dot.off {
-  background: var(--color-ink-3);
+.win .ev p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* command palette overlay (mirrors the app's modal palette) */
+.win .scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--color-scrim) 55%, transparent);
 }
 .win .pal {
   position: absolute;
-  top: 84px;
-  right: 18px;
-  width: min(400px, calc(100% - 36px));
+  top: 18px;
+  left: 50%;
+  width: min(540px, calc(100% - 32px));
   overflow: hidden;
+  transform: translateX(-50%);
   border: 1px solid var(--color-line-strong);
-  border-radius: 14px;
+  border-radius: var(--radius-dialog);
   background: var(--color-surface);
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--shadow-dialog);
 }
 .win .pal-in {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 11px 13px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--color-line);
-  font-family: var(--font-mono);
+  color: var(--color-ink-3);
   font-size: 13px;
 }
-.win .caret {
-  width: 1.5px;
-  height: 15px;
-  background: var(--c);
-  animation: blink 1.1s steps(1) infinite;
+.win .pal-in .ph {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.win .scope {
+  display: flex;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-tile);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.win .scope span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.win .scope span.on {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-control);
+  color: var(--color-ink);
+}
+.win .scope i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-stage);
+}
+.win .pal-h {
+  padding: 8px 12px 3px;
+  color: var(--color-ink-3);
+  font-size: 11px;
+  font-weight: 550;
 }
 .win .pal-it {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 8px 13px;
+  gap: 10px;
+  margin: 0 5px;
+  padding: 5px 7px;
+  border-radius: 10px;
 }
 .win .pal-it.sel {
-  background: color-mix(in oklab, var(--c) 12%, var(--color-surface));
+  background: var(--c-soft);
 }
-.win .pal-it code {
-  border: 0;
-  background: none;
-  padding: 0;
-  font-size: 12.5px;
+.win .pal-it.cur {
+  opacity: 0.55;
 }
-.win .cl {
-  margin-left: auto;
-  padding: 2px 7px;
-  border-radius: 6px;
+.win .tile-i {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--color-surface-sunken);
+  color: var(--color-ink-2);
+}
+.win .av {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
   background: linear-gradient(135deg, var(--c), var(--c2));
-  color: #fff;
-  font-size: 11px;
-  font-weight: 650;
+  color: var(--color-on-accent);
+  font-size: 10px;
+  font-weight: 700;
 }
-.win .cl.pe {
-  background: repeating-linear-gradient(-45deg, var(--color-prod) 0 5px, var(--color-stripe) 5px 10px);
-  text-shadow:
-    0 0 3px #000,
-    0 0 3px #000;
+.win .av.pe {
+  --c: var(--color-prod);
+  --c2: var(--color-prod-2);
 }
-.win .cl.dv {
+.win .av.dv {
   --c: var(--color-dev);
   --c2: var(--color-dev-2);
 }
+.win .pal-t {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+.win .pal-t > span:first-child {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.win .pal-t small {
+  overflow: hidden;
+  color: var(--color-ink-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.win .pal-t .mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.win .pal-t .mono em {
+  margin-right: 6px;
+  color: var(--color-ink-3);
+  font-size: 10px;
+  font-style: normal;
+}
+.win .ctag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border: 1px solid color-mix(in oklab, var(--c) 55%, transparent);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.win .ctag i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.win .badge {
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: var(--color-surface-sunken);
+  color: var(--color-ink-3);
+  font-size: 10.5px;
+  font-weight: 600;
+}
 .win .pal-foot {
   display: flex;
-  gap: 14px;
-  padding: 8px 13px;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  padding: 8px 12px;
   border-top: 1px solid var(--color-line);
-  background: var(--color-surface-side);
+  color: var(--color-ink-3);
+  font-size: 10.5px;
+}
+.win .pal-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* graph view */
+.win .ghead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 10px;
+}
+.win .ghead b {
+  font-size: 13px;
+}
+.win .ghead small {
+  flex: 1;
+  min-width: 0;
   color: var(--color-ink-3);
   font-size: 11.5px;
 }
-.win kbd {
+.win .ghead .cnt {
+  color: var(--color-ink-3);
+  white-space: nowrap;
+}
+.win .gscroll {
+  overflow-x: auto;
+  padding: 0 16px 16px;
+}
+.win .gcanvas {
+  position: relative;
+  min-width: 720px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background-color: var(--color-surface-side);
+  background-image: radial-gradient(var(--color-line-strong) 0.8px, transparent 0.8px);
+  background-size: 16px 16px;
+}
+.win .gcanvas > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.win .gedge {
+  fill: none;
+  stroke: var(--color-diagram-line);
+  stroke-width: 1.4;
+}
+.win .gedge.src {
+  stroke-dasharray: 5 4;
+}
+.win .gedge.app {
+  stroke: var(--color-ink-3);
+  stroke-dasharray: 1.5 3.5;
+  stroke-linecap: round;
+}
+.win .gedge.wait {
+  stroke: var(--color-attn);
+  stroke-width: 1.8;
+}
+.win .gnode {
+  fill: var(--color-surface);
+  stroke: var(--color-line-strong);
+}
+.win .gnode.sel {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+.win .gcanvas text {
+  fill: var(--color-ink);
+  font-family: var(--font-mono);
   font-size: 11px;
+  font-weight: 560;
+}
+.win .gcanvas text.sub {
+  fill: var(--color-ink-3);
+  font-family: var(--font-sans);
+  font-size: 9.5px;
+  font-weight: 450;
+}
+.win .gcanvas text.kb {
+  fill: var(--color-ink-2);
+  font-size: 8px;
+  font-weight: 650;
+}
+.win .gcanvas rect.kb {
+  fill: var(--color-surface-sunken);
+  stroke: var(--color-line-strong);
+}
+.win .gcanvas .ok {
+  fill: var(--color-ok);
+}
+.win .gcanvas .run {
+  fill: var(--color-run);
+}
+.win .gcanvas .wt {
+  fill: var(--color-attn);
+}
+.win .glegend {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  gap: 14px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: var(--color-surface);
+  color: var(--color-ink-2);
+  font-size: 10.5px;
+}
+.win .glegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.win .glegend i {
+  display: inline-block;
+  width: 18px;
+  border-top: 1.5px solid var(--color-diagram-line);
+}
+.win .glegend i.src {
+  border-top-style: dashed;
+}
+.win .glegend i.app {
+  border-top-style: dotted;
+}
+.win .glegend i.wait {
+  border-top-color: var(--color-attn);
+  border-top-width: 2px;
+}
+.win .gzoom {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: var(--color-surface);
+  color: var(--color-ink-2);
+}
+.win .gzoom span {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
 }
 
-@media (max-width: 760px) {
+.mock-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-control);
+}
+.mock-toggle button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-ink-2);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.mock-toggle button[aria-pressed="true"] {
+  background: var(--color-ink);
+  color: var(--color-page);
+  font-weight: 600;
+}
+
+/* narrower figure: drop the detail panel, then the sidebar and cards */
+@container (max-width: 900px) {
   .win .shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: 196px minmax(0, 1fr);
   }
-  .win .side {
+  .win .detail {
+    display: none;
+  }
+}
+@container (max-width: 700px) {
+  .win .shell {
+    grid-template-columns: minmax(0, 1fr);
+    height: 440px;
+  }
+  .win .side,
+  .win .cards,
+  .win .row .ver,
+  .win .row .rd,
+  .win .row.head .ver,
+  .win .row.head .rd {
     display: none;
   }
   .win .row {
-    grid-template-columns: 14px minmax(0, 1fr) 54px;
+    grid-template-columns: minmax(0, 1fr) 74px minmax(0, 1fr) 30px;
   }
-  .win .row .ns,
-  .win .row .ms,
-  .win .row.head span:nth-child(3),
-  .win .row.head span:nth-child(4) {
-    display: none;
-  }
-  .win .search .hint {
-    display: none;
-  }
-  .win .pal {
-    position: static;
-    width: auto;
-    margin: 0 10px 12px;
-    box-shadow: none;
-  }
+  .win .pal-cmd,
   .win .pal-foot span:nth-child(n + 3) {
     display: none;
   }
+  .win .pal-in .ph {
+    display: none;
+  }
+  .win .pal {
+    top: 12px;
+  }
+  .win .envtag,
+  .win .count {
+    display: none;
+  }
+}
+@container (max-width: 480px) {
+  .win .shell {
+    height: 400px;
+  }
+  .win .row {
+    grid-template-columns: minmax(0, 1fr) 74px 30px;
+  }
+  .win .scope span:not(.on) {
+    display: none;
+  }
+  .win .row .ms,
+  .win .row.head .ms,
+  .win .filter-in {
+    display: none;
+  }
+  .win .search {
+    margin-left: auto;
+  }
+  .win .crumb {
+    flex: 0 1 auto;
+  }
+}
+.win .row.head .ms {
+  color: var(--color-ink-3);
+  font-size: 11px;
 }

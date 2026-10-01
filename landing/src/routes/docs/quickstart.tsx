@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { CodeBlock } from "../../components/CodeBlock";
+import { Kbd } from "../../components/Kbd";
 import { Pager } from "../../components/Pager";
 import { pageHead } from "../../lib/head";
 
@@ -31,8 +32,9 @@ function Page() {
       <p>
         <code>task kind:up</code> runs <code>deploy/kind/up.sh</code>, which is safe to re-run. It creates a
         kind cluster named <code>eddy</code>, installs Flux, adds a demo podinfo app, builds and loads the hub
-        and agent images, installs the hub with local users and one registered cluster called{" "}
-        <code>kind</code>, installs the agent, and applies example user RBAC.
+        and agent images, installs a one-instance PostgreSQL with CloudNativePG, installs the hub with local
+        users and one registered cluster called <code>kind</code>, installs the agent, and applies example
+        user RBAC.
       </p>
       <p>Then start the port-forward the script prints. It looks like this:</p>
       <CodeBlock lines={["$ kubectl --context kind-eddy -n eddy port-forward svc/eddy-hub 8080:80"]} />
@@ -51,14 +53,19 @@ function Page() {
           .
         </p>
       </div>
+      <p>
+        The kind setup uses local users so it works offline. For real deployments you can sign in with GitHub
+        or OIDC instead. See the{" "}
+        <a href="https://github.com/idestis/eddy/blob/HEAD/docs/auth.md">sign-in guide</a>.
+      </p>
       <h2 id="try">Try it</h2>
       <ul>
         <li>
-          Press <kbd>⌘K</kbd> and search for <code>podinfo</code>.
+          Press <Kbd>⌘K</Kbd> and search for <code>podinfo</code>.
         </li>
         <li>
-          Use <kbd>j</kbd> and <kbd>k</kbd> to move, <kbd>l</kbd> to open, <kbd>r</kbd> to reconcile.{" "}
-          <kbd>?</kbd> lists all keys.
+          Use <Kbd>j</Kbd> and <Kbd>k</Kbd> to move, <Kbd>l</Kbd> to open, <Kbd>r</Kbd> to reconcile.{" "}
+          <Kbd>?</Kbd> lists all keys.
         </li>
       </ul>
       <h2 id="clean">Clean up</h2>

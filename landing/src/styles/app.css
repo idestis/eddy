@@ -100,9 +100,6 @@
   .grad-text {
     @apply bg-linear-to-r from-accent from-0% via-accent-2 via-55% to-prod bg-clip-text text-transparent;
   }
-  .stripes {
-    background: repeating-linear-gradient(-45deg, var(--color-prod) 0 5px, var(--color-stripe) 5px 10px);
-  }
   .keys li:nth-child(-n + 2) kbd {
     animation: press 4s infinite;
   }

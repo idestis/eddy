@@ -1,9 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import { ArchDiagram } from "../components/ArchDiagram";
 import { ClusterList } from "../components/ClusterList";
 import { CodeBlock } from "../components/CodeBlock";
 import { HeroMock } from "../components/HeroMock";
 import { GithubIcon } from "../components/icons";
+import { Kbd } from "../components/Kbd";
 import { Keymap } from "../components/Keymap";
 import { Section, SectionHead } from "../components/Section";
 import { pageHead, SITE_TITLE } from "../lib/head";
@@ -57,7 +59,7 @@ const who = [
 const steps = [
   {
     title: "Agents connect out.",
-    text: "Each agent opens a WebSocket to the hub's agent endpoint with a token bound to one cluster name.",
+    text: "Each agent replica opens a WebSocket to the hub's agent endpoint with a token bound to one cluster name.",
   },
   {
     title: "Only summaries travel.",
@@ -69,15 +71,29 @@ const steps = [
   },
 ];
 
-const ready = [
-  "Hub and agents over outbound WebSocket",
-  "Kustomizations, HelmReleases and sources, with reconcile, suspend and resume",
-  "⌘K palette, fleet overview, YAML, events and logs",
-  "Local users and trusted reverse-proxy sign-in",
-  "MCP with personal access tokens, threads, and Ask AI",
-  "Helm charts; embedded SQLite, no external database needed",
+const ready: ReactNode[] = [
+  "Hub and agents over outbound WebSocket, with 1..N agent replicas per cluster",
+  "Add cluster wizard with one-time join tokens and a live connection checklist",
+  "Kustomizations, HelmReleases and sources, plus Karpenter and External Secrets presets, core kinds and inventory, with reconcile, suspend and resume",
+  "Live dependency graph",
+  <>
+    <Kbd>⌘K</Kbd> palette with fleet-wide server-side search
+  </>,
+  "YAML, events and workload logs with structured JSON, and Ask AI on a selection",
+  "GitHub and OIDC sign-in (Google, Okta, Entra, Dex), local users and trusted reverse-proxy sign-in",
+  "MCP for Claude Code with personal access tokens and threads",
+  <>
+    Ask AI with your choice of model: <a href="#ai">see below</a>
+  </>,
+  "PostgreSQL (bring your own, for example CloudNativePG) with active/active hub replicas",
+  "Measured at 100 clusters × 15k resources: in our single-user benchmarks, fleet counts take about 10 ms, a 15k-row list about 100 ms and a fleet search about 35 ms",
 ];
-const next = ["GitHub OAuth2, OIDC and SAML 2.0", "Multiple hub replicas (HA)", "mTLS for agents"];
+const next = [
+  "mTLS for agents (planned)",
+  "MCP OAuth (planned)",
+  "Hub-managed access: assign users to groups, with break-glass expiry (planned)",
+];
+const future = ["SAML 2.0", "Image automation", "Notification alerts", "flux diff"];
 
 function Home() {
   return (
@@ -98,8 +114,12 @@ function Home() {
             Flux
           </h1>
           <p className="mx-auto mb-8 max-w-[38em] text-[clamp(1.05rem,2.2vw,1.25rem)] text-ink-2">
-            See every Flux cluster you run in one place. Jump anywhere with <kbd>⌘K</kbd>, reconcile or
+            See every Flux cluster you run in one place. Jump anywhere with <Kbd>⌘K</Kbd>, reconcile or
             suspend with a single key, and read logs, events and YAML without leaving the keyboard.
+          </p>
+          <p className="mx-auto -mt-4 mb-8 max-w-[38em] text-ink-2">
+            Watch changes ripple through a live dependency graph, and let Claude Code investigate for you over
+            MCP.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             <Link to="/docs/quickstart/" className="btn btn-primary">
@@ -148,8 +168,8 @@ function Home() {
             </p>
             <ClusterList />
             <p className="text-[0.9rem]">
-              Teal and blue for dev, violet and pink for staging, orange for prod. Protected clusters get
-              stripes and need a typed confirmation for writes.
+              Environment colours match the app: teal for development, violet for staging, orange for
+              production. Protected clusters carry a solid badge and need a typed confirmation for writes.
             </p>
           </article>
 
@@ -158,27 +178,48 @@ function Home() {
             <p>
               Every read and action runs as the signed-in user, impersonated by the agent in each cluster.
               Each cluster decides what they may do. Eddy invents no roles, and it cannot do more than the
-              user could with <code>kubectl</code>.
+              user could with <code>kubectl</code>. Sign in with GitHub or OIDC (Google, Okta, Entra, Dex),
+              and the agent's ServiceAccount stays read-only.
+            </p>
+            <p>
+              <a href="https://github.com/idestis/eddy/blob/HEAD/docs/auth.md">Sign-in guide</a>
+            </p>
+          </article>
+
+          <article className="card">
+            <h3 className="mb-2 text-[1.1rem] font-semibold">Live dependency graph</h3>
+            <p>
+              See sources, then each <code>dependsOn</code> layer, then what depends on them. When a reconcile
+              starts, the change ripples through the graph live, so you can see what is blocked and why.
+            </p>
+          </article>
+
+          <article className="card">
+            <h3 className="mb-2 text-[1.1rem] font-semibold">Add a cluster in a minute</h3>
+            <p>
+              The Add cluster wizard shows the install command with a one-time join token, then a live
+              checklist ticks as the agent connects and syncs. No kubeconfig leaves your hands.
             </p>
           </article>
 
           <article className="card md:col-span-2 lg:col-span-1">
             <h3 className="mb-2 text-[1.1rem] font-semibold">Fast</h3>
             <p>
-              Agents stream summaries through informers and batched deltas. The UI updates over SSE and uses
-              virtualised lists, so a big fleet stays responsive.
+              Agents stream summaries through informers and batched deltas, and the UI watches only the
+              clusters on screen. Lists are virtualised and fleet search runs on the hub, so a big fleet stays
+              responsive: we measure at 100 clusters × 15k resources.
             </p>
           </article>
 
           <article className="card md:col-span-2 lg:col-span-3">
             <h3 className="mb-2 text-[1.1rem] font-semibold">Command palette and vim-style keys</h3>
             <p>
-              <kbd>⌘K</kbd> searches every resource in every cluster. The rest of the keymap stays out of your
+              <Kbd>⌘K</Kbd> searches every resource in every cluster. The rest of the keymap stays out of your
               way.
             </p>
             <Keymap />
             <p className="fine mt-4">
-              Keys shown are from the design prototype. Press <kbd>?</kbd> in the app for the current list.
+              Keys shown are from the design prototype. Press <Kbd>?</Kbd> in the app for the current list.
             </p>
           </article>
 
@@ -206,23 +247,54 @@ function Home() {
               <Link to="/docs/mcp/">MCP and Claude Code docs</Link>
             </p>
           </article>
+        </div>
+      </Section>
 
+      <Section id="ai" labelledBy="ai-title">
+        <SectionHead id="ai-title" eyebrow="Ask AI" title="Ask AI: bring your model">
+          <p className="m-0">
+            Ask about a resource or a selection and get an answer grounded in what you can see. It is off by
+            default.
+          </p>
+        </SectionHead>
+        <div className="grid gap-4 md:grid-cols-2">
           <article className="card">
-            <h3 className="mb-2 text-[1.1rem] font-semibold">Ask AI on Anthropic or AWS Bedrock</h3>
-            <p>
-              Ask about a resource and get an answer grounded in what you can see. Use the Anthropic API, or
-              AWS Bedrock to keep data in your account and region (IRSA, optional Guardrails). Off by default.
-            </p>
+            <span className="mb-3 inline-block rounded-full border border-ok/40 bg-ok/10 px-2.5 py-1.5 font-mono text-[0.72rem] leading-none font-semibold text-ink-2">
+              v1.0 · ready
+            </span>
+            <ul className="m-0 list-disc pl-5 text-ink-2 marker:text-ink-3">
+              <li className="my-1.5">The Anthropic API.</li>
+              <li className="my-1.5">
+                AWS Bedrock through the Converse API, which is model-agnostic. Set any Bedrock model or
+                inference profile that supports tool use as <code>ai.bedrock.modelId</code>: Claude, Amazon
+                Nova (Lite, Pro, Premier), Meta Llama, Mistral and others.
+              </li>
+              <li className="my-1.5">
+                Claude is the default and the model we test with. Others should work, and we would like to
+                hear how it goes.
+              </li>
+              <li className="my-1.5">
+                With Bedrock, data stays in your AWS account, with IAM through IRSA or Pod Identity.
+              </li>
+            </ul>
           </article>
-
-          <article className="card lg:col-span-2">
-            <h3 className="mb-2 text-[1.1rem] font-semibold">Read-only AI, with guardrails</h3>
-            <p>
-              Ask AI has no write tools. AI and MCP output is redacted and treated as untrusted data. MCP
-              writes need the <code>operate</code> scope, a typed confirmation on protected clusters, and can
-              be switched off at runtime. Secret and ConfigMap data never leave a cluster.
-            </p>
-            <p>
+          <article className="card">
+            <span className="mb-3 inline-block rounded-full border border-line-strong bg-surface-sunken px-2.5 py-1.5 font-mono text-[0.72rem] leading-none font-semibold text-ink-2">
+              Future · planned
+            </span>
+            <ul className="m-0 list-disc pl-5 text-ink-2 marker:text-ink-3">
+              <li className="my-1.5">
+                OpenAI-compatible endpoints: self-hosted Ollama or vLLM, Azure OpenAI and others.
+              </li>
+            </ul>
+            <h3 className="mt-5 mb-2 text-[1.05rem] font-semibold">Guardrails, whichever model you use</h3>
+            <ul className="m-0 list-disc pl-5 text-ink-2 marker:text-ink-3">
+              <li className="my-1.5">Read-only tools only.</li>
+              <li className="my-1.5">Answers are scoped to what the signed-in user can see (RBAC).</li>
+              <li className="my-1.5">Secrets are redacted before anything reaches the model.</li>
+              <li className="my-1.5">It can be switched off at runtime.</li>
+            </ul>
+            <p className="mt-4 mb-0">
               <Link to="/docs/security/" className="inline-flex min-h-10 items-center">
                 Security model
               </Link>
@@ -235,7 +307,7 @@ function Home() {
         <SectionHead
           id="how-title"
           eyebrow="How it works"
-          title="One hub, one agent per cluster, all connections outbound"
+          title="One hub, any number of clusters, all connections outbound"
         />
         <ArchDiagram />
         <ol className="m-0 mt-6 grid list-none gap-x-6 gap-y-4 p-0 [counter-reset:s] md:grid-cols-3">
@@ -254,11 +326,9 @@ function Home() {
         <SectionHead
           id="road-title"
           eyebrow="Status"
-          title="v1.0 is ready to try. v1.1 is about sign-in and scale."
+          title="v1.0 is ready to try. v1.1 is about agent security and access."
         >
-          <p className="m-0">
-            Eddy is at v1.0, an early release. The core is stable, and plans for what comes next can change.
-          </p>
+          <p className="m-0">Eddy is at v1.0, an early release. Plans for what comes next can change.</p>
         </SectionHead>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="card">
@@ -266,8 +336,9 @@ function Home() {
               v1.0 · ready
             </span>
             <ul className="m-0 list-disc pl-5 text-ink-2 marker:text-ink-3">
-              {ready.map((r) => (
-                <li key={r} className="my-1.5">
+              {ready.map((r, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: static list
+                <li key={i} className="my-1.5">
                   {r}
                 </li>
               ))}
@@ -279,6 +350,16 @@ function Home() {
             </span>
             <ul className="m-0 list-disc pl-5 text-ink-2 marker:text-ink-3">
               {next.map((r) => (
+                <li key={r} className="my-1.5">
+                  {r}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 mb-0">
+              <b className="text-ink">Future</b>
+            </p>
+            <ul className="m-0 list-disc pl-5 text-ink-2 marker:text-ink-3">
+              {future.map((r) => (
                 <li key={r} className="my-1.5">
                   {r}
                 </li>

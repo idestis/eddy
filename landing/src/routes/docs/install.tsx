@@ -28,6 +28,10 @@ function Page() {
         <li>Kubernetes 1.27 or later in every cluster, with Flux installed in the workload clusters.</li>
         <li>Helm 3.12 or later (Helm 4 works).</li>
         <li>
+          PostgreSQL 14 or later for the hub: bring your own, for example CloudNativePG, RDS or Cloud SQL. It
+          needs no extensions.
+        </li>
+        <li>
           An internal ingress (nginx or an AWS ALB) and a TLS certificate for the UI, plus a second internal
           endpoint for agents.
         </li>
@@ -36,8 +40,9 @@ function Page() {
       <ol>
         <li>
           <strong>Install the hub</strong> in the management cluster with the <code>eddy-hub</code> Helm
-          chart, giving it a <code>publicURL</code>, an <code>agentsPublicURL</code>, local users (argon2id
-          hashes) and persistence.
+          chart, giving it a <code>publicURL</code>, an <code>agentsPublicURL</code>, a Secret holding the
+          PostgreSQL DSN (<code>store.postgres.dsnSecret</code>) and a sign-in method: GitHub or OIDC, or
+          local users (argon2id hashes).
           <CodeBlock
             lines={[
               "$ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \\",
@@ -46,8 +51,10 @@ function Page() {
           />
         </li>
         <li>
-          <strong>Register clusters</strong> in <code>clusters[]</code> (name, environment, colour,{" "}
-          <code>protected</code>). The chart creates a <code>Cluster</code> resource and a token Secret for
+          <strong>Add clusters</strong> with the <strong>Add cluster</strong> wizard in the UI, which prints
+          the agent install command with a one-time join token and ticks a live checklist as the agent
+          connects. Or declare them in <code>clusters[]</code> (name, environment, colour,{" "}
+          <code>protected</code>) and the chart creates a <code>Cluster</code> resource and a token Secret for
           each.
         </li>
         <li>
@@ -59,27 +66,33 @@ function Page() {
           <code>deploy/rbac/eddy-user-rbac.yaml</code>.
         </li>
         <li>
-          <strong>Optional:</strong> sign in through your identity provider with oauth2-proxy, enable Ask AI,
-          and configure the kill switches.
+          <strong>Optional:</strong> enable Ask AI and configure the kill switches. Sign-in through a trusted
+          reverse proxy such as oauth2-proxy still works if you prefer it.
         </li>
       </ol>
       <h2 id="know">Good to know</h2>
       <ul>
         <li>
-          The hub runs <strong>one replica</strong> with SQLite on a PersistentVolumeClaim. Raising{" "}
-          <code>replicaCount</code> is rejected at install time. Multiple hub replicas (HA) are planned for
-          v1.1.
+          The hub runs <strong>two replicas by default</strong>, active/active, with PostgreSQL holding
+          sessions, tokens, threads and audit. Agents can run several replicas per cluster too. Sessions and
+          rate-limit counters live in <code>UNLOGGED</code> tables, so a database failover signs everyone out
+          and nothing else is lost.
         </li>
         <li>
-          With persistence off, every restart logs everyone out and loses threads. Use that for demos only.
+          <code>store.driver: memory</code> needs no database but runs one replica and loses everything on
+          restart. Use it for demos only.
+        </li>
+        <li>
+          GitHub and OIDC sign-in (Google, Okta, Entra, Dex) are set up in the hub values. See the{" "}
+          <a href="https://github.com/idestis/eddy/blob/HEAD/docs/auth.md">sign-in guide</a>.
         </li>
         <li>
           Expose the UI through an <strong>internal</strong> ingress only. <code>/mcp</code> must not sit
           behind your sign-in proxy, because MCP clients send a personal access token.
         </li>
         <li>
-          Until mTLS arrives in v1.1, the agent token is the main control on the agent endpoint, so restrict
-          it by source network.
+          Until mTLS for agents arrives (planned), the agent token is the main control on the agent endpoint,
+          so restrict it by source network.
         </li>
       </ul>
       <p>
