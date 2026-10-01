@@ -163,7 +163,7 @@ flowchart LR
   end
   subgraph RBAC[Workload cluster RBAC decides]
     V[eddy-viewer<br/>→ eddy:authenticated]
-    O[eddy-operator<br/>→ eddy:platform]
+    O[eddy-operator<br/>→ groups you choose, e.g. eddy:platform]
   end
   L --> M
   P --> M

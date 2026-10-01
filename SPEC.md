@@ -167,10 +167,11 @@ The hub compares the agent's token with the Secret using sha256 and a constant-t
 
 - **RBAC:** read-only on the Flux groups, apps workloads, ReplicaSets and Pods. It can `create` SubjectAccessReviews and `impersonate` users and groups. It has **no write access of its own**.
 
-**User RBAC example**, applied in each workload cluster:
+**User RBAC**, created by the agent chart (`userRBAC`) in each workload cluster:
 
-- `eddy-viewer` (get/list/watch on Flux, workloads, pods, `pods/log`, events) is bound to `eddy:authenticated`.
-- `eddy-operator` (adds `patch` on Flux kinds) is bound to `eddy:github:acme/platform`.
+- `eddy-viewer` (get/list/watch on Flux, workloads, pods, `pods/log`, events) is bound to `eddy:authenticated` by default.
+- `eddy-operator` (adds `patch` on Flux kinds) is bound to nobody by default; grant it per cluster, for example `userRBAC.operator.groups: [eddy:github:acme/platform]`.
+- `deploy/rbac/eddy-user-rbac.yaml` mirrors the roles for installs without Helm.
 
 ## Ask AI
 

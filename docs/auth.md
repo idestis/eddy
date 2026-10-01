@@ -118,7 +118,7 @@ You need to be an owner of the organization (or have the GitHub App manager role
 
    Then run `helm upgrade --install eddy oci://ghcr.io/idestis/charts/eddy-hub -n eddy -f hub-values.yaml`.
 10. **Test it.** Open `publicURL` in a private window. You should land on GitHub's **Authorize** page for your app, then back in Eddy. Hover your name at the bottom of the sidebar, or open `/api/v1/me`, to check the groups: `eddy:authenticated`, `eddy:github:acme` and one `eddy:github:acme/<team>` per team. The hub's audit log has a `login` event with `"provider":"github"`.
-11. **Grant RBAC** in each workload cluster to the new groups. See [the example below](#from-identity-to-kubernetes-user-and-groups).
+11. **Grant RBAC** to the new groups in each workload cluster, with `userRBAC` in the agent values. See [the example below](#from-identity-to-kubernetes-user-and-groups).
 
 To rotate the secret, generate a second client secret in GitHub, update the Kubernetes Secret, restart the hub (`kubectl -n eddy rollout restart deploy/eddy-hub`), then delete the old secret in GitHub.
 
@@ -258,13 +258,24 @@ Every sign-in method goes through the same mapping. Its output is exactly what t
 3. Every user also gets `eddy:authenticated` (`groups.allUsers`), plus any `groups.static` entries for their email, login or user name.
 4. Duplicates are removed. Groups longer than `maxGroupLength` (128), and any beyond `maxGroups` (64), are dropped with a warning.
 
-Grant access in each workload cluster. `deploy/rbac/eddy-user-rbac.yaml` defines `eddy-viewer` (bound to `eddy:authenticated`) and `eddy-operator` (adds `patch` on Flux kinds, which reconcile, suspend and resume need). To let the GitHub team `acme/platform` operate:
+Grant access in each workload cluster through the agent chart's `userRBAC` values. The chart creates `eddy-viewer`, bound by default to `eddy:authenticated` (every signed-in user), and `eddy-operator` (adds `patch` on Flux kinds, which reconcile, suspend and resume need), bound to nobody until you name groups. To let the GitHub team `acme/platform` operate, set this in the agent values of each cluster:
+
+```yaml
+userRBAC:
+  operator:
+    groups: ["eddy:github:acme/platform"]
+```
+
+The same pattern works for `eddy:<okta group>`, `eddy:<Entra group object id>` and so on. `userRBAC.bindings` adds per-cluster grants and `userRBAC.namespaces` turns the bindings into RoleBindings in some namespaces only; see [install.md](install.md#5-grant-people-access-userrbac). If you changed `auth.groups.prefix`, set `userRBAC.groupPrefix` to match.
+
+Without Helm (or with `userRBAC.create: false`), apply `deploy/rbac/eddy-user-rbac.yaml` and bind the roles yourself. For example, a RoleBinding that lets the team operate in one namespace:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: eddy-operator-platform
+  namespace: team-a
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -274,8 +285,6 @@ subjects:
     kind: Group
     name: eddy:github:acme/platform
 ```
-
-The same pattern works for `eddy:<okta group>`, `eddy:<Entra group object id>` and so on. Use a RoleBinding to limit a team to some namespaces.
 
 ## Passwords: normal or break-glass
 

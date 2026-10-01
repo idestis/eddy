@@ -105,7 +105,8 @@ These places change together:
    External Secrets) also set `Kind.Preset`.
 2. The agent ClusterRole in `deploy/charts/eddy-agent`, inside the matching preset block for
    preset kinds. `internal/flux/chart_test.go` checks the verbs.
-3. The viewer and operator RBAC examples in `deploy/rbac/eddy-user-rbac.yaml`.
+3. The viewer and operator rules in the eddy-agent chart's `userRBAC` (`eddy-agent.userRBAC.rules` in
+   `templates/_helpers.tpl`) and `deploy/rbac/eddy-user-rbac.yaml`. A test checks they match.
 4. The kind label and icon in `web/src/lib/kinds.ts`, and the project in `internal/flux/catalog.go` for a new API group.
 
 ## Style

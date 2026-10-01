@@ -28,7 +28,7 @@ This is `deploy/kind/up.sh`. It is safe to re-run. It:
 4. Installs the CloudNativePG operator (pinned release) and a one-instance PostgreSQL `Cluster` named `eddy-db`.
 5. Installs two hub replicas with local users, the `eddy-db-app` Secret as the store DSN, and one registered cluster called `kind`.
 6. Installs two agent replicas, pointing at the in-cluster agents Service over TLS. The script generates a self-signed certificate and gives it to the agent as `hub.caBundle`, so nothing uses plain `ws://`.
-7. Applies the example user RBAC.
+7. Binds the agent chart's `eddy-operator` role to group `eddy:platform` (`userRBAC.operator.groups`).
 
 Then run the port-forward it prints:
 
@@ -200,7 +200,7 @@ ingress:
       alb.ingress.kubernetes.io/inbound-cidrs: 10.20.0.0/16   # only your workload clusters
 ```
 
-Agents in other VPCs or accounts reach the agents endpoint over VPC peering, Transit Gateway or PrivateLink. If it is ever internet-facing, restrict it by source CIDR: until mTLS arrives in v0.2, the token is the only other control.
+Agents in other VPCs or accounts reach the agents endpoint over VPC peering, Transit Gateway or PrivateLink. If it is ever internet-facing, restrict it by source CIDR: until mTLS arrives (planned for v1.1), the token is the only other control.
 
 If you prefer no ingress for agents, put an internal NLB in front of the `eddy-hub-agents` Service with `service.agents.annotations`, and let the hub terminate TLS itself with `agentTLS.secretName` (a `kubernetes.io/tls` Secret).
 
@@ -331,6 +331,7 @@ Options:
 | `watch.namespaces` | Limit what the agent watches. Empty means the whole cluster |
 | `impersonation.allowedGroupPrefixes` | Default `["eddy:"]`. `system:` is always refused |
 | `impersonation.groups` | Strictest: pin impersonation to an exact list of groups (RBAC `resourceNames`) |
+| `userRBAC.*` | The `eddy-viewer` and `eddy-operator` roles for people, and who gets them. See [step 5](#5-grant-people-access-userrbac) |
 | `networkPolicy.enabled` | Egress-only policy (DNS, Kubernetes API, hub) |
 | `replicaCount` | Default `2`. Every replica connects; the hub uses the oldest and keeps the others as hot standbys, so a lost pod or node does not disconnect the cluster. Each replica runs its own watches |
 | `limits.qps`, `limits.burst` | client-go QPS/burst for the whole Deployment (default 20/40). The chart divides them by `replicaCount` |
@@ -340,16 +341,67 @@ The agent's ServiceAccount is read-only (Flux kinds, Deployments, StatefulSets, 
 
 Within a minute the cluster shows as `Connected`: `kubectl get clusters`.
 
-### 5. Apply user RBAC
+### 5. Grant people access (`userRBAC`)
 
-Eddy shows what a person's own RBAC allows, so nobody sees anything until you grant it. Apply `deploy/rbac/eddy-user-rbac.yaml` in each workload cluster and adjust the subjects:
+Eddy shows what a person's own RBAC allows, so nobody sees anything until you grant it. The agent chart creates the roles and bindings for people in each workload cluster, from `userRBAC` in its values:
 
-- `eddy-viewer` (get, list, watch on Flux kinds, workloads, Jobs, CronJobs, pods, Services, Ingresses, HorizontalPodAutoscalers, PersistentVolumeClaims, `pods/log` and events) is bound to `eddy:authenticated`, which every signed-in user has.
+- `eddy-viewer`: get, list and watch on every kind Eddy watches (Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Pods, Jobs, CronJobs, Services, Ingresses, NetworkPolicies, HorizontalPodAutoscalers, PersistentVolumeClaims, PodDisruptionBudgets, StorageClasses, ServiceAccounts, Namespaces, events, and the kinds of enabled `watch.presets`), plus `pods/log`. Never Secrets or ConfigMaps.
+- `eddy-operator`: the same, plus `patch` on the Flux kinds, which is what reconcile, suspend and resume need.
 
-Objects a Kustomization applied whose kinds Eddy does not watch (ConfigMaps, Secrets, ServiceAccounts, RBAC, CRDs and so on) appear as **inventory-only** rows: kind, namespace and name from the Kustomization's `status.inventory`, never the object itself. A user sees such a row only if they can list its Kustomization and, for kinds Eddy knows (for example `secrets`), list that kind in the row's namespace. HelmReleases keep no inventory in their status, so their unwatched objects do not appear.
-- `eddy-operator` (adds `patch` on Flux kinds, which is what reconcile, suspend and resume need) is bound to `eddy:platform`.
+**The default binds `eddy-viewer` to `eddy:authenticated`.** Every signed-in user carries that group, so everyone who got past the hub's sign-in (its GitHub organization, OIDC domain or group allowlists) can read Flux and workload summaries in this cluster, but never Secrets. To grant nothing by default, set `userRBAC.viewer.groups: []` and bind your own groups. Nobody is an operator until you say so.
 
-Local user `alice` with `groups: [platform]` is Kubernetes user `local:alice` in group `eddy:platform` (plus `eddy:authenticated`). A GitHub user in team `acme/platform` is in `eddy:github:acme/platform`, and an OIDC user's groups claim maps the same way ([docs/auth.md](auth.md#from-identity-to-kubernetes-user-and-groups)). Namespace-scoped RoleBindings work too.
+Local user `alice` with `groups: [platform]` is Kubernetes user `local:alice` in group `eddy:platform` (plus `eddy:authenticated`). A GitHub user in team `acme/platform` is in `eddy:github:acme/platform`, and an OIDC user's groups claim maps the same way ([docs/auth.md](auth.md#from-identity-to-kubernetes-user-and-groups)).
+
+A GitHub team operates every cluster: put this in the values of each agent (or add it with `helm upgrade --reuse-values --set 'userRBAC.operator.groups={eddy:github:acme/platform}'`):
+
+```yaml
+userRBAC:
+  operator:
+    groups: ["eddy:github:acme/platform"]
+```
+
+An on-call group operates only `prod-eu`: add an extra binding in that cluster's agent values only. It renders a ClusterRoleBinding `eddy-operator-prod-eu`:
+
+```yaml
+userRBAC:
+  bindings:
+    - name: prod-eu
+      role: operator            # viewer or operator
+      groups: ["eddy:operators:prod-eu"]
+```
+
+A team limited to its own namespaces: with `namespaces`, every binding becomes a RoleBinding to the ClusterRole in each listed namespace (the namespaces must exist). Cluster-scoped kinds such as Namespaces, StorageClasses and NodePools are then not visible to those users. A binding can set its own `namespaces` (`[]` means cluster-wide):
+
+```yaml
+userRBAC:
+  viewer:
+    groups: ["eddy:team-a"]
+  operator:
+    groups: ["eddy:team-a-leads"]
+  namespaces: [team-a, team-a-jobs]
+  bindings:
+    - name: platform
+      role: operator
+      groups: ["eddy:platform"]
+      namespaces: []            # the platform team still operates the whole cluster
+```
+
+The chart refuses `system:` groups and users, the agent's own ServiceAccount, users matching `impersonation.denyUserPrefixes`, and groups that do not start with `userRBAC.groupPrefix` (default `eddy:`, set it to the hub's `auth.groups.prefix` if you changed that). The agent's own ClusterRole stays read-only whatever you put here. If you pin `impersonation.groups`, list every group you bind there too; the agent NOTES warn about any you missed. `userRBAC.extraRules.viewer` and `.operator` append rules (for example read on a CRD of your own), and `userRBAC.roleNames` renames the roles when several agent releases share a cluster.
+
+Objects a Kustomization applied whose kinds Eddy does not watch (ConfigMaps, Secrets, RBAC, CRDs and so on) appear as **inventory-only** rows: kind, namespace and name from the Kustomization's `status.inventory`, never the object itself. A user sees such a row only if they can list its Kustomization and, for kinds Eddy knows (for example `secrets`), list that kind in the row's namespace. HelmReleases keep no inventory in their status, so their unwatched objects do not appear.
+
+**Without Helm, or with your own RBAC.** Set `userRBAC.create: false` and apply `deploy/rbac/eddy-user-rbac.yaml` (the same roles, with every preset, plus example bindings) or your own bindings to the same rules.
+
+**Upgrading from an earlier chart** where you applied `deploy/rbac/eddy-user-rbac.yaml` by hand: Helm refuses to take over objects it did not create. Either let it adopt them (no gap in access), then set your old subjects in `userRBAC` before the upgrade:
+
+```sh
+for obj in clusterrole/eddy-viewer clusterrole/eddy-operator clusterrolebinding/eddy-viewer clusterrolebinding/eddy-operator; do
+  kubectl annotate --overwrite "$obj" meta.helm.sh/release-name=eddy-agent meta.helm.sh/release-namespace=eddy-system
+  kubectl label --overwrite "$obj" app.kubernetes.io/managed-by=Helm
+done
+```
+
+or keep managing them yourself with `userRBAC.create: false`.
 
 ### 6. Optional: sign in through your identity provider
 
@@ -507,7 +559,7 @@ Drop the last statement if you do not set a guardrail. The condition keeps the f
 
 ### 8. Kill switches
 
-Flip a feature off without a restart. The `eddy-runtime` ConfigMap is mounted into the hub and re-read continuously (Kubernetes propagates ConfigMap edits in about a minute):
+Flip a feature off without a restart. The `eddy-runtime` ConfigMap is mounted into the hub and re-read every 30 seconds; with Kubernetes' ConfigMap propagation, a change takes effect within about 90 seconds:
 
 ```sh
 kubectl -n eddy patch configmap eddy-runtime --type merge \
@@ -572,7 +624,7 @@ kubectl delete crd clusters.gitops.eddy.dev
 - **An added cluster stays `Pending`:** open its Connection panel. Rejected attempts say why: an expired or already used join token (regenerate one), a token for another cluster, or a protocol mismatch (upgrade the agent). No attempts at all means the agent never reached the hub: check `hub.url`, DNS, and outbound 443 from the workload cluster.
 - **Cluster stays `Disconnected`:** read the agent log (`kubectl -n eddy-system logs deploy/eddy-agent`). Usual causes are a wrong `hub.url`, a certificate the agent does not trust (set `hub.caBundle`), a token that does not match the `eddy-agent-<name>` Secret, or an ingress that closes idle WebSockets.
 - **Sign-in loops or fails with an Origin error:** `publicURL` must equal the address in the browser, including the scheme.
-- **The UI is empty:** the user has no RBAC in the cluster. Apply the example roles.
+- **The UI is empty:** the user has no RBAC in the cluster. Check `userRBAC` in that cluster's agent values (the agent NOTES list who got which role), or that your own bindings exist.
 - **Everyone got logged out:** the store is ephemeral (`store.driver: memory`), PostgreSQL crashed (its `UNLOGGED` session table is emptied on crash recovery), or the key Secret changed.
 - **A hub replica stays not ready:** read its `/readyz` on port 9090 (`kubectl -n eddy port-forward pod/<pod> 9090`, then `curl localhost:9090/readyz`). It names the missing peer link or unsynced cluster. Check that NetworkPolicies allow port 8444 between hub pods and that every replica logs the same `keyFingerprint`.
 - **Sign-in answers 503:** the hub cannot reach PostgreSQL. Reads of cluster data keep working; sign-in, token and thread writes and rate-limited actions fail closed until it is back.

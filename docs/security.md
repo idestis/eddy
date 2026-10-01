@@ -72,7 +72,7 @@ Sessions are stored server-side behind a `__Host-` cookie (Secure, HttpOnly, Sam
 PATs exist only for MCP clients such as Claude Code.
 
 - Format `eddy_pat_…`, so secret scanners can find a leaked one. Shown once, stored only as an HMAC, revocable in the UI.
-- Expiry is mandatory (30 days by default, at most 90 for local users and 30 for proxy users).
+- Expiry is mandatory (30 days by default, at most 90 for local users and 30 for proxy, GitHub and OIDC users).
 - Scope `read` (read tools and threads) or `operate` (adds reconcile, suspend, resume). A PAT can never do more than its owner's RBAC, because every call is still impersonated as the owner.
 - A PAT works only as `Authorization: Bearer` on `/mcp`. Anywhere else it gets a 401.
 - Operators can revoke everything for a person with `eddy-hub admin revoke --user <subject>`, or by disabling the local user.
@@ -91,26 +91,26 @@ PATs exist only for MCP clients such as Claude Code.
 
 ## Kill switches
 
-Edit the `eddy-runtime` ConfigMap (flags `aiEnabled`, `mcpEnabled`, `mcpWrites`, `mcpAllowLogs`). The hub checks them on every request and picks up changes within about 90 seconds, with no restart. A flag can only turn a feature off. See [install.md](install.md#7-kill-switches).
+Edit the `eddy-runtime` ConfigMap (flags `aiEnabled`, `mcpEnabled`, `mcpWrites`, `mcpAllowLogs`). The hub checks them on every request and picks up changes within about 90 seconds, with no restart. A flag can only turn a feature off. See [install.md](install.md#8-kill-switches).
 
 ## Network exposure
 
 - Two listeners and two Services: `:8080` (UI, API, MCP) and `:8443` (agents only). Each returns 404 for the other's routes. Both are `ClusterIP` by default.
-- Expose the UI through an **internal** ingress only. The agent endpoint gets its own internal hostname and TLS. If it must be internet-facing, restrict it by source CIDR, because until mTLS arrives in v0.2 the token is the main control.
+- Expose the UI through an **internal** ingress only. The agent endpoint gets its own internal hostname and TLS. If it must be internet-facing, restrict it by source CIDR, because until mTLS arrives (planned for v1.1) the token is the main control.
 - Agent tokens are 32 random bytes, bound to one cluster name, compared in constant time, and rotatable without downtime (`previousToken` in the Secret).
 - Optional NetworkPolicies ship in both charts (hub ingress and egress, agent egress only).
 - The UI is served with a strict CSP (no inline script), `frame-ancestors 'none'`, `nosniff` and `Referrer-Policy: no-referrer`.
 
 ## Audit
 
-Every write, MCP call and AI step is logged as a JSON line with user, groups, `via` (`ui`, `mcp` or `ai`), cluster, target and result. Ship the hub logs to your log store. The database copy is kept for 90 days by default. Because actions are impersonated, each cluster's own audit log also names the real user.
+Every write, MCP call and AI step is logged as a JSON line with user, groups, `via` (`web`, `mcp` or `askai`), cluster, target and result. Ship the hub logs to your log store. The database copy is kept for 90 days by default. Because actions are impersonated, each cluster's own audit log also names the real user.
 
 ## Hardening checklist
 
 - Set `publicURL` to the real https origin. Plain http is for local demos.
 - Keep the UI and agent ingress internal and restrict source CIDRs.
-- Use a persistent volume, and encrypt the StorageClass.
-- Grant `eddy:` groups only the RBAC people should have. Start from `deploy/rbac/eddy-user-rbac.yaml`, and use `operator` sparingly.
+- Encrypt the PostgreSQL storage and its backups.
+- Grant `eddy:` groups only the RBAC people should have. Start from the agent chart's `userRBAC` values (or `deploy/rbac/eddy-user-rbac.yaml` without Helm), and use `operator` sparingly.
 - Mark production clusters `protected: true`.
 - Pin agent impersonation with `impersonation.groups` and enable agent NetworkPolicies.
 - Prefer Bedrock with a geo-scoped inference profile and a guardrail when you use Ask AI.

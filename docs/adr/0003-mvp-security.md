@@ -179,7 +179,7 @@ ai:
   - nginx: `ingressClassName: nginx-internal`, `nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"`, `proxy-buffering: "off"` for SSE.
   - AWS ALB: `alb.ingress.kubernetes.io/scheme: internal`, `target-type: ip`, `load-balancer-attributes: idle_timeout.timeout_seconds=3600`, `listen-ports: '[{"HTTPS":443}]'`, `ssl-redirect: "443"`.
   - Apply `inbound-cidrs` or security groups for the corporate network.
-- **Agent endpoint:** workload clusters in other VPCs or accounts reach it through a separate internal NLB or ALB (VPC peering, Transit Gateway or PrivateLink), a separate hostname, and TLS. This path bypasses the auth proxy. It carries long idle timeouts and a WebSocket upgrade. If it must be internet-facing, restrict it by source CIDR, because the token is then the only control until mTLS arrives in v0.2. The hub refuses agents over plain HTTP unless it is in dev mode.
+- **Agent endpoint:** workload clusters in other VPCs or accounts reach it through a separate internal NLB or ALB (VPC peering, Transit Gateway or PrivateLink), a separate hostname, and TLS. This path bypasses the auth proxy. It carries long idle timeouts and a WebSocket upgrade. If it must be internet-facing, restrict it by source CIDR, because the token is then the only control until mTLS arrives (planned for v1.1). The hub refuses agents over plain HTTP unless it is in dev mode.
 - **NetworkPolicy:** the UI port accepts traffic only from the ingress or proxy namespace. The agent port accepts traffic only from the agent ingress. Egress goes to the kube API, DNS, the AI provider endpoint and the IdP proxy.
 
 ## 8. Agent token auth

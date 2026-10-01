@@ -106,4 +106,4 @@ Operators can stop MCP instantly without a restart by editing the `eddy-runtime`
 - `mcpWrites: false` keeps reads and threads but refuses reconcile, suspend and resume.
 - `mcpAllowLogs: false` disables `get_logs`.
 
-See [install.md](install.md#7-kill-switches) for the command.
+See [install.md](install.md#8-kill-switches) for the command.
