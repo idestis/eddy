@@ -19,7 +19,7 @@ func retention(r config.Retention) store.Retention {
 	return store.Retention{
 		AuditDays:           r.AuditDays,
 		ResolvedThreadsDays: r.ResolvedThreadsDays,
-		AskThreadsDays:      r.AskThreadsDays,
+		ChatDays:            r.ChatDays,
 		TokenPurgeAfter:     tokenPurgeAfter,
 	}
 }
@@ -42,7 +42,7 @@ func runJanitor(ctx context.Context, st store.Store, r config.Retention, log *sl
 			log.Error("prune failed", "err", err)
 		case err == nil && stats != (store.PruneStats{}):
 			log.Info("pruned expired data", "sessions", stats.Sessions, "tokens", stats.Tokens,
-				"audit", stats.Audit, "threads", stats.Threads, "rateLimits", stats.RateLimits, "agentSessions", stats.AgentSessions)
+				"audit", stats.Audit, "threads", stats.Threads, "chats", stats.Chats, "rateLimits", stats.RateLimits, "agentSessions", stats.AgentSessions)
 		}
 		select {
 		case <-ctx.Done():

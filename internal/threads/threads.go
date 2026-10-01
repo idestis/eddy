@@ -72,9 +72,9 @@ type CreateInput struct {
 	Ref   store.ResourceRef
 	Title string
 	Body  string
-	// Type defaults to store.ThreadDiscussion.
+	// Type defaults to store.ThreadDiscussion, the only type.
 	Type store.ThreadType
-	// Visibility defaults to private for ask threads and resource otherwise.
+	// Visibility defaults to resource.
 	Visibility store.Visibility
 	// Author defaults to AuthorFor(p, ""). Subject and Via are always taken
 	// from the principal.
@@ -200,15 +200,12 @@ func (s *Service) Create(ctx context.Context, p identity.Principal, in CreateInp
 	if typ == "" {
 		typ = store.ThreadDiscussion
 	}
-	if typ != store.ThreadDiscussion && typ != store.ThreadAsk {
+	if typ != store.ThreadDiscussion {
 		return store.Thread{}, store.Message{}, fmt.Errorf("%w: unknown thread type %q", ErrInvalid, typ)
 	}
 	vis := in.Visibility
 	if vis == "" {
 		vis = store.VisibilityResource
-		if typ == store.ThreadAsk {
-			vis = store.VisibilityPrivate
-		}
 	}
 	if vis != store.VisibilityResource && vis != store.VisibilityPrivate {
 		return store.Thread{}, store.Message{}, fmt.Errorf("%w: unknown visibility %q", ErrInvalid, vis)

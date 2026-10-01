@@ -258,7 +258,7 @@ store:
   driver: sqlite            # sqlite | memory (dev only) | more drivers per ADR-0004
   sqlite: {path: /var/lib/eddy/eddy.db}
   postgres: {existingSecret: "", key: dsn}
-  retention: {auditDays: 90, sessionIdle: 12h, sessionMax: 168h, tokenMaxTTL: 2160h, resolvedThreadsDays: 0, askThreadsDays: 30}
+  retention: {auditDays: 90, sessionIdle: 12h, sessionMax: 168h, tokenMaxTTL: 2160h, resolvedThreadsDays: 0, chatDays: 30}  # askThreadsDays became chatDays in ADR-0007
 persistence:
   enabled: true
   storageClass: ""          # "" = cluster default, "-" = no class (static PV)

@@ -159,7 +159,7 @@ func PrepareThread(t store.Thread, first store.Message) (store.Thread, store.Mes
 		return t, first, errors.New("store: thread ref.cluster is required")
 	}
 	switch t.Type {
-	case store.ThreadDiscussion, store.ThreadAsk:
+	case store.ThreadDiscussion:
 	default:
 		return t, first, fmt.Errorf("store: invalid thread type %q", t.Type)
 	}
@@ -196,6 +196,89 @@ func PrepareThread(t store.Thread, first store.Message) (store.Thread, store.Mes
 		return t, first, err
 	}
 	return t, first, nil
+}
+
+// Limits on the fields of a chat context reference.
+const (
+	MaxRefGroupLen     = 253
+	MaxRefKindLen      = 63
+	MaxRefNamespaceLen = 253
+	MaxRefNameLen      = 253
+)
+
+// CheckChatContext validates a chat's context: at most store.MaxChatContext
+// references, each with a cluster, and with no group, namespace or name when
+// the kind is empty (a whole cluster). Every violation wraps store.ErrInvalid.
+func CheckChatContext(refs []store.ResourceRef) error {
+	if len(refs) > store.MaxChatContext {
+		return fmt.Errorf("%w: chat context has more than %d references", store.ErrInvalid, store.MaxChatContext)
+	}
+	for i, r := range refs {
+		switch {
+		case r.Cluster == "":
+			return fmt.Errorf("%w: chat context[%d]: cluster is required", store.ErrInvalid, i)
+		case r.Kind == "" && (r.Group != "" || r.Namespace != "" || r.Name != ""):
+			return fmt.Errorf("%w: chat context[%d]: a cluster reference must not set group, namespace or name", store.ErrInvalid, i)
+		case r.Kind != "" && r.Name == "":
+			return fmt.Errorf("%w: chat context[%d]: name is required when kind is set", store.ErrInvalid, i)
+		case len(r.Cluster) > MaxClusterNameLen || len(r.Group) > MaxRefGroupLen || len(r.Kind) > MaxRefKindLen ||
+			len(r.Namespace) > MaxRefNamespaceLen || len(r.Name) > MaxRefNameLen:
+			return fmt.Errorf("%w: chat context[%d]: field too long", store.ErrInvalid, i)
+		case strings.ContainsRune(r.Cluster+r.Group+r.Kind+r.Namespace+r.Name, 0) ||
+			!utf8.ValidString(r.Cluster+r.Group+r.Kind+r.Namespace+r.Name):
+			return fmt.Errorf("%w: chat context[%d]: invalid characters", store.ErrInvalid, i)
+		}
+	}
+	return nil
+}
+
+// ChatContext returns a copy of refs, or nil when it is empty.
+func ChatContext(refs []store.ResourceRef) []store.ResourceRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]store.ResourceRef, len(refs))
+	copy(out, refs)
+	return out
+}
+
+// CheckChatTitle validates a chat title: valid UTF-8 without NUL bytes and
+// at most store.MaxTitleLen characters (store.ErrLimit).
+func CheckChatTitle(title string) error {
+	if !utf8.ValidString(title) || strings.ContainsRune(title, 0) {
+		return fmt.Errorf("%w: chat title is not valid text", store.ErrInvalid)
+	}
+	if utf8.RuneCountInString(title) > store.MaxTitleLen {
+		return fmt.Errorf("%w: title longer than %d characters", store.ErrLimit, store.MaxTitleLen)
+	}
+	return nil
+}
+
+// PrepareChat validates and normalises a chat for Chats.Create, generating
+// its id when missing and setting CreatedAt (now when zero), UpdatedAt and
+// MessageCount.
+func PrepareChat(c store.Chat) (store.Chat, error) {
+	if c.Owner == "" {
+		return c, fmt.Errorf("%w: chat owner is required", store.ErrInvalid)
+	}
+	if err := CheckChatTitle(c.Title); err != nil {
+		return c, err
+	}
+	if err := CheckChatContext(c.Context); err != nil {
+		return c, err
+	}
+	if c.ID == "" {
+		id, err := NewID()
+		if err != nil {
+			return c, err
+		}
+		c.ID = id
+	}
+	c.CreatedAt = NowIfZero(c.CreatedAt)
+	c.UpdatedAt = c.CreatedAt
+	c.MessageCount = 0
+	c.Context = ChatContext(c.Context)
+	return c, nil
 }
 
 // PrepareMessage validates and normalises a message for AddMessage.

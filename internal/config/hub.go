@@ -349,7 +349,7 @@ type Postgres struct {
 type Retention struct {
 	AuditDays           int `json:"auditDays"`           // default 90
 	ResolvedThreadsDays int `json:"resolvedThreadsDays"` // default 0 (keep)
-	AskThreadsDays      int `json:"askThreadsDays"`      // default 30
+	ChatDays            int `json:"chatDays"`            // default 30 (ADR-0007)
 }
 
 type AI struct {
@@ -560,7 +560,7 @@ func (h *Hub) applyDefaults() {
 	def(&h.Store.Postgres.DSNEnv, "EDDY_DATABASE_URL")
 	defI(&h.Store.Postgres.MaxOpenConns, 10)
 	defI(&h.Store.Retention.AuditDays, 90)
-	defI(&h.Store.Retention.AskThreadsDays, 30)
+	defI(&h.Store.Retention.ChatDays, 30)
 
 	def(&h.AI.Provider, "anthropic")
 	def(&h.AI.Anthropic.Model, "claude-haiku-4-5-20251001")

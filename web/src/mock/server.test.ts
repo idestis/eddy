@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  AskResponse,
   AttentionResponse,
+  Chat,
+  ChatDetail,
   ClusterInfo,
   ConnectionInfo,
   CreatedCluster,
@@ -10,6 +13,7 @@ import type {
   JobsSnapshot,
   KindsResponse,
   List,
+  Page,
   Resource,
   ResourceSnapshot,
   SearchResponse,
@@ -336,5 +340,64 @@ describe("mock paged list", () => {
       "/api/v1/clusters/prod-eu/resources?view=index&status=failed",
     );
     expect(failed.data.items.every((r) => r.status === "failed")).toBe(true);
+  });
+});
+
+describe("mock Ask AI chats", () => {
+  const apps = {
+    cluster: "staging",
+    group: "kustomize.toolkit.fluxcd.io",
+    kind: "Kustomization",
+    namespace: "flux-system",
+    name: "apps",
+  };
+  const gone = { ...apps, name: "no-such-thing" };
+
+  it("creates a chat on the first ask, appends after, and reports hidden context", async () => {
+    const hub = new MockHub();
+    const first = await call<AskResponse>(hub, "POST", "/api/v1/ai/ask", {
+      question: "Why is apps slow?",
+      context: [apps, gone],
+    });
+    expect(first.status).toBe(200);
+    const id = first.data.chat.id;
+    expect(first.data.chat).toMatchObject({
+      owner: "local:dana",
+      title: "Why is apps slow?",
+      messageCount: 2,
+    });
+    expect(first.data.contextStatus).toEqual(["ok", "hidden"]);
+    expect(first.data.message.body).toContain("KS flux-system/apps");
+    expect(first.data.message.body).not.toContain("no-such-thing");
+
+    const next = await call<AskResponse>(hub, "POST", "/api/v1/ai/ask", { chatId: id, question: "and now?" });
+    expect(next.data.chat.context).toHaveLength(2);
+    const detail = await call<ChatDetail>(hub, "GET", `/api/v1/ai/chats/${id}`);
+    expect(detail.data.messages.map((m) => m.body.slice(0, 8))).toEqual([
+      "Why is a",
+      expect.any(String),
+      "and now?",
+      expect.any(String),
+    ]);
+    const list = await call<Page<Chat>>(hub, "GET", "/api/v1/ai/chats");
+    expect(list.data.items[0]?.id).toBe(id);
+
+    expect((await call(hub, "POST", "/api/v1/ai/ask", { chatId: "ch_nope", question: "x" })).status).toBe(
+      404,
+    );
+    expect((await call(hub, "POST", "/api/v1/ai/ask", { question: "x".repeat(9000) })).status).toBe(400);
+    const many = Array.from({ length: 11 }, (_, i) => ({ ...apps, name: `a${i}` }));
+    expect((await call(hub, "POST", "/api/v1/ai/ask", { question: "x", context: many })).status).toBe(400);
+  });
+
+  it("renames, replaces the context and deletes", async () => {
+    const hub = new MockHub();
+    const created = await call<Chat>(hub, "POST", "/api/v1/ai/chats", { context: [apps] });
+    expect(created.status).toBe(201);
+    const id = created.data.id;
+    const renamed = await call<Chat>(hub, "PATCH", `/api/v1/ai/chats/${id}`, { title: "Apps", context: [] });
+    expect(renamed.data).toMatchObject({ title: "Apps", context: [] });
+    expect((await call(hub, "DELETE", `/api/v1/ai/chats/${id}`)).status).toBe(204);
+    expect((await call(hub, "GET", `/api/v1/ai/chats/${id}`)).status).toBe(404);
   });
 });

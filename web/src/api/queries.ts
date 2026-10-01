@@ -50,6 +50,10 @@ export const keys = {
   threadsAll: ["threads"] as const,
   threads: (q: api.ThreadQuery) => ["threads", "list", q] as const,
   thread: (id: string) => ["threads", "detail", id] as const,
+  /** Ask AI chats (ADR-0007): the owner's list and each chat with its messages. */
+  chatsAll: ["chats"] as const,
+  chatList: ["chats", "list"] as const,
+  chat: (id: string) => ["chats", "detail", id] as const,
   tokens: ["tokens"] as const,
   audit: ["audit"] as const,
 };

@@ -57,8 +57,9 @@
           "properties": {
             "auditDays": {"type": "integer", "minimum": 1},
             "resolvedThreadsDays": {"type": "integer", "minimum": 0},
-            "askThreadsDays": {"type": "integer", "minimum": 0}
-          }
+            "chatDays": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
         }
       }
     },

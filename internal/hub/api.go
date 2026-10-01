@@ -79,6 +79,11 @@ func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
 	m.HandleFunc("POST /api/v1/threads/{id}/reopen", a.handleReopen)
 	m.HandleFunc("DELETE /api/v1/threads/{id}", a.handleDeleteThread)
 
+	m.HandleFunc("GET /api/v1/ai/chats", a.handleListChats)
+	m.HandleFunc("POST /api/v1/ai/chats", a.handleCreateChat)
+	m.HandleFunc("GET /api/v1/ai/chats/{id}", a.handleGetChat)
+	m.HandleFunc("PATCH /api/v1/ai/chats/{id}", a.handlePatchChat)
+	m.HandleFunc("DELETE /api/v1/ai/chats/{id}", a.handleDeleteChat)
 	m.HandleFunc("POST /api/v1/ai/ask", a.handleAsk)
 	m.HandleFunc("GET /api/v1/audit", a.handleAudit)
 	a.auth.TokenRoutes(m)

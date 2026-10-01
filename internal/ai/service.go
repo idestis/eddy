@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/idestis/eddy/internal/audit"
 	"github.com/idestis/eddy/internal/config"
@@ -34,32 +35,40 @@ var (
 const (
 	// MaxQuestionBytes caps the user's question.
 	MaxQuestionBytes = 8 << 10
-	// historyMessages is how many earlier thread messages are sent as context.
+	// historyMessages is how many earlier chat messages are sent as context.
 	historyMessages = 10
 	// historyMessageBytes caps each earlier message.
 	historyMessageBytes = 2 << 10
-	// maxHistoryPages bounds how far Ask pages through a long thread.
+	// maxHistoryPages bounds how far Ask pages through a long chat; with
+	// historyPageSize it covers store.MaxMessagesPerChat.
 	maxHistoryPages = 5
 	historyPageSize = 200
+	// minContextBytes is the smallest share of the context budget one
+	// context reference gets.
+	minContextBytes = 1 << 10
+	// maxAuditRefLen caps one context reference in the audit detail, so
+	// MaxChatContext of them fit the 4 KiB detail.
+	maxAuditRefLen = 200
 	// toolTimeout bounds one tool call.
 	toolTimeout = 15 * time.Second
 	// maxStepArgsBytes caps the recorded arguments of one step.
 	maxStepArgsBytes = 1 << 10
-	// titleRunes is the length of an ask thread title.
-	titleRunes = 80
 )
 
 // AskRequest is the body of POST /api/v1/ai/ask.
 type AskRequest struct {
-	Cluster    string `json:"cluster"`
-	ResourceID string `json:"resourceId,omitempty"`
-	ThreadID   string `json:"threadId,omitempty"`
-	Question   string `json:"question"`
+	// ChatID continues one of the caller's chats. Without it a new chat is
+	// created with Context and a title taken from the question.
+	ChatID string `json:"chatId,omitempty"`
+	// Context, when set, replaces the chat's context before the question is
+	// asked (nil keeps it). The hub canonicalises the references.
+	Context  *[]store.ResourceRef `json:"context,omitempty"`
+	Question string               `json:"question"`
 	// Attachments are log lines or a YAML excerpt the user selected in the
 	// UI. They are redacted, capped and wrapped as untrusted data, never
-	// treated as part of the question. Log attachments need ai.allowLogs;
-	// YAML attachments do not, since get_resource already exposes the same
-	// redacted YAML to the model.
+	// treated as part of the question, and never stored. Log attachments
+	// need ai.allowLogs; YAML attachments do not, since get_resource already
+	// exposes the same redacted YAML to the model.
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
@@ -80,10 +89,22 @@ const (
 
 // AskResponse is the reply to an ask.
 type AskResponse struct {
-	ThreadID string        `json:"threadId"`
-	Message  store.Message `json:"message"`
-	Steps    []Step        `json:"steps"`
+	Chat    store.Chat    `json:"chat"`
+	Message store.Message `json:"message"`
+	Steps   []Step        `json:"steps"`
+	// ContextStatus has one entry per Chat.Context reference, in order.
+	ContextStatus []ContextStatus `json:"contextStatus"`
 }
+
+// ContextStatus says whether a context reference reached the model.
+type ContextStatus string
+
+const (
+	// ContextOK: the user may see the reference; its summary was sent.
+	ContextOK ContextStatus = "ok"
+	// ContextHidden: the user may no longer see it; nothing was sent.
+	ContextHidden ContextStatus = "hidden"
+)
 
 // Step records one tool call made while answering. Args are redacted.
 type Step struct {
@@ -109,7 +130,7 @@ type Service struct {
 	cfg          config.AI
 	provider     Provider
 	fleet        fleet.Service
-	threads      ThreadStore
+	chats        store.Chats
 	audit        *audit.Recorder
 	flags        runtimeflags.Source
 	groupForKind func(string) (string, bool)
@@ -120,13 +141,14 @@ type Service struct {
 }
 
 // New returns an Ask AI service. When cfg.Enabled is false no provider is
-// built and Ask always returns fleet.ErrDisabled. groupForKind resolves the
-// API group of a kind name the model supplies (the hub passes a wrapper over
-// flux.KindByName).
-func New(cfg config.AI, fl fleet.Service, th ThreadStore, rec *audit.Recorder, flags runtimeflags.Source,
+// built and Ask always returns fleet.ErrDisabled. chats stores the
+// conversations; every call passes the asking user as the owner.
+// groupForKind resolves the API group of a kind name the model supplies (the
+// hub passes a wrapper over flux.KindByName).
+func New(cfg config.AI, fl fleet.Service, chats store.Chats, rec *audit.Recorder, flags runtimeflags.Source,
 	groupForKind func(string) (string, bool), log *slog.Logger, opts ...Option) (*Service, error) {
-	if fl == nil || th == nil || flags == nil || groupForKind == nil {
-		return nil, errors.New("ai: fleet, threads, flags and groupForKind are required")
+	if fl == nil || chats == nil || flags == nil || groupForKind == nil {
+		return nil, errors.New("ai: fleet, chats, flags and groupForKind are required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -135,7 +157,7 @@ func New(cfg config.AI, fl fleet.Service, th ThreadStore, rec *audit.Recorder, f
 	s := &Service{
 		cfg:          cfg,
 		fleet:        fl,
-		threads:      th,
+		chats:        chats,
 		audit:        rec,
 		flags:        flags,
 		groupForKind: groupForKind,
@@ -206,20 +228,25 @@ func (s *Service) Model() string {
 	return ""
 }
 
-// Ask answers r.Question as p. It stores the question and the answer in a
-// private "ask" thread and returns the answer with the tool steps taken.
+// Ask answers r.Question as p in one of p's chats, creating the chat when
+// r.ChatID is empty. It stores the question and the answer (never the
+// attachments) and returns the answer with the tool steps taken and the
+// visibility of each context reference.
 func (s *Service) Ask(ctx context.Context, p identity.Principal, r AskRequest) (AskResponse, error) {
 	if !s.Enabled() {
 		return AskResponse{}, fleet.ErrDisabled
 	}
+	if p.User == "" {
+		return AskResponse{}, fleet.ErrForbidden
+	}
 	r.Question = strings.TrimSpace(r.Question)
 	switch {
-	case r.Cluster == "":
-		return AskResponse{}, fmt.Errorf("%w: cluster is required", ErrInvalid)
 	case r.Question == "":
 		return AskResponse{}, fmt.Errorf("%w: question is required", ErrInvalid)
 	case len(r.Question) > MaxQuestionBytes:
 		return AskResponse{}, fmt.Errorf("%w: question exceeds %d bytes", ErrInvalid, MaxQuestionBytes)
+	case r.Context != nil && len(*r.Context) > store.MaxChatContext:
+		return AskResponse{}, fmt.Errorf("%w: at most %d context references", ErrInvalid, store.MaxChatContext)
 	}
 	if err := s.checkAttachments(r.Attachments); err != nil {
 		return AskResponse{}, err
@@ -232,13 +259,18 @@ func (s *Service) Ask(ctx context.Context, p identity.Principal, r AskRequest) (
 	asAI := p
 	asAI.Via = identity.ViaAskAI
 	asAI.Client = s.provider.Model()
+	run := &askRun{svc: s, human: human, asAI: asAI, req: r, nonce: newNonce()}
+	run.chat.ID = r.ChatID
+	if r.Context != nil {
+		run.chat.Context = *r.Context
+	}
 
 	if s.asks.Add(1)%256 == 0 {
 		s.limiter.sweep()
 	}
 	release, ok := s.limiter.acquire(p.User)
 	if !ok {
-		s.record(ctx, asAI, store.ResourceRef{Cluster: r.Cluster}, store.AuditDenied, map[string]any{"reason": "rate_limited"})
+		s.record(ctx, asAI, run.target(), store.AuditDenied, run.auditDetail(ErrRateLimited))
 		return AskResponse{}, ErrRateLimited
 	}
 	defer release()
@@ -246,11 +278,11 @@ func (s *Service) Ask(ctx context.Context, p identity.Principal, r AskRequest) (
 		_, ok, err := s.rl.Hit(ctx, "ai:ask:"+p.User, time.Hour, s.cfg.Limits.PerUserPerHour, time.Now())
 		if err != nil {
 			s.log.Error("Ask AI quota unavailable; refusing", "err", err)
-			s.record(ctx, asAI, store.ResourceRef{Cluster: r.Cluster}, store.AuditError, map[string]any{"reason": "quota_unavailable"})
+			s.record(ctx, asAI, run.target(), store.AuditError, run.auditDetail(ErrUnavailable))
 			return AskResponse{}, ErrUnavailable
 		}
 		if !ok {
-			s.record(ctx, asAI, store.ResourceRef{Cluster: r.Cluster}, store.AuditDenied, map[string]any{"reason": "rate_limited"})
+			s.record(ctx, asAI, run.target(), store.AuditDenied, run.auditDetail(ErrRateLimited))
 			return AskResponse{}, ErrRateLimited
 		}
 	}
@@ -258,7 +290,6 @@ func (s *Service) Ask(ctx context.Context, p identity.Principal, r AskRequest) (
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Limits.Timeout.Duration)
 	defer cancel()
 
-	run := &askRun{svc: s, human: human, asAI: asAI, req: r, nonce: newNonce()}
 	resp, err := run.do(ctx)
 	result := store.AuditOK
 	switch {
@@ -267,7 +298,7 @@ func (s *Service) Ask(ctx context.Context, p identity.Principal, r AskRequest) (
 	case err != nil:
 		result = store.AuditError
 	}
-	s.record(ctx, asAI, run.target, result, run.auditDetail(err))
+	s.record(ctx, asAI, run.target(), result, run.auditDetail(err))
 	if err != nil {
 		return AskResponse{}, err
 	}
@@ -290,10 +321,11 @@ type askRun struct {
 	req   AskRequest
 	nonce string
 
-	target     store.ResourceRef
-	thread     store.Thread
+	chat       store.Chat
 	history    []store.Message
-	summary    *model.Resource
+	status     []ContextStatus
+	summaries  []contextSummary // visible references only, in context order
+	cluster    string           // default cluster for tools
 	steps      []Step
 	usage      Usage
 	rounds     int
@@ -302,49 +334,29 @@ type askRun struct {
 	stop       StopReason
 }
 
+// contextSummary is what the model is told about one visible context
+// reference: the cache summary of a resource, or a cluster's overview.
+type contextSummary struct {
+	Ref     store.ResourceRef  `json:"ref"`
+	Cluster *model.ClusterInfo `json:"cluster,omitempty"`
+	Summary *model.Resource    `json:"resource,omitempty"`
+	Error   string             `json:"error,omitempty"`
+}
+
 func (a *askRun) do(ctx context.Context) (AskResponse, error) {
 	s := a.svc
-	a.target = store.ResourceRef{Cluster: a.req.Cluster}
-	if a.req.ResourceID != "" {
-		ref, err := model.ParseRef(a.req.ResourceID)
-		if err != nil {
-			return AskResponse{}, fmt.Errorf("%w: %v", ErrInvalid, err)
-		}
-		a.target = toStoreRef(a.req.Cluster, ref)
+	if err := a.openChat(ctx); err != nil {
+		return AskResponse{}, err
 	}
+	a.checkContext(ctx)
 
-	if a.req.ThreadID != "" {
-		if err := a.loadThread(ctx); err != nil {
-			return AskResponse{}, err
-		}
+	question := store.Message{
+		Author:    store.Author{Type: store.AuthorHuman, Subject: a.human.User, Display: a.human.Display, Via: string(a.human.Via)},
+		Body:      a.req.Question,
+		CreatedAt: time.Now(),
 	}
-
-	// The summary doubles as the RBAC check on the target: a user who
-	// cannot get the resource gets ErrForbidden or ErrNotFound here.
-	if a.target.Kind != "" {
-		res, err := s.fleet.Get(ctx, a.asAI, a.target.Cluster, toModelRef(a.target))
-		if err != nil {
-			return AskResponse{}, fmt.Errorf("ai: get %s: %w", a.target.Kind, err)
-		}
-		a.summary = &res
-	}
-
-	author := store.Author{Type: store.AuthorHuman, Subject: a.human.User, Display: a.human.Display, Via: string(a.human.Via)}
-	if a.thread.ID == "" {
-		t, _, err := s.threads.Create(ctx, a.human, CreateInput{
-			Ref:        a.target,
-			Title:      firstRunes(a.req.Question, titleRunes),
-			Body:       a.req.Question,
-			Type:       store.ThreadAsk,
-			Visibility: store.VisibilityPrivate,
-			Author:     author,
-		})
-		if err != nil {
-			return AskResponse{}, fmt.Errorf("ai: create thread: %w", err)
-		}
-		a.thread = t
-	} else if _, err := s.threads.Reply(ctx, a.human, a.thread.ID, a.req.Question, author, nil); err != nil {
-		return AskResponse{}, fmt.Errorf("ai: add question: %w", err)
+	if _, err := s.chats.AddMessage(ctx, a.human.User, a.chat.ID, question); err != nil {
+		return AskResponse{}, chatErr("add question", err)
 	}
 
 	answer, err := a.loop(ctx)
@@ -364,8 +376,7 @@ func (a *askRun) do(ctx context.Context) (AskResponse, error) {
 	if err != nil {
 		return AskResponse{}, fmt.Errorf("ai: encode meta: %w", err)
 	}
-	// The threads service takes the author's subject and Via from the
-	// principal, so the answer is written as the askai principal.
+	// The answer is written for the asking human (the owner) via askai.
 	aiAuthor := store.Author{
 		Type:    store.AuthorAI,
 		Subject: a.asAI.User,
@@ -373,52 +384,191 @@ func (a *askRun) do(ctx context.Context) (AskResponse, error) {
 		Via:     string(identity.ViaAskAI),
 		Client:  s.provider.Model(),
 	}
-	msg, err := s.threads.Reply(context.WithoutCancel(ctx), a.asAI, a.thread.ID, answer, aiAuthor, meta)
+	wctx := context.WithoutCancel(ctx)
+	msg, err := s.chats.AddMessage(wctx, a.human.User, a.chat.ID, store.Message{Author: aiAuthor, Body: answer, Meta: meta, CreatedAt: time.Now()})
 	if err != nil {
-		return AskResponse{}, fmt.Errorf("ai: store answer: %w", err)
+		return AskResponse{}, chatErr("store answer", err)
+	}
+	if fresh, err := s.chats.Get(wctx, a.human.User, a.chat.ID); err == nil {
+		a.chat = fresh
+	} else {
+		a.chat.MessageCount += 2
+		a.chat.UpdatedAt = msg.CreatedAt
 	}
 	steps := a.steps
 	if steps == nil {
 		steps = []Step{}
 	}
-	return AskResponse{ThreadID: a.thread.ID, Message: msg, Steps: steps}, nil
+	return AskResponse{Chat: a.chat, Message: msg, Steps: steps, ContextStatus: a.status}, nil
 }
 
-// loadThread loads an existing ask thread, which must be the user's own and
-// target the requested cluster (and resource, when one is given).
-func (a *askRun) loadThread(ctx context.Context) error {
+// openChat loads the caller's chat (with its recent history) and applies a
+// new context, or creates the chat. Another user's chat is ErrNotFound.
+func (a *askRun) openChat(ctx context.Context) error {
+	s := a.svc
+	owner := a.human.User
+	if a.req.ChatID == "" {
+		c, err := s.chats.Create(ctx, store.Chat{Owner: owner, Title: chatTitle(a.req.Question), Context: a.chat.Context})
+		if err != nil {
+			return chatErr("create chat", err)
+		}
+		a.chat = c
+		return nil
+	}
+	c, err := s.chats.Get(ctx, owner, a.req.ChatID)
+	if err != nil {
+		return chatErr("load chat", err)
+	}
+	a.chat = c
+	if c.MessageCount+2 > store.MaxMessagesPerChat {
+		return fmt.Errorf("ai: chat is full (%d messages); start a new chat: %w", store.MaxMessagesPerChat, store.ErrConflict)
+	}
+	if err := a.loadHistory(ctx); err != nil {
+		return err
+	}
+	var u store.ChatUpdate
+	if a.req.Context != nil {
+		refs := *a.req.Context
+		u.Context = &refs
+	}
+	if c.Title == "" {
+		// A chat created empty (POST /api/v1/ai/chats) is named by its
+		// first question.
+		title := chatTitle(a.req.Question)
+		u.Title = &title
+	}
+	if u.Context != nil || u.Title != nil {
+		if c, err = s.chats.Update(ctx, owner, a.chat.ID, u); err != nil {
+			return chatErr("update chat", err)
+		}
+		a.chat = c
+	}
+	return nil
+}
+
+// loadHistory keeps the last historyMessages messages of the chat.
+func (a *askRun) loadHistory(ctx context.Context) error {
 	var all []store.Message
 	cursor := ""
-	for page := 0; page < maxHistoryPages; page++ {
-		t, msgs, next, err := a.svc.threads.Get(ctx, a.human, a.req.ThreadID, cursor, historyPageSize)
+	for range maxHistoryPages {
+		msgs, next, err := a.svc.chats.Messages(ctx, a.human.User, a.chat.ID, cursor, historyPageSize)
 		if err != nil {
-			return fmt.Errorf("ai: load thread: %w", err)
+			return chatErr("load history", err)
 		}
-		a.thread = t
 		all = append(all, msgs...)
+		if len(all) > historyMessages {
+			all = append(all[:0:0], all[len(all)-historyMessages:]...)
+		}
 		if next == "" {
 			break
 		}
 		cursor = next
 	}
-	t := a.thread
-	if t.Type != store.ThreadAsk || t.CreatedBy.Subject != a.human.User {
-		return fmt.Errorf("%w: thread is not one of your Ask AI conversations", ErrInvalid)
-	}
-	if t.Ref.Cluster != a.req.Cluster || a.req.ResourceID != "" && t.Ref != a.target {
-		return fmt.Errorf("%w: thread belongs to a different target", ErrInvalid)
-	}
-	a.target = t.Ref
-	if len(all) > historyMessages {
-		all = all[len(all)-historyMessages:]
-	}
 	a.history = all
 	return nil
 }
 
+// checkContext decides, as the asking user, which context references are
+// still visible, and fetches the summaries of those that are. Anything it
+// cannot decide is treated as hidden (fail closed).
+func (a *askRun) checkContext(ctx context.Context) {
+	s := a.svc
+	refs := a.chat.Context
+	a.status = make([]ContextStatus, len(refs))
+	var (
+		clusters map[string]model.ClusterInfo
+		listErr  error
+	)
+	for i, ref := range refs {
+		a.status[i] = ContextHidden
+		sum := contextSummary{Ref: ref}
+		if ref.Kind == "" {
+			if clusters == nil && listErr == nil {
+				var list []model.ClusterInfo
+				if list, listErr = s.fleet.Clusters(ctx, a.asAI); listErr != nil {
+					s.log.DebugContext(ctx, "ai context: list clusters", "err", listErr)
+				}
+				clusters = make(map[string]model.ClusterInfo, len(list))
+				for _, ci := range list {
+					clusters[ci.Name] = ci
+				}
+			}
+			ci, ok := clusters[ref.Cluster]
+			if !ok {
+				continue
+			}
+			sum.Cluster = &ci
+		} else {
+			mref := toModelRef(ref)
+			ok, err := s.fleet.CanGet(ctx, a.asAI, ref.Cluster, mref)
+			if err != nil && !isDenied(err) {
+				s.log.DebugContext(ctx, "ai context: access check", "cluster", ref.Cluster, "kind", ref.Kind, "err", err)
+			}
+			if err != nil || !ok {
+				continue
+			}
+			res, err := s.fleet.Get(ctx, a.asAI, ref.Cluster, mref)
+			switch {
+			case errors.Is(err, fleet.ErrForbidden):
+				continue
+			case err != nil:
+				sum.Error = errorText(err)
+			default:
+				sum.Summary = &res
+			}
+		}
+		a.status[i] = ContextOK
+		a.summaries = append(a.summaries, sum)
+		if a.cluster == "" {
+			a.cluster = ref.Cluster
+		}
+	}
+}
+
+// chatErr maps store errors of the caller's chat: an unknown or foreign chat
+// is fleet.ErrNotFound (404), invalid input ErrInvalid (400); limits keep
+// their store error (409).
+func chatErr(op string, err error) error {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return fmt.Errorf("ai: %s: chat %w", op, fleet.ErrNotFound)
+	case errors.Is(err, store.ErrInvalid):
+		return fmt.Errorf("%w: %s: %v", ErrInvalid, op, err)
+	}
+	return fmt.Errorf("ai: %s: %w", op, err)
+}
+
+// isDenied reports fleet errors that simply mean "no".
+func isDenied(err error) bool {
+	return errors.Is(err, fleet.ErrNotFound) || errors.Is(err, fleet.ErrForbidden)
+}
+
+// chatTitle is the first question on one line, cut to store.MaxTitleLen
+// characters on a word boundary when it is longer.
+func chatTitle(q string) string {
+	q = strings.Join(strings.Fields(q), " ")
+	if utf8.RuneCountInString(q) <= store.MaxTitleLen {
+		return q
+	}
+	r := []rune(q)[:store.MaxTitleLen-1] // room for the ellipsis
+	if i := lastSpace(r); i > len(r)/2 {
+		r = r[:i]
+	}
+	return strings.TrimSpace(string(r)) + "…"
+}
+
+func lastSpace(r []rune) int {
+	for i := len(r) - 1; i >= 0; i-- {
+		if r[i] == ' ' {
+			return i
+		}
+	}
+	return -1
+}
+
 func (a *askRun) loop(ctx context.Context) (string, error) {
 	s := a.svc
-	env := toolEnv{fleet: s.fleet, principal: a.asAI, cluster: a.target.Cluster, groupForKind: s.groupForKind}
+	env := toolEnv{fleet: s.fleet, principal: a.asAI, cluster: a.cluster, groupForKind: s.groupForKind}
 	defs := toolDefs(s.allowLogs())
 	prompt := a.userPrompt()
 	a.bytesSent += len(prompt)
@@ -524,24 +674,33 @@ func stepArgs(in json.RawMessage) json.RawMessage {
 	return b
 }
 
-// userPrompt builds the first user turn: context as wrapped data, then the
-// question itself.
+// userPrompt builds the first user turn: the chat context, the earlier
+// messages and the attachments as wrapped data, then the question itself.
 func (a *askRun) userPrompt() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "The user is looking at cluster %q", a.target.Cluster)
-	if a.target.Kind != "" {
-		fmt.Fprintf(&b, ", resource %q", toModelRef(a.target).ID())
-	}
-	b.WriteString(".\n\n")
-	if a.summary != nil {
-		if raw, err := json.Marshal(a.summary); err == nil {
+	limit := a.svc.cfg.Limits.MaxToolResultBytes
+	if n := len(a.summaries); n > 0 {
+		// The context shares a budget of two tool results.
+		per := min(limit, max(2*limit/n, minContextBytes))
+		fmt.Fprintf(&b, "The user added %d item(s) to this chat's context. Their current summaries follow as data.\n\n", n)
+		for i, sum := range a.summaries {
+			raw, err := json.Marshal(sum)
+			if err != nil {
+				continue
+			}
 			text, n := redact.Text(string(raw))
 			a.redactions += n
-			text, _ = truncate(text, a.svc.cfg.Limits.MaxToolResultBytes)
-			b.WriteString("Current resource summary:\n")
-			b.WriteString(Wrap(a.nonce, "resource", text))
+			if cut, truncated := truncate(text, per); truncated {
+				text = cut + "\n[truncated]"
+			}
+			b.WriteString(Wrap(a.nonce, fmt.Sprintf("context:%d", i+1), text))
 			b.WriteString("\n\n")
 		}
+	} else {
+		b.WriteString("This chat has no context; use the tools to find what the question is about, passing the cluster explicitly.\n\n")
+	}
+	if hidden := len(a.status) - len(a.summaries); hidden > 0 {
+		fmt.Fprintf(&b, "%d context item(s) are no longer visible to the user and were left out.\n\n", hidden)
 	}
 	if len(a.history) > 0 {
 		var h strings.Builder
@@ -551,9 +710,9 @@ func (a *askRun) userPrompt() string {
 		}
 		text, n := redact.Text(h.String())
 		a.redactions += n
-		text, _ = truncate(text, a.svc.cfg.Limits.MaxToolResultBytes)
+		text, _ = truncate(text, limit)
 		b.WriteString("Earlier messages in this conversation:\n")
-		b.WriteString(Wrap(a.nonce, "thread", text))
+		b.WriteString(Wrap(a.nonce, "chat", text))
 		b.WriteString("\n\n")
 	}
 	for _, att := range a.req.Attachments {
@@ -629,10 +788,22 @@ func sanitizeLabel(s string) string {
 	return s
 }
 
+// target is the audit target of the ask: the first context reference, if any.
+func (a *askRun) target() store.ResourceRef {
+	if len(a.chat.Context) > 0 {
+		return a.chat.Context[0]
+	}
+	return store.ResourceRef{}
+}
+
 func (a *askRun) auditDetail(err error) map[string]any {
 	names := make([]string, 0, len(a.steps))
 	for _, st := range a.steps {
 		names = append(names, st.Tool)
+	}
+	refs := make([]string, len(a.chat.Context))
+	for i, r := range a.chat.Context {
+		refs[i], _ = truncate(auditRef(r), maxAuditRefLen)
 	}
 	d := map[string]any{
 		"provider":   a.svc.provider.Name(),
@@ -642,21 +813,35 @@ func (a *askRun) auditDetail(err error) map[string]any {
 		"bytes":      a.bytesSent,
 		"redactions": a.redactions,
 		"usage":      a.usage,
+		"context":    refs,
 	}
-	if a.thread.ID != "" {
-		d["threadId"] = a.thread.ID
+	if a.chat.ID != "" {
+		d["chatId"] = a.chat.ID
+	}
+	if hidden := len(a.status) - len(a.summaries); hidden > 0 {
+		d["contextHidden"] = hidden
 	}
 	if a.stop != "" {
 		d["stopReason"] = a.stop
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrRateLimited):
+		d["reason"] = "rate_limited"
+	case errors.Is(err, ErrUnavailable):
+		d["reason"] = "quota_unavailable"
+	case err != nil:
 		d["error"] = errorText(err)
 	}
 	return d
 }
 
-func toStoreRef(cluster string, r model.Ref) store.ResourceRef {
-	return store.ResourceRef{Cluster: cluster, Group: r.Group, Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
+// auditRef is a compact form of a context reference: "cluster" for a whole
+// cluster, else "cluster/group/kind/namespace/name".
+func auditRef(r store.ResourceRef) string {
+	if r.Kind == "" {
+		return r.Cluster
+	}
+	return r.Cluster + "/" + r.Group + "/" + r.Kind + "/" + r.Namespace + "/" + r.Name
 }
 
 func toModelRef(r store.ResourceRef) model.Ref {

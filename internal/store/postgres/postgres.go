@@ -12,7 +12,7 @@
 // # LOGGED and UNLOGGED tables
 //
 // Durable user data lives in ordinary (LOGGED) tables: api_tokens, threads,
-// messages, audit_events and user_prefs. Throwaway state lives in UNLOGGED
+// messages, chats, chat_messages, audit_events and user_prefs. Throwaway state lives in UNLOGGED
 // tables: sessions, rate_limits and agent_sessions. UNLOGGED tables skip
 // the write-ahead log, so their frequent small writes (session touches,
 // every rate-limit hit, a heartbeat per agent every 10 s) cost no WAL and
@@ -142,6 +142,7 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 func (s *Store) Sessions() store.Sessions           { return sessions{s} }
 func (s *Store) Tokens() store.Tokens               { return tokens{s} }
 func (s *Store) Threads() store.Threads             { return threads{s} }
+func (s *Store) Chats() store.Chats                 { return chats{s} }
 func (s *Store) Audit() store.Audit                 { return audit{s} }
 func (s *Store) Prefs() store.Prefs                 { return prefs{s} }
 func (s *Store) RateLimits() store.RateLimits       { return rateLimits{s} }
@@ -216,11 +217,10 @@ func (s *Store) Prune(ctx context.Context, now time.Time, r store.Retention) (st
 			return st, err
 		}
 	}
-	if r.AskThreadsDays > 0 {
-		cut := storeutil.Ms(now.Add(-storeutil.Days(r.AskThreadsDays)))
-		n, err := s.deleteBatched(ctx, "threads", "id", "type = 'ask' AND updated_at <= $1", cut)
-		st.Threads += n
-		if err != nil {
+	if r.ChatDays > 0 {
+		// chat_messages go with their chat (ON DELETE CASCADE).
+		cut := storeutil.Ms(now.Add(-storeutil.Days(r.ChatDays)))
+		if st.Chats, err = s.deleteBatched(ctx, "chats", "id", "updated_at <= $1", cut); err != nil {
 			return st, err
 		}
 	}

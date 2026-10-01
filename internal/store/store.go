@@ -31,6 +31,8 @@ type Store interface {
 	Sessions() Sessions
 	Tokens() Tokens
 	Threads() Threads
+	// Chats returns the owner-private Ask AI chats (ADR-0007).
+	Chats() Chats
 	Audit() Audit
 	Prefs() Prefs
 	// RateLimits returns the fixed-window counters shared by every replica.
@@ -147,7 +149,6 @@ type ThreadType string
 
 const (
 	ThreadDiscussion ThreadType = "discussion"
-	ThreadAsk        ThreadType = "ask" // Ask AI conversation
 )
 
 type Visibility string
@@ -218,6 +219,52 @@ type Threads interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// Chat is an Ask AI conversation (ADR-0007). It belongs to Owner, the accountable
+// human, and is never shown to anyone else. Context lists the resources (and,
+// with Kind "", whole clusters) the chat is about, in the order the user added
+// them.
+type Chat struct {
+	ID           string        `json:"id"`
+	Owner        string        `json:"owner"`
+	Title        string        `json:"title"`
+	Context      []ResourceRef `json:"context"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt"`
+	MessageCount int           `json:"messageCount"`
+}
+
+// Chat limits enforced by every backend.
+const (
+	MaxChatContext     = 10
+	MaxChatsPerOwner   = 200
+	MaxMessagesPerChat = 1000
+)
+
+// ChatUpdate changes a chat. Nil fields are left as they are. An update does
+// not change UpdatedAt, so renaming a chat does not reorder the list.
+type ChatUpdate struct {
+	Title   *string
+	Context *[]ResourceRef
+}
+
+type Chats interface {
+	// Create stores c (ID, CreatedAt and UpdatedAt are set by the store). When
+	// the owner already has MaxChatsPerOwner chats, the least recently updated
+	// one is deleted in the same transaction.
+	Create(ctx context.Context, c Chat) (Chat, error)
+	// Get returns ErrNotFound for an unknown id or another owner's chat.
+	Get(ctx context.Context, owner, id string) (Chat, error)
+	// List orders by UpdatedAt desc, then ID, and returns an opaque cursor.
+	List(ctx context.Context, owner, cursor string, limit int) ([]Chat, string, error)
+	Update(ctx context.Context, owner, id string, u ChatUpdate) (Chat, error)
+	// AddMessage appends m and bumps UpdatedAt and MessageCount. It returns
+	// ErrConflict once the chat holds MaxMessagesPerChat messages.
+	AddMessage(ctx context.Context, owner, chatID string, m Message) (Message, error)
+	// Messages returns messages oldest first.
+	Messages(ctx context.Context, owner, chatID, cursor string, limit int) ([]Message, string, error)
+	Delete(ctx context.Context, owner, id string) error
+}
+
 type AuditResult string
 
 const (
@@ -266,12 +313,12 @@ type Prefs interface {
 type Retention struct {
 	AuditDays           int
 	ResolvedThreadsDays int // 0 = keep
-	AskThreadsDays      int // 0 = keep
+	ChatDays            int // chats idle this long are deleted; 0 = keep
 	TokenPurgeAfter     time.Duration
 }
 
 type PruneStats struct {
-	Sessions, Tokens, Audit, Threads int64
+	Sessions, Tokens, Audit, Threads, Chats int64
 	// RateLimits counts ended rate-limit windows; AgentSessions counts agent
 	// sessions whose heartbeat is older than AgentSessionPruneAfter.
 	RateLimits, AgentSessions int64

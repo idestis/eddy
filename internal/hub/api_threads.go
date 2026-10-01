@@ -104,10 +104,11 @@ func (a *api) handleListThreads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch t := store.ThreadType(q.Get("type")); t {
-	case "", store.ThreadDiscussion, store.ThreadAsk:
+	case "", store.ThreadDiscussion:
 		f.Type = t
 	default:
-		a.fail(w, r, badRequest("type must be discussion or ask"))
+		// Ask AI conversations are chats (/api/v1/ai/chats), not threads.
+		a.fail(w, r, badRequest("type must be discussion"))
 		return
 	}
 	if f.Limit, err = parseLimit(q.Get("limit"), threads.DefaultListLimit, threads.MaxListLimit); err != nil {
@@ -139,7 +140,7 @@ func (a *api) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	// Ask threads are created by Ask AI only.
+	// Discussion is the only thread type; Ask AI conversations are chats.
 	if body.Type != "" && body.Type != store.ThreadDiscussion {
 		a.fail(w, r, badRequest("type must be discussion"))
 		return

@@ -74,6 +74,8 @@ WHERE n.nspname = current_schema() AND c.relkind = 'r' ORDER BY c.relname`)
 		"agent_sessions":      "u",
 		"join_tokens":         "p",
 		"connection_attempts": "u",
+		"chats":               "p",
+		"chat_messages":       "p",
 	}
 	for name, p := range want {
 		if got[name] != p {
@@ -146,30 +148,81 @@ func TestMigrateRefusesNewerSchema(t *testing.T) {
 func TestMigrateAppliesLaterMigrations(t *testing.T) {
 	dsn := pgtest.DSN(t)
 	open(t, dsn)
-	init, err := embedded.ReadFile("migrations/0001_init.sql")
-	if err != nil {
-		t.Fatal(err)
+	fsys := fstest.MapFS{"migrations/0004_extra.sql": {Data: []byte(`CREATE TABLE extra (id BIGINT PRIMARY KEY); CREATE INDEX extra_id ON extra (id);`)}}
+	for _, name := range []string{"0001_init.sql", "0002_onboarding.sql", "0003_chats.sql"} {
+		b, err := embedded.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fsys["migrations/"+name] = &fstest.MapFile{Data: b}
 	}
-	onboarding, err := embedded.ReadFile("migrations/0002_onboarding.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	migrationFS = fstest.MapFS{
-		"migrations/0001_init.sql":       {Data: init},
-		"migrations/0002_onboarding.sql": {Data: onboarding},
-		"migrations/0003_extra.sql":      {Data: []byte(`CREATE TABLE extra (id BIGINT PRIMARY KEY); CREATE INDEX extra_id ON extra (id);`)},
-	}
+	migrationFS = fsys
 	t.Cleanup(func() { migrationFS = embedded })
 	s := open(t, dsn)
 	v, err := s.SchemaVersion(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	if v != 4 {
+		t.Fatalf("schema version %d, want 4", v)
+	}
+	if _, err := s.db.ExecContext(t.Context(), `INSERT INTO extra (id) VALUES (1)`); err != nil {
+		t.Fatalf("migration 0004 not applied: %v", err)
+	}
+}
+
+// TestMigrateChatsDropsAskThreads applies 0003 to a database at version 2
+// that still holds an 'ask' thread: the ask thread and its messages go,
+// discussions stay, and 'ask' is refused from then on.
+func TestMigrateChatsDropsAskThreads(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	fsys := fstest.MapFS{}
+	for _, name := range []string{"0001_init.sql", "0002_onboarding.sql"} {
+		b, err := embedded.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fsys["migrations/"+name] = &fstest.MapFile{Data: b}
+	}
+	migrationFS = fsys
+	t.Cleanup(func() { migrationFS = embedded })
+	old := open(t, dsn)
+	migrationFS = embedded
+	ctx := t.Context()
+	for _, q := range []string{
+		`INSERT INTO threads (id, cluster, type, visibility, title, created_by, created_by_type, created_via, created_at, updated_at, message_count)
+ VALUES ('ask-1', 'prod', 'ask', 'private', 'q', 'alice', 'human', 'web', 1, 1, 1),
+        ('disc-1', 'prod', 'discussion', 'resource', 'd', 'alice', 'human', 'web', 1, 1, 1)`,
+		`INSERT INTO messages (id, thread_id, author, author_type, via, body, created_at)
+ VALUES ('m-ask', 'ask-1', 'alice', 'human', 'web', 'q', 1), ('m-disc', 'disc-1', 'alice', 'human', 'web', 'd', 1)`,
+	} {
+		if _, err := old.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := open(t, dsn)
+	v, err := s.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v != 3 {
 		t.Fatalf("schema version %d, want 3", v)
 	}
-	if _, err := s.db.ExecContext(t.Context(), `INSERT INTO extra (id) VALUES (1)`); err != nil {
-		t.Fatalf("migration 0003 not applied: %v", err)
+	if _, err := s.Threads().Get(ctx, "ask-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ask thread after migration: %v", err)
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE id = 'm-ask'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("ask messages left: %d %v", n, err)
+	}
+	if _, err := s.Threads().Get(ctx, "disc-1"); err != nil {
+		t.Fatalf("discussion after migration: %v", err)
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO threads (id, cluster, type, visibility, title, created_by, created_by_type, created_via, created_at, updated_at)
+ VALUES ('ask-2', 'prod', 'ask', 'private', 'q', 'alice', 'human', 'web', 1, 1)`)
+	if !errors.Is(mapErr("insert", err), store.ErrInvalid) {
+		t.Fatalf("insert ask thread after migration: %v", err)
 	}
 }
 

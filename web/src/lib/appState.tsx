@@ -37,13 +37,9 @@ interface AppState {
   pendingQuestion: string | null;
   ask: (question?: string) => void;
   clearPendingQuestion: () => void;
-  /** Opens Ask AI on an empty conversation (the palette's "New Ask AI chat"). */
-  startNewChat: () => void;
-  /** True once per startNewChat call: the panel calls it, then clears its conversation. */
-  takeNewChat: () => boolean;
   /** Log lines waiting for the Ask AI composer (from a logs toolbar or selection). */
   pendingAttachment: PendingAttachment | null;
-  /** Opens Ask AI on a new chat with log lines attached and a suggested question. */
+  /** Opens Ask AI on the open chat with log lines (or YAML) attached and a suggested question. */
   askWithLogs: (p: PendingAttachment) => void;
   clearPendingAttachment: () => void;
 }
@@ -68,8 +64,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [askFocus, setAskFocus] = useState(0);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
-  const chatRequested = useRef(0);
-  const chatConsumed = useRef(0);
   const consumed = useRef(0);
   const requested = useRef(0);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -112,25 +106,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
-  const startNewChat = useCallback(() => {
-    chatRequested.current += 1;
-    ask();
-  }, [ask]);
-
-  const takeNewChat = useCallback(() => {
-    if (chatRequested.current <= chatConsumed.current) return false;
-    chatConsumed.current = chatRequested.current;
-    return true;
-  }, []);
-
   const clearPendingQuestion = useCallback(() => setPendingQuestion(null), []);
 
   const askWithLogs = useCallback(
     (p: PendingAttachment) => {
       setPendingAttachment(p);
-      startNewChat();
+      ask();
     },
-    [startNewChat],
+    [ask],
   );
   const clearPendingAttachment = useCallback(() => setPendingAttachment(null), []);
 
@@ -153,8 +136,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       pendingQuestion,
       ask,
       clearPendingQuestion,
-      startNewChat,
-      takeNewChat,
       pendingAttachment,
       askWithLogs,
       clearPendingAttachment,
@@ -178,8 +159,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       pendingQuestion,
       ask,
       clearPendingQuestion,
-      startNewChat,
-      takeNewChat,
     ],
   );
 

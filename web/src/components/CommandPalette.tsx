@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useChats } from "../api/chats";
 import { isAttentionRow } from "../api/delta";
 import {
   attentionQuery,
@@ -22,8 +23,9 @@ import {
 } from "../api/queries";
 import type { ClusterInfo, SearchResponse } from "../api/types";
 import { useAppState } from "../lib/appState";
+import { useChatState } from "../lib/chatState";
 import { clusterStyle } from "../lib/clusterColor";
-import { STATUS_RANK } from "../lib/format";
+import { ago, plural, STATUS_RANK } from "../lib/format";
 import { highlightParts, type Match, type Ranges, rank } from "../lib/fuzzy";
 import type { KeyId } from "../lib/keys";
 import { flatNav, isFlux, isNotable, kindInfo, projectName } from "../lib/kinds";
@@ -205,10 +207,12 @@ export function CommandPalette({
   const [query, setQuery] = useState(initialQuery);
   const [scope, setScope] = useState<PaletteScope>(routeCluster ? "cluster" : "all");
   const scopeSeg = useTabIndicator<HTMLFieldSetElement>(scope);
-  const { closePalette, selection, setHelp, ask, startNewChat } = useAppState();
+  const { closePalette, selection, setHelp, ask } = useAppState();
+  const { newChat, openChat, openHistory } = useChatState();
   const { clusters: clusterPrefs, togglePin } = usePrefs();
   const navigate = useNavigate();
   const { data: me } = useMe();
+  const chats = useChats(Boolean(me));
   const clusters = useOrderedClusters();
   const selCluster = useCluster(selection?.cluster);
   const actions = useResourceActions(selCluster);
@@ -343,7 +347,8 @@ export function CommandPalette({
           sub: `Start a fresh conversation about ${selected?.name ?? routeCluster}`,
           keywords: "ai ask new chat conversation clear reset",
           icon: "plus",
-          run: () => startNewChat(),
+          keys: "newChat",
+          run: () => newChat(),
         });
       }
       out.push({
@@ -362,6 +367,32 @@ export function CommandPalette({
           keywords: `show browse ${n.id} ${n.kinds.join(" ")}`,
           icon: n.icon,
           run: () => void navigate({ to: "/c/$cluster", params, search: { kind: n.id } }),
+        });
+      }
+    }
+    if (me) {
+      // The Ask AI panel lives on cluster pages; from elsewhere, go to the chat's cluster first.
+      const showPanel = (cluster: string | undefined, then: () => void) => {
+        const target = routeCluster ?? cluster ?? clusters[0]?.name;
+        if (!routeCluster && target) void navigate({ to: "/c/$cluster", params: { cluster: target } });
+        then();
+      };
+      out.push({
+        id: "chats",
+        label: "Ask AI: open chat…",
+        sub: "Your earlier chats",
+        keywords: "ai ask chat history conversations previous earlier",
+        icon: "clock",
+        run: () => showPanel(undefined, openHistory),
+      });
+      for (const c of chats.items.slice(0, 20)) {
+        out.push({
+          id: `chat:${c.id}`,
+          label: `Ask AI: open chat “${c.title || "Untitled chat"}”`,
+          sub: `${ago(c.updatedAt)} · ${plural(c.messageCount, "message")}`,
+          keywords: `ai ask chat history ${c.context.map((r) => r.name || r.cluster).join(" ")}`,
+          icon: "spark",
+          run: () => showPanel(c.context[0]?.cluster, () => openChat(c.id)),
         });
       }
     }
@@ -420,7 +451,10 @@ export function CommandPalette({
     clusters,
     clusterPrefs.pins,
     togglePin,
-    startNewChat,
+    newChat,
+    openChat,
+    openHistory,
+    chats.items,
     selected,
     selection,
     routeCluster,
@@ -467,7 +501,7 @@ export function CommandPalette({
       out.push({
         heading: "Commands",
         entries: commands
-          .filter((c) => !c.cluster && !c.id.startsWith("nav:"))
+          .filter((c) => !c.cluster && !c.id.startsWith("nav:") && !c.id.startsWith("chat:"))
           .slice(0, MAX_COMMANDS)
           .map((item) => cmdEntry({ item })),
       });

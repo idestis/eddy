@@ -213,7 +213,7 @@ store:
   retention:
     auditDays: 90
     resolvedThreadsDays: 0         # 0 keeps them
-    askThreadsDays: 30
+    chatDays: 30                   # Ask AI chats idle this long are deleted (ADR-0007)
 
 # ---------------------------------------------------------------------------
 # Local users (auth.local). Either point at your own Secret, or list users inline.

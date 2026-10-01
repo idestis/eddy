@@ -213,9 +213,9 @@ func TestCreate(t *testing.T) {
 		t.Fatalf("audit = %v", got)
 	}
 
-	ask := e.create(t, identity.Principal{User: "alice", Via: identity.ViaAskAI, Client: "m"}, threads.CreateInput{Ref: podinfo, Type: store.ThreadAsk})
-	if ask.Visibility != store.VisibilityPrivate || ask.CreatedBy.Type != store.AuthorAI {
-		t.Fatalf("ask thread = %+v", ask)
+	saved := e.create(t, identity.Principal{User: "alice", Via: identity.ViaAskAI, Client: "m"}, threads.CreateInput{Ref: podinfo, Visibility: store.VisibilityPrivate})
+	if saved.Type != store.ThreadDiscussion || saved.Visibility != store.VisibilityPrivate || saved.CreatedBy.Type != store.AuthorAI {
+		t.Fatalf("private Ask AI thread = %+v", saved)
 	}
 	cluster := e.create(t, bob, threads.CreateInput{Ref: prodWide})
 	if cluster.Ref != prodWide {
@@ -246,6 +246,7 @@ func TestCreateValidation(t *testing.T) {
 		{"kind without name", alice, threads.CreateInput{Ref: store.ResourceRef{Cluster: "prod", Kind: "HelmRelease"}, Title: "t", Body: "b"}, threads.ErrInvalid},
 		{"cluster ref with namespace", alice, threads.CreateInput{Ref: store.ResourceRef{Cluster: "prod", Namespace: "x"}, Title: "t", Body: "b"}, threads.ErrInvalid},
 		{"bad type", alice, threads.CreateInput{Ref: podinfo, Title: "t", Body: "b", Type: "chat"}, threads.ErrInvalid},
+		{"ask type is gone", alice, threads.CreateInput{Ref: podinfo, Title: "t", Body: "b", Type: "ask"}, threads.ErrInvalid},
 		{"bad visibility", alice, threads.CreateInput{Ref: podinfo, Title: "t", Body: "b", Visibility: "public"}, threads.ErrInvalid},
 		{"bad author type", alice, threads.CreateInput{Ref: podinfo, Title: "t", Body: "b", Author: store.Author{Type: "bot"}}, threads.ErrInvalid},
 		{"bad meta", alice, threads.CreateInput{Ref: podinfo, Title: "t", Body: "b", Meta: json.RawMessage(`{`)}, threads.ErrInvalid},

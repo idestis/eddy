@@ -28,7 +28,9 @@ type Store struct {
 	sessions map[string]store.Session // keyed by string(IDHash)
 	tokens   map[string]store.Token   // keyed by ID
 	threads  map[string]*threadRec
-	msgIDs   map[string]string  // message ID → thread ID, for uniqueness
+	msgIDs   map[string]string // message ID → thread ID, for uniqueness
+	chats    map[string]*chatRec
+	chatMsgs map[string]string  // chat message ID → chat ID, for uniqueness
 	audit    []store.AuditEvent // ascending by ID
 	auditSeq int64
 	prefs    map[string]json.RawMessage
@@ -46,6 +48,11 @@ type threadRec struct {
 	msgs []store.Message // sorted by (CreatedAt, ID)
 }
 
+type chatRec struct {
+	c    store.Chat
+	msgs []store.Message // sorted by (CreatedAt, ID)
+}
+
 var _ store.Store = (*Store)(nil)
 
 // New returns an empty store.
@@ -55,6 +62,8 @@ func New() *Store {
 		tokens:   map[string]store.Token{},
 		threads:  map[string]*threadRec{},
 		msgIDs:   map[string]string{},
+		chats:    map[string]*chatRec{},
+		chatMsgs: map[string]string{},
 		prefs:    map[string]json.RawMessage{},
 		joins:    map[string]store.JoinToken{},
 		attempts: map[string][]store.ConnectionAttempt{},
@@ -67,6 +76,7 @@ func New() *Store {
 func (s *Store) Sessions() store.Sessions { return sessions{s} }
 func (s *Store) Tokens() store.Tokens     { return tokens{s} }
 func (s *Store) Threads() store.Threads   { return threads{s} }
+func (s *Store) Chats() store.Chats       { return chats{s} }
 func (s *Store) Audit() store.Audit       { return audit{s} }
 func (s *Store) Prefs() store.Prefs       { return prefs{s} }
 
@@ -158,12 +168,15 @@ func (s *Store) Prune(_ context.Context, now time.Time, r store.Retention) (stor
 			storeutil.Ms(*t.ResolvedAt) <= storeutil.Ms(now.Add(-storeutil.Days(r.ResolvedThreadsDays))) {
 			s.deleteThread(id)
 			st.Threads++
-			continue
 		}
-		if r.AskThreadsDays > 0 && t.Type == store.ThreadAsk &&
-			storeutil.Ms(t.UpdatedAt) <= storeutil.Ms(now.Add(-storeutil.Days(r.AskThreadsDays))) {
-			s.deleteThread(id)
-			st.Threads++
+	}
+	if r.ChatDays > 0 {
+		cut := storeutil.Ms(now.Add(-storeutil.Days(r.ChatDays)))
+		for id, rec := range s.chats {
+			if storeutil.Ms(rec.c.UpdatedAt) <= cut {
+				s.deleteChat(id)
+				st.Chats++
+			}
 		}
 	}
 	return st, nil
@@ -176,6 +189,16 @@ func (s *Store) deleteThread(id string) {
 			delete(s.msgIDs, m.ID)
 		}
 		delete(s.threads, id)
+	}
+}
+
+// deleteChat removes a chat and its messages. The caller holds s.mu.
+func (s *Store) deleteChat(id string) {
+	if rec, ok := s.chats[id]; ok {
+		for _, m := range rec.msgs {
+			delete(s.chatMsgs, m.ID)
+		}
+		delete(s.chats, id)
 	}
 }
 
@@ -545,10 +568,16 @@ func (x threads) Messages(_ context.Context, threadID, cursor string, limit int)
 	if !ok {
 		return nil, "", store.ErrNotFound
 	}
+	return pageMessages(rec.msgs, cur, hasCur, limit)
+}
+
+// pageMessages returns the page of msgs (sorted by (CreatedAt, ID)) after
+// cur, copied, and the cursor of the next page. The caller holds s.mu.
+func pageMessages(msgs []store.Message, cur storeutil.Cursor, hasCur bool, limit int) ([]store.Message, string, error) {
 	start := 0
 	if hasCur {
-		start = len(rec.msgs)
-		for i, m := range rec.msgs {
+		start = len(msgs)
+		for i, m := range msgs {
 			ms := storeutil.Ms(m.CreatedAt)
 			if ms > cur.Ms || (ms == cur.Ms && m.ID > cur.ID) {
 				start = i
@@ -556,7 +585,7 @@ func (x threads) Messages(_ context.Context, threadID, cursor string, limit int)
 			}
 		}
 	}
-	rest := rec.msgs[start:]
+	rest := msgs[start:]
 	n := min(limit, len(rest))
 	out := make([]store.Message, n)
 	for i := range n {
@@ -599,6 +628,176 @@ func (x threads) Delete(_ context.Context, id string) error {
 		return store.ErrNotFound
 	}
 	x.s.deleteThread(id)
+	return nil
+}
+
+// ---- chats ----
+
+type chats struct{ s *Store }
+
+func copyChat(c store.Chat) store.Chat {
+	c.Context = storeutil.ChatContext(c.Context)
+	return c
+}
+
+// chatCmp orders chats by (UpdatedAt desc, ID desc), the List order.
+func chatCmp(a, b store.Chat) int {
+	return cmp.Or(b.UpdatedAt.Compare(a.UpdatedAt), cmp.Compare(b.ID, a.ID))
+}
+
+// owned returns the owner's chat, or nil. The caller holds s.mu.
+func (x chats) owned(owner, id string) *chatRec {
+	rec, ok := x.s.chats[id]
+	if !ok || owner == "" || rec.c.Owner != owner {
+		return nil
+	}
+	return rec
+}
+
+func (x chats) Create(_ context.Context, c store.Chat) (store.Chat, error) {
+	c, err := storeutil.PrepareChat(c)
+	if err != nil {
+		return store.Chat{}, err
+	}
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	if _, ok := x.s.chats[c.ID]; ok {
+		return store.Chat{}, store.ErrConflict
+	}
+	var mine []store.Chat
+	for _, rec := range x.s.chats {
+		if rec.c.Owner == c.Owner {
+			mine = append(mine, rec.c)
+		}
+	}
+	if len(mine) >= store.MaxChatsPerOwner {
+		// Drop the least recently updated chats: the end of the List order.
+		slices.SortFunc(mine, chatCmp)
+		for _, old := range mine[store.MaxChatsPerOwner-1:] {
+			x.s.deleteChat(old.ID)
+		}
+	}
+	x.s.chats[c.ID] = &chatRec{c: c}
+	return copyChat(c), nil
+}
+
+func (x chats) Get(_ context.Context, owner, id string) (store.Chat, error) {
+	x.s.mu.RLock()
+	defer x.s.mu.RUnlock()
+	rec := x.owned(owner, id)
+	if rec == nil {
+		return store.Chat{}, store.ErrNotFound
+	}
+	return copyChat(rec.c), nil
+}
+
+func (x chats) List(_ context.Context, owner, cursor string, limit int) ([]store.Chat, string, error) {
+	cur, hasCur, err := storeutil.DecodeCursor(cursor)
+	if err != nil {
+		return nil, "", err
+	}
+	limit = storeutil.ClampLimit(limit, storeutil.DefaultThreadLimit, storeutil.MaxThreadLimit)
+
+	x.s.mu.RLock()
+	var all []store.Chat
+	for _, rec := range x.s.chats {
+		c := rec.c
+		if owner == "" || c.Owner != owner {
+			continue
+		}
+		if hasCur {
+			ms := storeutil.Ms(c.UpdatedAt)
+			if ms > cur.Ms || (ms == cur.Ms && c.ID >= cur.ID) {
+				continue
+			}
+		}
+		all = append(all, copyChat(c))
+	}
+	x.s.mu.RUnlock()
+
+	slices.SortFunc(all, chatCmp)
+	if len(all) <= limit {
+		return all, "", nil
+	}
+	page := all[:limit]
+	last := page[len(page)-1]
+	return page, storeutil.EncodeCursor(storeutil.Ms(last.UpdatedAt), last.ID), nil
+}
+
+func (x chats) Update(_ context.Context, owner, id string, u store.ChatUpdate) (store.Chat, error) {
+	if u.Title != nil {
+		if err := storeutil.CheckChatTitle(*u.Title); err != nil {
+			return store.Chat{}, err
+		}
+	}
+	if u.Context != nil {
+		if err := storeutil.CheckChatContext(*u.Context); err != nil {
+			return store.Chat{}, err
+		}
+	}
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	rec := x.owned(owner, id)
+	if rec == nil {
+		return store.Chat{}, store.ErrNotFound
+	}
+	if u.Title != nil {
+		rec.c.Title = *u.Title
+	}
+	if u.Context != nil {
+		rec.c.Context = storeutil.ChatContext(*u.Context)
+	}
+	return copyChat(rec.c), nil
+}
+
+func (x chats) AddMessage(_ context.Context, owner, chatID string, m store.Message) (store.Message, error) {
+	m, err := storeutil.PrepareMessage(chatID, m)
+	if err != nil {
+		return store.Message{}, err
+	}
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	rec := x.owned(owner, chatID)
+	if rec == nil {
+		return store.Message{}, store.ErrNotFound
+	}
+	if rec.c.MessageCount >= store.MaxMessagesPerChat {
+		return store.Message{}, fmt.Errorf("%w: chat has %d messages", store.ErrConflict, store.MaxMessagesPerChat)
+	}
+	if _, ok := x.s.chatMsgs[m.ID]; ok {
+		return store.Message{}, store.ErrConflict
+	}
+	i, _ := slices.BinarySearchFunc(rec.msgs, m, msgCmp)
+	rec.msgs = slices.Insert(rec.msgs, i, m)
+	x.s.chatMsgs[m.ID] = chatID
+	rec.c.MessageCount++
+	rec.c.UpdatedAt = m.CreatedAt
+	return copyMessage(m), nil
+}
+
+func (x chats) Messages(_ context.Context, owner, chatID, cursor string, limit int) ([]store.Message, string, error) {
+	cur, hasCur, err := storeutil.DecodeCursor(cursor)
+	if err != nil {
+		return nil, "", err
+	}
+	limit = storeutil.ClampLimit(limit, storeutil.DefaultMessageLimit, storeutil.MaxMessageLimit)
+
+	x.s.mu.RLock()
+	defer x.s.mu.RUnlock()
+	rec := x.owned(owner, chatID)
+	if rec == nil {
+		return nil, "", store.ErrNotFound
+	}
+	return pageMessages(rec.msgs, cur, hasCur, limit)
+}
+
+func (x chats) Delete(_ context.Context, owner, id string) error {
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	if x.owned(owner, id) == nil {
+		return store.ErrNotFound
+	}
+	x.s.deleteChat(id)
 	return nil
 }
 

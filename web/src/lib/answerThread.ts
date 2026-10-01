@@ -57,9 +57,12 @@ export function claudeCodePrompt(
   r: Pick<Ref, "kind" | "namespace" | "name">,
 ) {
   const where = r.namespace ? `${r.namespace}/${r.name}` : r.name;
+  const live = r.kind
+    ? `with get_resource and get_events for ${cluster} ${r.kind} ${where}`
+    : `with list_unhealthy and list_resources on ${cluster}`;
   return (
     `Use the eddy MCP server. Read thread ${threadId} with get_thread, then check the live state ` +
-    `with get_resource and get_events for ${cluster} ${r.kind} ${where}. Propose the change in our ` +
+    `${live}. Propose the change in our ` +
     "Flux GitOps repository as a pull request (do not change the cluster directly). Then reply on " +
     "the thread with reply_thread including the PR link."
   );

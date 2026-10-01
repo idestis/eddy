@@ -55,6 +55,7 @@ export const BINDINGS = {
   commands: { keys: ["[Shift]+:"], label: "Commands only", group: "Find and ask" },
   filter: { keys: ["/"], label: "Filter this list", group: "Find and ask" },
   ask: { keys: ["a"], label: "Ask AI about the selection (again: back to Details)", group: "Find and ask" },
+  newChat: { keys: ["Shift+A"], label: "New Ask AI chat (about what is on screen)", group: "Find and ask" },
   details: { keys: ["d"], label: "Details panel", group: "Find and ask" },
   help: { keys: ["[Shift]+?"], label: "Keyboard shortcuts", group: "Find and ask", inOverlay: true },
 

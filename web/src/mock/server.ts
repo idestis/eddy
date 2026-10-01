@@ -9,12 +9,14 @@ import type {
   AuditEvent,
   Author,
   ChangeEvent,
+  Chat,
   ClusterInfo,
   ClusterInput,
   ClusterPhase,
   ConnectionAttempt,
   ConnectionCheck,
   ConnectionInfo,
+  ContextStatus,
   IndexRow,
   JoinTokenInfo,
   KindCounts,
@@ -147,6 +149,7 @@ export class MockHub {
       if (!c.info.connected && c.resources.size) this.staleViews.add(c.info.name);
     this.seedOnboarding();
     this.seedThreads();
+    this.seedChats();
     this.seedAudit();
     this.tokens.push({
       id: "k3j9x0a2bq7d",
@@ -629,7 +632,8 @@ export class MockHub {
 
     if (root === "prefs") return this.prefsRoute(method, body);
     if (root === "threads") return this.threadsRoute(method, a, b, url, body);
-    if (root === "ai" && a === "ask" && method === "POST") return this.ask(body);
+    if (root === "ai" && a === "ask" && !b && method === "POST") return this.ask(body);
+    if (root === "ai" && a === "chats" && !c) return this.chatsRoute(method, b, url, body);
     if (root === "tokens") return this.tokensRoute(method, a, body);
     if (root === "audit")
       return json({ items: this.audit.filter((x) => x.subject === me.user).slice(0, 50) });
@@ -1079,7 +1083,7 @@ export class MockHub {
       id: `th_${this.ids++}`,
       ref,
       type,
-      visibility: type === "ask" ? "private" : "resource",
+      visibility: "resource",
       title,
       status: "open",
       createdBy: by,
@@ -1108,17 +1112,133 @@ export class MockHub {
     return m;
   }
 
+  // Ask AI chats (ADR-0007): owner-only, newest first, at most 10 context references.
+
+  private chats: Chat[] = [];
+  private chatMessages = new Map<string, Message[]>();
+
+  private ownChat(id: string | undefined): Chat | undefined {
+    return this.chats.find((c) => c.id === id && c.owner === me.user);
+  }
+
+  /** Whether the signed-in user can still see a context reference (the hub asks the SAR authorizer). */
+  private contextVisible(r: ResourceRef): boolean {
+    const cl = this.cluster(r.cluster);
+    if (!cl) return false;
+    if (r.kind === "") return true;
+    return Boolean(findResource(cl, r.kind, r.namespace, r.name, r.group || undefined));
+  }
+
+  private validContext(context: unknown): ResourceRef[] | string {
+    if (context === undefined) return [];
+    if (!Array.isArray(context)) return "context must be a list.";
+    if (context.length > 10) return "At most 10 context references.";
+    for (const r of context as ResourceRef[])
+      if (!r || typeof r.cluster !== "string" || !r.cluster || typeof r.kind !== "string")
+        return "Each context reference needs a cluster and a kind.";
+    return context as ResourceRef[];
+  }
+
+  private newChat(context: ResourceRef[], title = "", minutesAgo = 0): Chat {
+    const c: Chat = {
+      id: `ch_${this.ids++}`,
+      owner: me.user,
+      title,
+      context,
+      createdAt: iso(minutesAgo),
+      updatedAt: iso(minutesAgo),
+      messageCount: 0,
+    };
+    this.chats.push(c);
+    this.chatMessages.set(c.id, []);
+    // 200 chats per user: one more drops the least recently used.
+    const own = this.chats.filter((x) => x.owner === me.user);
+    if (own.length > 200) {
+      const oldest = own.reduce((a, b) => (a.updatedAt <= b.updatedAt ? a : b));
+      this.chats = this.chats.filter((x) => x !== oldest);
+      this.chatMessages.delete(oldest.id);
+    }
+    return c;
+  }
+
+  private chatMessage(c: Chat, author: Author, body: string, minutesAgo = 0, meta?: unknown): Message {
+    const m: Message = {
+      id: `m_${this.ids++}`,
+      threadId: c.id,
+      author,
+      body,
+      createdAt: iso(minutesAgo),
+      meta,
+    };
+    this.chatMessages.get(c.id)?.push(m);
+    c.messageCount++;
+    c.updatedAt = m.createdAt;
+    return m;
+  }
+
+  private chatsRoute(method: string, id: string | undefined, url: URL, body: unknown): Response {
+    const q = url.searchParams;
+    const page = <T>(items: T[], fallback: number, max: number) => {
+      const limit = Math.min(Number(q.get("limit") ?? fallback) || fallback, max);
+      const offset = Number((q.get("cursor") ?? "o0").slice(1)) || 0;
+      const end = offset + limit;
+      return { items: items.slice(offset, end), ...(end < items.length && { next: `o${end}` }) };
+    };
+    if (!id && method === "GET") {
+      const own = this.chats
+        .filter((c) => c.owner === me.user)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id));
+      return json(page(own, 50, 200));
+    }
+    if (!id && method === "POST") {
+      const context = this.validContext((body as { context?: unknown } | undefined)?.context);
+      if (typeof context === "string") return error(400, "bad_request", context);
+      return json(this.newChat(context), 201);
+    }
+    const chat = this.ownChat(id);
+    if (!chat) return error(404, "not_found", "Chat not found.");
+    if (method === "GET") {
+      const { items, next } = page(this.chatMessages.get(chat.id) ?? [], 100, 500);
+      return json({ chat, messages: items, ...(next && { next }) });
+    }
+    if (method === "PATCH") {
+      const { title, context } = (body ?? {}) as { title?: unknown; context?: unknown };
+      if (title !== undefined) {
+        if (typeof title !== "string" || !title.trim() || title.length > 200)
+          return error(400, "bad_request", "title must be 1 to 200 characters.");
+        chat.title = title.trim();
+      }
+      if (context !== undefined) {
+        const refs = this.validContext(context);
+        if (typeof refs === "string") return error(400, "bad_request", refs);
+        chat.context = refs;
+      }
+      return json(chat);
+    }
+    if (method === "DELETE") {
+      this.chats = this.chats.filter((c) => c !== chat);
+      this.chatMessages.delete(chat.id);
+      return new Response(null, { status: 204 });
+    }
+    return error(404, "not_found", "No such route.");
+  }
+
   private ask(body: unknown): Response {
     if (!me.features.ai) return error(503, "disabled", "Ask AI is turned off.");
-    const { cluster, resourceId, threadId, question, attachments } = body as {
-      cluster: string;
-      resourceId?: string;
-      threadId?: string;
-      question: string;
+    const { chatId, context, question, attachments } = (body ?? {}) as {
+      chatId?: string;
+      context?: unknown;
+      question?: string;
       attachments?: AskAttachment[];
     };
+    if (typeof question !== "string" || !question.trim())
+      return error(400, "bad_request", "question is required.");
+    if (new TextEncoder().encode(question).length > 8 * 1024)
+      return error(400, "bad_request", "question is at most 8 KiB.");
+    const refs = context === undefined ? undefined : this.validContext(context);
+    if (typeof refs === "string") return error(400, "bad_request", refs);
     if (attachments?.length) {
-      if (!me.features.aiLogs)
+      if (!me.features.aiLogs && attachments.some((a) => a.kind === "logs"))
         return error(400, "bad_request", "Log attachments are turned off (ai.allowLogs).");
       const lines = attachments.reduce((n, a) => n + a.lines.length, 0);
       const size = attachments.reduce(
@@ -1128,51 +1248,135 @@ export class MockHub {
       if (attachments.length > 3 || lines > 500 || size > 32 * 1024)
         return error(400, "bad_request", "At most 3 attachments, 500 lines and 32 KiB in total.");
     }
-    const cl = this.cluster(cluster);
-    if (!cl) return error(404, "not_found", "Cluster not found.");
-    const r = resourceId ? cl.resources.get(resourceId) : undefined;
-    const ref: ResourceRef = r
-      ? { cluster, group: r.group, kind: r.kind, namespace: r.namespace, name: r.name }
-      : { cluster, group: "", kind: "", namespace: "", name: "" };
-    const thread =
-      this.threads.find((t) => t.id === threadId) ??
-      this.newThread(ref, question.slice(0, 80), human(me.display), "ask");
-    this.addMessage(thread, human(me.display, "askai"), question);
+    let chat: Chat;
+    if (chatId) {
+      const found = this.ownChat(chatId);
+      if (!found) return error(404, "not_found", "Chat not found.");
+      chat = found;
+      if (refs) chat.context = refs;
+    } else {
+      chat = this.newChat(refs ?? [], question.trim().replace(/\s+/g, " ").slice(0, 80));
+    }
+    if ((this.chatMessages.get(chat.id)?.length ?? 0) >= 1000)
+      return error(409, "conflict", "This chat is full. Start a new one.");
+    this.chatMessage(chat, human(me.display, "askai"), question);
 
+    const contextStatus: ContextStatus[] = chat.context.map((r) =>
+      this.contextVisible(r) ? "ok" : "hidden",
+    );
+    const seen = chat.context.filter((_, i) => contextStatus[i] === "ok");
+    const { text, steps } = this.answer(seen, attachments);
+    const message = this.chatMessage(chat, aiAuthor, text, 0, {
+      steps,
+      usage: { inputTokens: 2310, outputTokens: 164 },
+    });
+    this.record("ai.ask", seen[0], "ok", { chatId: chat.id, context: chat.context });
+    return json({ chat, message, steps, contextStatus });
+  }
+
+  /** A canned answer that names the context it read, like the real tool loop would. */
+  private answer(
+    refs: ResourceRef[],
+    attachments: AskAttachment[] | undefined,
+  ): { text: string; steps: AskStep[] } {
     const steps: AskStep[] = [];
-    let text: string;
+    const named = (r: ResourceRef) =>
+      r.kind
+        ? `\`${kindInfo(r.kind).abbr} ${r.namespace ? `${r.namespace}/` : ""}${r.name}\` on ${r.cluster}`
+        : `\`${r.cluster}\``;
+    const intro = refs.length
+      ? `Looking at ${refs.map(named).join(", ")}.\n\n`
+      : "No resource is in this chat's context, so I looked across the fleet.\n\n";
     if (attachments?.length) {
       const all = attachments.flatMap((a) => a.lines);
       const errors = all.filter((l) => /\b(error|fatal|panic|failed)\b/i.test(l));
       const warns = all.filter((l) => /\bwarn(ing)?\b/i.test(l));
       const sources = attachments.map((a) => `\`${a.source}\``).join(", ");
-      text = `I read ${all.length} log line${all.length === 1 ? "" : "s"} from ${sources}.\n\n- ${errors.length} error${errors.length === 1 ? "" : "s"} and ${warns.length} warning${warns.length === 1 ? "" : "s"}.${errors[0] ? `\n- The first error:\n\n\`\`\`\n${errors[0]}\n\`\`\`` : "\n- Nothing in these lines looks like a failure."}\n- If this repeats, check the pod's events and recent rollouts.`;
-    } else if (r) {
-      steps.push({ tool: "get_resource", args: { cluster, id: r.id }, bytes: 1830 });
-      steps.push({ tool: "get_events", args: { cluster, id: r.id }, bytes: 942 });
-      if (r.status === "failed") {
-        text = `\`${r.name}\` is failing: ${r.message ?? "no message"}\n\n- Latest event: \`${r.events[0]?.reason ?? "none"}\`, seen ${r.events[0]?.count ?? 0} times.\n- Check what changed in the source, then run \`flux reconcile ${r.kind.toLowerCase()} ${r.name} -n ${r.namespace} --with-source\` (press R).\n- If it was working before, pin the previous version in Git.`;
-      } else if (r.status === "suspended") {
-        text = `\`${r.name}\` is suspended, so Flux is not applying changes.\n\n- ${r.events[0]?.message ?? "No suspend event is recorded."}\n- Resume it with \`flux resume ${r.kind.toLowerCase()} ${r.name} -n ${r.namespace}\` (press s).`;
-      } else {
-        text = `\`${r.name}\` is **${r.status}**. ${r.message ?? ""}\n\n- ${r.chart ? `Chart \`${r.chart}\`` : r.revision ? `Revision \`${r.revision.slice(0, 20)}\`` : `Images: \`${r.images?.join(", ") ?? "n/a"}\``}\n- No warning events in the last hour.`;
-      }
-    } else {
-      steps.push({ tool: "search_resources", args: { cluster, status: "failed" }, bytes: 2210 });
-      const bad = [...cl.resources.values()].filter((x) => x.status === "failed" || x.status === "suspended");
-      text = bad.length
-        ? `${bad.length} object${bad.length === 1 ? " needs" : "s need"} attention on \`${cluster}\`:\n\n${bad
-            .slice(0, 4)
-            .map((x) => `- \`${x.kind}/${x.name}\` is ${x.status}: ${x.message ?? ""}`)
-            .join("\n")}`
-        : `Everything on \`${cluster}\` is ready. Flux ${cl.info.fluxVersion ?? ""} is running on Kubernetes ${cl.info.kubernetesVersion ?? ""}.`;
+      return {
+        steps,
+        text: `${intro}I read ${all.length} line${all.length === 1 ? "" : "s"} from ${sources}.\n\n- ${errors.length} error${errors.length === 1 ? "" : "s"} and ${warns.length} warning${warns.length === 1 ? "" : "s"}.${errors[0] ? `\n- The first error:\n\n\`\`\`\n${errors[0]}\n\`\`\`` : "\n- Nothing in these lines looks like a failure."}\n- If this repeats, check the events and recent rollouts.`,
+      };
     }
-    const message = this.addMessage(thread, aiAuthor, text, 0, {
-      steps,
-      usage: { inputTokens: 2310, outputTokens: 164 },
-    });
-    this.record("ai.ask", ref, "ok");
-    return json({ threadId: thread.id, message, steps });
+    const parts: string[] = [];
+    for (const ref of refs.slice(0, 4)) {
+      const cl = this.cluster(ref.cluster);
+      if (!cl) continue;
+      if (!ref.kind) {
+        steps.push({ tool: "list_unhealthy", args: { cluster: ref.cluster }, bytes: 2210 });
+        const bad = [...cl.resources.values()].filter(
+          (x) => x.status === "failed" || x.status === "suspended",
+        );
+        parts.push(
+          bad.length
+            ? `**${ref.cluster}**: ${bad.length} object${bad.length === 1 ? " needs" : "s need"} attention.\n${bad
+                .slice(0, 4)
+                .map((x) => `- \`${x.kind}/${x.name}\` is ${x.status}: ${x.message ?? ""}`)
+                .join("\n")}`
+            : `**${ref.cluster}**: everything is ready. Flux ${cl.info.fluxVersion ?? ""} on Kubernetes ${cl.info.kubernetesVersion ?? ""}.`,
+        );
+        continue;
+      }
+      const r = findResource(cl, ref.kind, ref.namespace, ref.name, ref.group || undefined);
+      if (!r) continue;
+      steps.push({ tool: "get_resource", args: { cluster: ref.cluster, id: r.id }, bytes: 1830 });
+      steps.push({ tool: "get_events", args: { cluster: ref.cluster, id: r.id }, bytes: 942 });
+      if (r.status === "failed")
+        parts.push(
+          `\`${r.name}\` is failing: ${r.message ?? "no message"}\n- Latest event: \`${r.events[0]?.reason ?? "none"}\`, seen ${r.events[0]?.count ?? 0} times.\n- Check what changed in the source, then reconcile with source (press R).`,
+        );
+      else if (r.status === "suspended")
+        parts.push(
+          `\`${r.name}\` is suspended, so Flux is not applying changes. ${r.events[0]?.message ?? ""}\n- Resume it with \`flux resume ${r.kind.toLowerCase()} ${r.name} -n ${r.namespace}\` (press s).`,
+        );
+      else
+        parts.push(
+          `\`${r.name}\` is **${r.status}**. ${r.message ?? ""}\n- ${r.chart ? `Chart \`${r.chart}\`` : r.revision ? `Revision \`${r.revision.slice(0, 20)}\`` : `Images: \`${r.images?.join(", ") ?? "n/a"}\``}\n- No warning events in the last hour.`,
+        );
+    }
+    if (!refs.length) {
+      steps.push({ tool: "list_unhealthy", args: {}, bytes: 3120 });
+      const bad = this.clusters.flatMap((c) =>
+        [...c.resources.values()]
+          .filter((x) => x.status === "failed")
+          .map((x) => `- \`${x.kind}/${x.name}\` on ${c.info.name}`),
+      );
+      parts.push(
+        bad.length
+          ? `Failing across the fleet:\n${bad.slice(0, 5).join("\n")}`
+          : "Nothing is failing across the fleet.",
+      );
+    }
+    return { steps, text: intro + parts.join("\n\n") };
+  }
+
+  private seedChats(): void {
+    const podinfo: ResourceRef = {
+      cluster: "staging",
+      group: "helm.toolkit.fluxcd.io",
+      kind: "HelmRelease",
+      namespace: "apps",
+      name: "podinfo",
+    };
+    const a = this.newChat(
+      [podinfo, { cluster: "staging", group: "", kind: "", namespace: "", name: "" }],
+      "Why does the podinfo upgrade time out?",
+      60 * 26,
+    );
+    this.chatMessage(a, human(me.display, "askai"), "Why does the podinfo upgrade time out?", 60 * 26);
+    this.chatMessage(
+      a,
+      aiAuthor,
+      "Looking at `HR apps/podinfo` on staging.\n\nOne replica is stuck in `ImagePullBackOff`: the values point at the `6.7.2-debug` tag, which was never pushed.",
+      60 * 26,
+      { steps: [{ tool: "get_events", args: { cluster: "staging" }, bytes: 942 }] },
+    );
+    const b = this.newChat(
+      [{ cluster: "prod-eu", group: "", kind: "", namespace: "", name: "" }],
+      "Anything unhealthy on prod-eu?",
+      60 * 24 * 3,
+    );
+    this.chatMessage(b, human(me.display, "askai"), "Anything unhealthy on prod-eu?", 60 * 24 * 3);
+    this.chatMessage(b, aiAuthor, "Looking at `prod-eu`.\n\nEverything is ready.", 60 * 24 * 3);
   }
 
   private tokensRoute(method: string, id: string | undefined, body: unknown): Response {

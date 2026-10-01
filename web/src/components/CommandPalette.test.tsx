@@ -7,6 +7,7 @@ import type { SearchQuery } from "../api/endpoints";
 import { type FleetResource, keys } from "../api/queries";
 import type { ClusterInfo, ResourceSnapshot, SearchResponse } from "../api/types";
 import { AppStateProvider } from "../lib/appState";
+import { ChatProvider } from "../lib/chatState";
 import { rank } from "../lib/fuzzy";
 import { resource } from "../test/fixtures";
 import { CommandPalette } from "./CommandPalette";
@@ -27,7 +28,12 @@ const fleet: FleetResource[] = [
 ];
 
 const navigate = vi.hoisted(() => vi.fn());
-const api = vi.hoisted(() => ({ search: vi.fn(), getAttention: vi.fn(), getResources: vi.fn() }));
+const api = vi.hoisted(() => ({
+  search: vi.fn(),
+  getAttention: vi.fn(),
+  getResources: vi.fn(),
+  listChats: vi.fn(),
+}));
 const fleetFallback = vi.hoisted(() => vi.fn());
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 vi.mock("../api/endpoints", async (importOriginal) => ({
@@ -77,6 +83,7 @@ beforeEach(() => {
   api.getAttention.mockReset().mockResolvedValue({ items: [], total: 0, findings: [] });
   api.getResources.mockReset().mockResolvedValue({ items: [], resourceVersion: "1" });
   fleetFallback.mockReset();
+  api.listChats.mockReset().mockResolvedValue({ items: [] });
 });
 
 function open(routeCluster?: string, query = "") {
@@ -90,7 +97,9 @@ function open(routeCluster?: string, query = "") {
   render(
     <QueryClientProvider client={qc}>
       <AppStateProvider>
-        <CommandPalette initialQuery={query} routeCluster={routeCluster} />
+        <ChatProvider>
+          <CommandPalette initialQuery={query} routeCluster={routeCluster} />
+        </ChatProvider>
       </AppStateProvider>
     </QueryClientProvider>,
   );
@@ -300,5 +309,40 @@ describe("CommandPalette fleet search", () => {
     await user.keyboard("{ArrowDown}");
     expect(options()[0]).toHaveAttribute("aria-selected", "true");
     expect(input()).toHaveAttribute("aria-activedescendant", options()[0]?.id);
+  });
+});
+
+describe("CommandPalette Ask AI chats", () => {
+  const input = () => screen.getByRole("combobox", { name: "Search" });
+
+  it("lists the user's chats as commands and opens one on its cluster", async () => {
+    api.listChats.mockResolvedValue({
+      items: [
+        {
+          id: "ch_1",
+          owner: "local:dana",
+          title: "Why is payments failing?",
+          context: [{ cluster: "prod-eu", group: "", kind: "", namespace: "", name: "" }],
+          createdAt: "2026-09-30T10:00:00Z",
+          updatedAt: "2026-09-30T10:00:00Z",
+          messageCount: 4,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    open(undefined);
+    await user.type(input(), ":open chat");
+    const option = (text: string) =>
+      waitFor(() => {
+        const o = screen.getAllByRole("option").find((x) => x.textContent?.includes(text));
+        if (!o) throw new Error(`no option ${text}`);
+        return o;
+      });
+    expect(await option("Ask AI: open chat…")).toBeInTheDocument();
+    const chat = await option("open chat “Why is payments failing?”");
+    expect(chat).toHaveTextContent("4 messages");
+    await user.click(chat);
+    expect(navigate).toHaveBeenCalledWith({ to: "/c/$cluster", params: { cluster: "prod-eu" } });
+    expect(JSON.parse(sessionStorage.getItem("eddy.ai.chat") ?? "{}")).toMatchObject({ chatId: "ch_1" });
   });
 });

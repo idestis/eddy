@@ -60,6 +60,15 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Threads/SetStatus", testThreadSetStatus},
 		{"Threads/DeleteCascades", testThreadDeleteCascades},
 		{"Threads/ConcurrentAddMessageLimit", testConcurrentAddMessage},
+		{"Chats/CreateGet", testChatCreateGet},
+		{"Chats/Validation", testChatValidation},
+		{"Chats/Update", testChatUpdate},
+		{"Chats/Messages", testChatMessages},
+		{"Chats/MessageLimit", testChatMessageLimit},
+		{"Chats/List", testChatList},
+		{"Chats/Evict", testChatEvict},
+		{"Chats/ConcurrentCreate", testChatConcurrentCreate},
+		{"Chats/DeleteCascades", testChatDeleteCascades},
 		{"Audit/AppendQuery", testAuditAppendQuery},
 		{"Audit/Filters", testAuditFilters},
 		{"Audit/Pagination", testAuditPagination},
@@ -70,7 +79,7 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Prune/Audit", testPruneAudit},
 		{"Prune/AuditBatches", testPruneAuditBatches},
 		{"Prune/ResolvedThreads", testPruneResolvedThreads},
-		{"Prune/AskThreads", testPruneAskThreads},
+		{"Prune/Chats", testPruneChats},
 		{"Prune/Disabled", testPruneDisabled},
 		{"Prune/RateLimitsAndAgentSessions", testPruneShared},
 		{"RateLimits/Window", testRateLimitWindow},
@@ -525,7 +534,7 @@ func mustCreate(t *testing.T, s store.Store, th store.Thread) store.Thread {
 
 func testThreadCreateGet(t *testing.T, s store.Store) {
 	by := store.Author{Type: store.AuthorAI, Subject: "alice", Display: "Alice", Via: "askai", Client: "claude-haiku"}
-	in := store.Thread{Ref: refA, Type: store.ThreadAsk, Visibility: store.VisibilityPrivate, Title: "Why is podinfo failing?", CreatedBy: by, CreatedAt: t0}
+	in := store.Thread{Ref: refA, Type: store.ThreadDiscussion, Visibility: store.VisibilityPrivate, Title: "Why is podinfo failing?", CreatedBy: by, CreatedAt: t0}
 	first := store.Message{Author: by, Body: "Because…", Meta: json.RawMessage(`{"steps":[{"tool":"get"}]}`)}
 	th, m, err := s.Threads().Create(ctx(t), in, first)
 	check(t, err, "create")
@@ -583,6 +592,7 @@ func testThreadValidation(t *testing.T, s store.Store) {
 		{"body over limit", func(_ *store.Thread, m *store.Message) { m.Body = strings.Repeat("a", store.MaxMessageBytes+1) }, store.ErrLimit},
 		{"multibyte body over limit", func(_ *store.Thread, m *store.Message) { m.Body = strings.Repeat("é", store.MaxMessageBytes/2+1) }, store.ErrLimit},
 		{"bad type", func(th *store.Thread, _ *store.Message) { th.Type = "chat" }, errAny},
+		{"ask type is gone", func(th *store.Thread, _ *store.Message) { th.Type = "ask" }, errAny},
 		{"bad visibility", func(th *store.Thread, _ *store.Message) { th.Visibility = "public" }, errAny},
 		{"missing cluster", func(th *store.Thread, _ *store.Message) { th.Ref.Cluster = "" }, errAny},
 		{"bad author type", func(_ *store.Thread, m *store.Message) { m.Author.Type = "bot" }, errAny},
@@ -702,8 +712,8 @@ func testThreadListFilters(t *testing.T, s store.Store) {
 	a2 := mk(refA, "a2", "bob", store.ThreadDiscussion, store.VisibilityResource, t0.Add(2*time.Second))
 	b1 := mk(refB, "b1", "alice", store.ThreadDiscussion, store.VisibilityResource, t0.Add(3*time.Second))
 	c1 := mk(refC, "c1", "bob", store.ThreadDiscussion, store.VisibilityResource, t0.Add(4*time.Second))
-	pa := mk(refA, "private alice", "alice", store.ThreadAsk, store.VisibilityPrivate, t0.Add(5*time.Second))
-	pb := mk(refA, "private bob", "bob", store.ThreadAsk, store.VisibilityPrivate, t0.Add(6*time.Second))
+	pa := mk(refA, "private alice", "alice", store.ThreadDiscussion, store.VisibilityPrivate, t0.Add(5*time.Second))
+	pb := mk(refA, "private bob", "bob", store.ThreadDiscussion, store.VisibilityPrivate, t0.Add(6*time.Second))
 	check(t, s.Threads().SetStatus(ctx(t), a2.ID, store.ThreadResolved, "bob", t0.Add(2500*time.Millisecond)), "resolve a2")
 
 	tests := []struct {
@@ -722,7 +732,8 @@ func testThreadListFilters(t *testing.T, s store.Store) {
 		{"name", store.ThreadFilter{Ref: store.ResourceRef{Name: "podinfo"}}, []store.Thread{a2, a1}},
 		{"status open", store.ThreadFilter{Status: store.ThreadOpen}, []store.Thread{c1, b1, a1}},
 		{"status resolved", store.ThreadFilter{Status: store.ThreadResolved}, []store.Thread{a2}},
-		{"type ask", store.ThreadFilter{Type: store.ThreadAsk, Viewer: "alice"}, []store.Thread{pa}},
+		{"type discussion", store.ThreadFilter{Type: store.ThreadDiscussion, Viewer: "alice"}, []store.Thread{pa, c1, b1, a2, a1}},
+		{"type ask is gone", store.ThreadFilter{Type: "ask", Viewer: "alice"}, nil},
 		{"no match", store.ThreadFilter{Ref: store.ResourceRef{Cluster: "nope"}}, nil},
 	}
 	for _, tc := range tests {
@@ -912,6 +923,434 @@ func testConcurrentAddMessage(t *testing.T, s store.Store) {
 		cursor = next
 	}
 	equal(t, total, store.MaxMessagesPerThread, "stored messages")
+}
+
+// ---- chats ----
+
+var refCluster = store.ResourceRef{Cluster: "staging"}
+
+func newChat(owner, title string, at time.Time, refs ...store.ResourceRef) store.Chat {
+	return store.Chat{Owner: owner, Title: title, Context: refs, CreatedAt: at}
+}
+
+func mustCreateChat(t *testing.T, s store.Store, c store.Chat) store.Chat {
+	t.Helper()
+	got, err := s.Chats().Create(ctx(t), c)
+	check(t, err, "create chat")
+	return got
+}
+
+func chatIDs(v []store.Chat) []string {
+	out := make([]string, len(v))
+	for i, c := range v {
+		out[i] = c.ID
+	}
+	return out
+}
+
+func testChatCreateGet(t *testing.T, s store.Store) {
+	in := newChat("alice", "Why is podinfo failing?", t0, refA, refCluster)
+	c, err := s.Chats().Create(ctx(t), in)
+	check(t, err, "create")
+	if c.ID == "" {
+		t.Fatal("chat id not generated")
+	}
+	want := store.Chat{
+		ID: c.ID, Owner: "alice", Title: in.Title, Context: []store.ResourceRef{refA, refCluster},
+		CreatedAt: ms(t0), UpdatedAt: ms(t0),
+	}
+	equal(t, c, want, "created chat")
+	got, err := s.Chats().Get(ctx(t), "alice", c.ID)
+	check(t, err, "get")
+	equal(t, got, want, "stored chat")
+
+	// The caller's slice is copied, not aliased.
+	in.Context[0].Name = "changed"
+	got, err = s.Chats().Get(ctx(t), "alice", c.ID)
+	check(t, err, "get after caller change")
+	equal(t, got.Context[0], refA, "context is copied")
+
+	empty := mustCreateChat(t, s, newChat("alice", "", t0))
+	equal(t, empty.Context, []store.ResourceRef(nil), "empty context")
+	got, err = s.Chats().Get(ctx(t), "alice", empty.ID)
+	check(t, err, "get empty")
+	equal(t, got.Context, []store.ResourceRef(nil), "stored empty context")
+
+	for _, owner := range []string{"bob", "", "ALICE"} {
+		_, err = s.Chats().Get(ctx(t), owner, c.ID)
+		wantErr(t, err, store.ErrNotFound, "get as "+owner)
+	}
+	_, err = s.Chats().Get(ctx(t), "alice", "missing")
+	wantErr(t, err, store.ErrNotFound, "missing chat")
+
+	fixed := newChat("bob", "fixed", t0)
+	fixed.ID = "chat-fixed"
+	got, err = s.Chats().Create(ctx(t), fixed)
+	check(t, err, "create with caller id")
+	equal(t, got.ID, "chat-fixed", "caller id kept")
+	_, err = s.Chats().Create(ctx(t), fixed)
+	wantErr(t, err, store.ErrConflict, "duplicate chat id")
+}
+
+func testChatValidation(t *testing.T, s store.Store) {
+	many := func(n int) []store.ResourceRef {
+		out := make([]store.ResourceRef, n)
+		for i := range out {
+			out[i] = store.ResourceRef{Cluster: fmt.Sprintf("c%d", i)}
+		}
+		return out
+	}
+	tests := []struct {
+		name    string
+		mutate  func(c *store.Chat)
+		wantErr error // nil = must succeed
+	}{
+		{"context at limit", func(c *store.Chat) { c.Context = many(store.MaxChatContext) }, nil},
+		{"context over limit", func(c *store.Chat) { c.Context = many(store.MaxChatContext + 1) }, store.ErrInvalid},
+		{"title at limit", func(c *store.Chat) { c.Title = strings.Repeat("é", store.MaxTitleLen) }, nil},
+		{"title over limit", func(c *store.Chat) { c.Title = strings.Repeat("a", store.MaxTitleLen+1) }, store.ErrLimit},
+		{"missing owner", func(c *store.Chat) { c.Owner = "" }, store.ErrInvalid},
+		{"ref without cluster", func(c *store.Chat) { c.Context = []store.ResourceRef{{Kind: "Pod", Name: "x"}} }, store.ErrInvalid},
+		{"cluster ref with a name", func(c *store.Chat) { c.Context = []store.ResourceRef{{Cluster: "prod", Name: "x"}} }, store.ErrInvalid},
+		{"kind without name", func(c *store.Chat) { c.Context = []store.ResourceRef{{Cluster: "prod", Kind: "Pod"}} }, store.ErrInvalid},
+		{"name too long", func(c *store.Chat) {
+			c.Context = []store.ResourceRef{{Cluster: "prod", Kind: "Pod", Name: strings.Repeat("a", 254)}}
+		}, store.ErrInvalid},
+		{"nul in name", func(c *store.Chat) { c.Context = []store.ResourceRef{{Cluster: "prod", Kind: "Pod", Name: "a\x00b"}} }, store.ErrInvalid},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newChat("alice", "title", t0, refA)
+			tc.mutate(&c)
+			_, err := s.Chats().Create(ctx(t), c)
+			if tc.wantErr == nil {
+				check(t, err, "create")
+				return
+			}
+			wantErr(t, err, tc.wantErr, "create")
+		})
+	}
+
+	c := mustCreateChat(t, s, newChat("alice", "t", t0))
+	_, err := s.Chats().AddMessage(ctx(t), "alice", c.ID, msg(strings.Repeat("a", store.MaxMessageBytes+1), human("alice"), t0))
+	wantErr(t, err, store.ErrLimit, "oversized message")
+	bad := msg("x", human("alice"), t0)
+	bad.Author.Type = "bot"
+	if _, err := s.Chats().AddMessage(ctx(t), "alice", c.ID, bad); err == nil {
+		t.Fatal("bad author type accepted")
+	}
+}
+
+func testChatUpdate(t *testing.T, s store.Store) {
+	c := mustCreateChat(t, s, newChat("alice", "first", t0, refA))
+	refs := []store.ResourceRef{refCluster, refA}
+
+	got, err := s.Chats().Update(ctx(t), "alice", c.ID, store.ChatUpdate{Title: ptr("renamed")})
+	check(t, err, "rename")
+	equal(t, got.Title, "renamed", "title")
+	equal(t, got.Context, []store.ResourceRef{refA}, "context unchanged by rename")
+
+	got, err = s.Chats().Update(ctx(t), "alice", c.ID, store.ChatUpdate{Context: &refs})
+	check(t, err, "replace context")
+	equal(t, got.Context, refs, "context replaced")
+	equal(t, got.Title, "renamed", "title unchanged by context")
+
+	got, err = s.Chats().Update(ctx(t), "alice", c.ID, store.ChatUpdate{})
+	check(t, err, "empty update")
+	equal(t, got.Context, refs, "empty update changes nothing")
+
+	none := []store.ResourceRef{}
+	got, err = s.Chats().Update(ctx(t), "alice", c.ID, store.ChatUpdate{Context: &none})
+	check(t, err, "clear context")
+	equal(t, got.Context, []store.ResourceRef(nil), "context cleared")
+
+	stored, err := s.Chats().Get(ctx(t), "alice", c.ID)
+	check(t, err, "get")
+	equal(t, stored, got, "stored after update")
+	equal(t, stored.CreatedAt, ms(t0), "created at unchanged")
+	equal(t, stored.MessageCount, 0, "message count unchanged")
+
+	tooMany := make([]store.ResourceRef, store.MaxChatContext+1)
+	for i := range tooMany {
+		tooMany[i] = refCluster
+	}
+	_, err = s.Chats().Update(ctx(t), "alice", c.ID, store.ChatUpdate{Context: &tooMany})
+	wantErr(t, err, store.ErrInvalid, "context over limit")
+	_, err = s.Chats().Update(ctx(t), "alice", c.ID, store.ChatUpdate{Title: ptr(strings.Repeat("a", store.MaxTitleLen+1))})
+	wantErr(t, err, store.ErrLimit, "title over limit")
+
+	_, err = s.Chats().Update(ctx(t), "bob", c.ID, store.ChatUpdate{Title: ptr("hijack")})
+	wantErr(t, err, store.ErrNotFound, "update as another owner")
+	_, err = s.Chats().Update(ctx(t), "bob", c.ID, store.ChatUpdate{})
+	wantErr(t, err, store.ErrNotFound, "empty update as another owner")
+	_, err = s.Chats().Update(ctx(t), "alice", "missing", store.ChatUpdate{Title: ptr("x")})
+	wantErr(t, err, store.ErrNotFound, "update missing")
+	stored, err = s.Chats().Get(ctx(t), "alice", c.ID)
+	check(t, err, "get")
+	equal(t, stored.Title, "renamed", "title after foreign update")
+}
+
+func testChatMessages(t *testing.T, s store.Store) {
+	c := mustCreateChat(t, s, newChat("alice", "t", t0))
+	ai := store.Author{Type: store.AuthorAI, Subject: "alice", Display: "Alice", Via: "askai", Client: "model-1"}
+	q, err := s.Chats().AddMessage(ctx(t), "alice", c.ID, msg("question", human("alice"), t0.Add(time.Second)))
+	check(t, err, "add question")
+	answer := store.Message{Author: ai, Body: "answer", Meta: json.RawMessage(`{"steps":[]}`), CreatedAt: t0.Add(2 * time.Second)}
+	a, err := s.Chats().AddMessage(ctx(t), "alice", c.ID, answer)
+	check(t, err, "add answer")
+	if q.ID == "" || q.ThreadID != c.ID || a.Author != ai {
+		t.Fatalf("messages = %+v %+v", q, a)
+	}
+	got, err := s.Chats().Get(ctx(t), "alice", c.ID)
+	check(t, err, "get")
+	equal(t, got.MessageCount, 2, "message count")
+	equal(t, got.UpdatedAt, ms(t0.Add(2*time.Second)), "updated at bumped")
+	equal(t, got.CreatedAt, ms(t0), "created at unchanged")
+
+	_, err = s.Chats().AddMessage(ctx(t), "bob", c.ID, msg("hijack", human("bob"), t0))
+	wantErr(t, err, store.ErrNotFound, "add as another owner")
+	_, err = s.Chats().AddMessage(ctx(t), "alice", "missing", msg("x", human("alice"), t0))
+	wantErr(t, err, store.ErrNotFound, "add to missing chat")
+	_, _, err = s.Chats().Messages(ctx(t), "bob", c.ID, "", 10)
+	wantErr(t, err, store.ErrNotFound, "messages as another owner")
+	_, _, err = s.Chats().Messages(ctx(t), "alice", "missing", "", 10)
+	wantErr(t, err, store.ErrNotFound, "messages of missing chat")
+
+	for i := range 22 {
+		// Groups of three share a timestamp to exercise the id tie-break.
+		_, err := s.Chats().AddMessage(ctx(t), "alice", c.ID, msg(fmt.Sprint(i), human("alice"), t0.Add(time.Duration(i/3+3)*time.Second)))
+		check(t, err, "add")
+	}
+	all, next, err := s.Chats().Messages(ctx(t), "alice", c.ID, "", 500)
+	check(t, err, "all")
+	equal(t, next, "", "single page")
+	equal(t, len(all), 24, "messages")
+	equal(t, all[0].ID, q.ID, "oldest first")
+	equal(t, all[1].Body, "answer", "answer second")
+	var meta any
+	check(t, json.Unmarshal(all[1].Meta, &meta), "meta is JSON")
+	for i := 1; i < len(all); i++ {
+		x, y := all[i-1], all[i]
+		if x.CreatedAt.After(y.CreatedAt) || (x.CreatedAt.Equal(y.CreatedAt) && x.ID >= y.ID) {
+			t.Fatalf("messages not in (createdAt, id) order at %d", i)
+		}
+	}
+	var paged []store.Message
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("pagination does not terminate")
+		}
+		items, next, err := s.Chats().Messages(ctx(t), "alice", c.ID, cursor, 5)
+		check(t, err, "page")
+		if len(items) > 5 {
+			t.Fatalf("page has %d items, limit 5", len(items))
+		}
+		paged = append(paged, items...)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	equal(t, ids(paged), ids(all), "paged messages equal the full list")
+	if _, _, err := s.Chats().Messages(ctx(t), "alice", c.ID, "!!bad!!", 5); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("invalid cursor: %v", err)
+	}
+}
+
+func testChatMessageLimit(t *testing.T, s store.Store) {
+	c := mustCreateChat(t, s, newChat("alice", "long", t0))
+	const workers = 10
+	per := store.MaxMessagesPerChat/workers + 5
+	var (
+		wg           sync.WaitGroup
+		mu           sync.Mutex
+		ok, conflict int
+		other        []error
+	)
+	for w := range workers {
+		wg.Go(func() {
+			for i := range per {
+				_, err := s.Chats().AddMessage(context.Background(), "alice", c.ID,
+					msg(fmt.Sprintf("%d-%d", w, i), human("alice"), t0.Add(time.Duration(i)*time.Millisecond)))
+				mu.Lock()
+				switch {
+				case err == nil:
+					ok++
+				case errors.Is(err, store.ErrConflict):
+					conflict++
+				default:
+					other = append(other, err)
+				}
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+	if len(other) > 0 {
+		t.Fatalf("unexpected errors: %v", other[0])
+	}
+	equal(t, ok, store.MaxMessagesPerChat, "messages accepted")
+	equal(t, conflict, workers*per-ok, "messages rejected with ErrConflict")
+	got, err := s.Chats().Get(ctx(t), "alice", c.ID)
+	check(t, err, "get")
+	equal(t, got.MessageCount, store.MaxMessagesPerChat, "message count")
+}
+
+func testChatList(t *testing.T, s store.Store) {
+	var alice []store.Chat
+	for i := range 13 {
+		// Pairs share a creation time to exercise the id tie-break.
+		alice = append(alice, mustCreateChat(t, s, newChat("alice", fmt.Sprint(i), t0.Add(time.Duration(i/2)*time.Second))))
+	}
+	bob := mustCreateChat(t, s, newChat("bob", "bob's", t0.Add(time.Hour)))
+	// A message moves the oldest chat to the top.
+	_, err := s.Chats().AddMessage(ctx(t), "alice", alice[0].ID, msg("bump", human("alice"), t0.Add(time.Minute)))
+	check(t, err, "bump")
+
+	all, next, err := s.Chats().List(ctx(t), "alice", "", 200)
+	check(t, err, "list")
+	equal(t, next, "", "single page")
+	equal(t, len(all), 13, "alice's chats only")
+	equal(t, all[0].ID, alice[0].ID, "most recently updated first")
+	for i := 1; i < len(all); i++ {
+		x, y := all[i-1], all[i]
+		if x.UpdatedAt.Before(y.UpdatedAt) || (x.UpdatedAt.Equal(y.UpdatedAt) && x.ID <= y.ID) {
+			t.Fatalf("chats not in (updatedAt desc, id desc) order at %d", i)
+		}
+	}
+	for _, c := range all {
+		if c.Owner != "alice" || c.ID == bob.ID {
+			t.Fatalf("foreign chat listed: %+v", c)
+		}
+	}
+
+	var paged []store.Chat
+	cursor := ""
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("pagination does not terminate")
+		}
+		items, next, err := s.Chats().List(ctx(t), "alice", cursor, 4)
+		check(t, err, "page")
+		if len(items) > 4 {
+			t.Fatalf("page has %d items, limit 4", len(items))
+		}
+		paged = append(paged, items...)
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	equal(t, chatIDs(paged), chatIDs(all), "paged chats equal the full list")
+
+	got, _, err := s.Chats().List(ctx(t), "bob", "", 0)
+	check(t, err, "list bob")
+	equal(t, chatIDs(got), []string{bob.ID}, "bob's chats")
+	got, _, err = s.Chats().List(ctx(t), "carol", "", 0)
+	check(t, err, "list carol")
+	equal(t, len(got), 0, "no chats")
+	got, _, err = s.Chats().List(ctx(t), "", "", 0)
+	check(t, err, "list empty owner")
+	equal(t, len(got), 0, "empty owner lists nothing")
+	if _, _, err := s.Chats().List(ctx(t), "alice", "%%%", 0); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("invalid cursor: %v", err)
+	}
+}
+
+func testChatEvict(t *testing.T, s store.Store) {
+	var created []store.Chat
+	for i := range store.MaxChatsPerOwner {
+		created = append(created, mustCreateChat(t, s, newChat("alice", fmt.Sprint(i), t0.Add(time.Duration(i)*time.Second))))
+	}
+	bob := mustCreateChat(t, s, newChat("bob", "bob's oldest", t0.Add(-time.Hour)))
+	// Using the oldest chat makes the second oldest the least recently updated.
+	_, err := s.Chats().AddMessage(ctx(t), "alice", created[0].ID, msg("still here", human("alice"), t0.Add(time.Hour)))
+	check(t, err, "bump")
+
+	extra := mustCreateChat(t, s, newChat("alice", "one more", t0.Add(2*time.Hour)))
+	all, _, err := s.Chats().List(ctx(t), "alice", "", 200)
+	check(t, err, "list")
+	equal(t, len(all), store.MaxChatsPerOwner, "chats after eviction")
+	_, err = s.Chats().Get(ctx(t), "alice", created[1].ID)
+	wantErr(t, err, store.ErrNotFound, "least recently updated chat evicted")
+	for _, c := range []store.Chat{created[0], created[2], extra} {
+		_, err = s.Chats().Get(ctx(t), "alice", c.ID)
+		check(t, err, "kept "+c.Title)
+	}
+	_, err = s.Chats().Get(ctx(t), "bob", bob.ID)
+	check(t, err, "other owners are not evicted")
+}
+
+func testChatConcurrentCreate(t *testing.T, s store.Store) {
+	const start, workers = store.MaxChatsPerOwner - 5, 20
+	for i := range start {
+		mustCreateChat(t, s, newChat("alice", fmt.Sprint(i), t0.Add(time.Duration(i)*time.Millisecond)))
+	}
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+	)
+	for w := range workers {
+		wg.Go(func() {
+			_, err := s.Chats().Create(context.Background(), newChat("alice", fmt.Sprint("w", w), t0.Add(time.Hour+time.Duration(w)*time.Millisecond)))
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+	if len(errs) > 0 {
+		t.Fatalf("create: %v", errs[0])
+	}
+	all, _, err := s.Chats().List(ctx(t), "alice", "", 200)
+	check(t, err, "list")
+	equal(t, len(all), store.MaxChatsPerOwner, "chats never exceed the cap")
+	for _, c := range all[:workers] {
+		if !strings.HasPrefix(c.Title, "w") {
+			t.Fatalf("new chat evicted instead of an old one: %+v", c)
+		}
+	}
+}
+
+func testChatDeleteCascades(t *testing.T, s store.Store) {
+	c := newChat("alice", "t", t0, refA)
+	c.ID = "chat-1"
+	_, err := s.Chats().Create(ctx(t), c)
+	check(t, err, "create")
+	m := msg("hello", human("alice"), t0.Add(time.Second))
+	m.ID = "chat-message-1"
+	_, err = s.Chats().AddMessage(ctx(t), "alice", c.ID, m)
+	check(t, err, "add")
+	_, err = s.Chats().AddMessage(ctx(t), "alice", c.ID, m)
+	wantErr(t, err, store.ErrConflict, "duplicate message id")
+	other := mustCreateChat(t, s, newChat("alice", "other", t0))
+
+	wantErr(t, s.Chats().Delete(ctx(t), "bob", c.ID), store.ErrNotFound, "delete as another owner")
+	_, err = s.Chats().Get(ctx(t), "alice", c.ID)
+	check(t, err, "survives a foreign delete")
+
+	check(t, s.Chats().Delete(ctx(t), "alice", c.ID), "delete")
+	_, err = s.Chats().Get(ctx(t), "alice", c.ID)
+	wantErr(t, err, store.ErrNotFound, "get deleted")
+	_, _, err = s.Chats().Messages(ctx(t), "alice", c.ID, "", 10)
+	wantErr(t, err, store.ErrNotFound, "messages of deleted")
+	wantErr(t, s.Chats().Delete(ctx(t), "alice", c.ID), store.ErrNotFound, "delete again")
+
+	// Re-creating the same ids only works if the old messages were removed.
+	_, err = s.Chats().Create(ctx(t), c)
+	check(t, err, "re-create")
+	_, err = s.Chats().AddMessage(ctx(t), "alice", c.ID, m)
+	check(t, err, "re-add message with the same id")
+	msgs, _, err := s.Chats().Messages(ctx(t), "alice", c.ID, "", 10)
+	check(t, err, "messages")
+	equal(t, len(msgs), 1, "only the new message")
+
+	_, err = s.Chats().Get(ctx(t), "alice", other.ID)
+	check(t, err, "other chat survives")
 }
 
 // ---- audit ----
@@ -1177,31 +1616,37 @@ func testPruneResolvedThreads(t *testing.T, s store.Store) {
 	}
 }
 
-func testPruneAskThreads(t *testing.T, s store.Store) {
-	ask := func(title string, created, lastReply time.Time) store.Thread {
-		th := newThread(refA, title, human("alice"), created)
-		th.Type, th.Visibility = store.ThreadAsk, store.VisibilityPrivate
-		th = mustCreate(t, s, th)
-		if !lastReply.IsZero() {
-			_, err := s.Threads().AddMessage(ctx(t), th.ID, msg("answer", human("alice"), lastReply))
-			check(t, err, "reply")
+func testPruneChats(t *testing.T, s store.Store) {
+	mk := func(title string, created, lastMessage time.Time) store.Chat {
+		c, err := s.Chats().Create(ctx(t), store.Chat{Owner: "alice", Title: title, Context: []store.ResourceRef{refA}, CreatedAt: created})
+		check(t, err, "create chat")
+		if !lastMessage.IsZero() {
+			_, err := s.Chats().AddMessage(ctx(t), "alice", c.ID, msg("answer", human("alice"), lastMessage))
+			check(t, err, "message")
 		}
-		return th
+		return c
 	}
-	stale := ask("stale", now.Add(-40*day), now.Add(-31*day))
-	active := ask("active", now.Add(-40*day), now.Add(-29*day))
-	fresh := ask("fresh", now.Add(-day), time.Time{})
+	stale := mk("stale", now.Add(-40*day), now.Add(-31*day))
+	staleEmpty := mk("stale empty", now.Add(-31*day), time.Time{})
+	active := mk("active", now.Add(-40*day), now.Add(-29*day))
+	fresh := mk("fresh", now.Add(-day), time.Time{})
 	discussion := mustCreate(t, s, newThread(refA, "old discussion", human("alice"), now.Add(-300*day)))
 
-	st, err := s.Prune(ctx(t), now, store.Retention{AskThreadsDays: 30})
+	st, err := s.Prune(ctx(t), now, store.Retention{ChatDays: 30})
 	check(t, err, "prune")
-	equal(t, st, store.PruneStats{Threads: 1}, "stats")
-	_, err = s.Threads().Get(ctx(t), stale.ID)
-	wantErr(t, err, store.ErrNotFound, "stale ask thread")
-	for _, th := range []store.Thread{active, fresh, discussion} {
-		_, err = s.Threads().Get(ctx(t), th.ID)
-		check(t, err, "kept "+th.Title)
+	equal(t, st, store.PruneStats{Chats: 2}, "stats")
+	for _, c := range []store.Chat{stale, staleEmpty} {
+		_, err = s.Chats().Get(ctx(t), "alice", c.ID)
+		wantErr(t, err, store.ErrNotFound, "pruned "+c.Title)
+		_, _, err = s.Chats().Messages(ctx(t), "alice", c.ID, "", 10)
+		wantErr(t, err, store.ErrNotFound, "messages of pruned "+c.Title)
 	}
+	for _, c := range []store.Chat{active, fresh} {
+		_, err = s.Chats().Get(ctx(t), "alice", c.ID)
+		check(t, err, "kept "+c.Title)
+	}
+	_, err = s.Threads().Get(ctx(t), discussion.ID)
+	check(t, err, "chat retention keeps threads")
 }
 
 func testPruneDisabled(t *testing.T, s store.Store) {
@@ -1209,10 +1654,10 @@ func testPruneDisabled(t *testing.T, s store.Store) {
 	tok.ExpiresAt = t0.Add(day)
 	check(t, s.Tokens().Create(ctx(t), tok, 0), "create token")
 	check(t, s.Audit().Append(ctx(t), event("old", "alice", t0)), "append")
-	th := newThread(refA, "old ask", human("alice"), t0)
-	th.Type, th.Visibility = store.ThreadAsk, store.VisibilityPrivate
-	th = mustCreate(t, s, th)
+	th := mustCreate(t, s, newThread(refA, "old resolved", human("alice"), t0))
 	check(t, s.Threads().SetStatus(ctx(t), th.ID, store.ThreadResolved, "alice", t0), "resolve")
+	_, err := s.Chats().Create(ctx(t), store.Chat{Owner: "alice", Title: "old chat", CreatedAt: t0})
+	check(t, err, "create chat")
 
 	st, err := s.Prune(ctx(t), now, store.Retention{})
 	check(t, err, "prune")

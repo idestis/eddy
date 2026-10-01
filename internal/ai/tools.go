@@ -45,7 +45,7 @@ type tool struct {
 // clusterProp is shared by every tool schema.
 var clusterProp = map[string]any{
 	"type":        "string",
-	"description": "Cluster name. Defaults to the cluster the user is asking about.",
+	"description": "Cluster name. Defaults to the cluster of the first item in the chat context.",
 }
 
 // tools is the complete Ask AI tool set. Every entry is read-only; there is
@@ -173,6 +173,9 @@ func (a objectArgs) ref(env toolEnv) (string, model.Ref, error) {
 	cluster := a.Cluster
 	if cluster == "" {
 		cluster = env.cluster
+	}
+	if cluster == "" {
+		return "", model.Ref{}, fmt.Errorf("%w: cluster is required", errBadArgs)
 	}
 	return cluster, model.Ref{Group: group, Kind: a.Kind, Namespace: a.Namespace, Name: a.Name}, nil
 }
@@ -388,6 +391,9 @@ func getLogs(ctx context.Context, env toolEnv, raw json.RawMessage) (any, error)
 	cluster := a.Cluster
 	if cluster == "" {
 		cluster = env.cluster
+	}
+	if cluster == "" {
+		return nil, fmt.Errorf("%w: cluster is required", errBadArgs)
 	}
 	var lines []string
 	w := fleet.LineWriterFunc(func(l []string) error {

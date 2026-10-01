@@ -66,13 +66,3 @@ func truncate(s string, n int) (string, bool) {
 	}
 	return s[:cut], true
 }
-
-// firstRunes returns at most n runes of s, trimmed, on one line.
-func firstRunes(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	r := []rune(s)
-	return strings.TrimSpace(string(r[:n]))
-}

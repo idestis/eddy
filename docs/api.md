@@ -508,7 +508,7 @@ a whole cluster (`kind: ""`).
 | Method and path | Body / query | Response |
 |---|---|---|
 | `GET /api/v1/threads?cluster=&group=&kind=&namespace=&name=&status=&type=&cursor=&limit=` | | `{items: Thread[], next}`. An empty `kind` means no filter. |
-| `POST /api/v1/threads` | `{ref, title, body, type?: "discussion"}` | 201 `{thread, message}`. Any other `type` gives 400. |
+| `POST /api/v1/threads` | `{ref, title, body, type?: "discussion"}` | 201 `{thread, message}`. Any other `type` gives 400. Ask AI conversations are chats, not threads. |
 | `GET /api/v1/threads/{id}` | | `{thread, messages: Message[], next}` |
 | `POST /api/v1/threads/{id}/messages` | `{body}` | 201 `Message` |
 | `POST /api/v1/threads/{id}/resolve` | | `Thread` |
@@ -523,19 +523,61 @@ Bodies are plain text or Markdown. The UI renders them with no raw HTML and no i
 
 ## Ask AI
 
-`POST /api/v1/ai/ask`
-- **Body:** `{cluster, resourceId?, threadId?, question}`
-- **Response:** `{threadId, message: Message, steps: [{tool, args, bytes}]}`
+Ask AI conversations are **chats** ([ADR-0007](adr/0007-ask-ai-chats.md)). A chat belongs to the
+signed-in user, not to a resource, so it stays open while the user moves around. Every chat
+endpoint is owner-only: another user's chat id gives 404.
 
-Optional `attachments: [{kind: "logs" | "yaml", source, lines[]}]` carry log lines or a YAML excerpt the user selected in the UI:
-- **Limits:** at most 3 attachments, 500 lines and 32 KiB in total.
-- **When accepted:**
-  - `logs` only when `ai.allowLogs` is on (see `features.aiLogs`). Otherwise the request gets 400.
-  - `yaml` always, because the model can already read the same redacted YAML through `get_resource`. It is redacted as YAML.
-- **Handling:** lines are redacted and passed to the model as untrusted data, never as part of the question. They are not stored in the thread.
+```ts
+Chat = {
+  id, owner, title,
+  context: ResourceRef[],   // at most 10; kind "" means a whole cluster; any cluster
+  createdAt, updatedAt, messageCount,
+}
+```
 
-Each ask is stored in a private thread of type `ask`. The AI message's `author.client` is the model id, and `meta.provider` names the provider. If you are over the per-user limit you get 429 `rate_limited`, and invalid input gives 400. The reply comes back in one piece,
-with no streaming in v1.0.
+| Method and path | Body / query | Response |
+|---|---|---|
+| `GET /api/v1/ai/chats?cursor=&limit=` | | `{items: Chat[], next}`, newest first. 50 per page by default, at most 200. |
+| `POST /api/v1/ai/chats` | `{context?: ResourceRef[]}` | 201 `Chat` with no messages and title `""`; the first ask sets the title |
+| `GET /api/v1/ai/chats/{id}?cursor=&limit=` | | `{chat, messages: Message[], next}`, messages oldest first (100 per page, at most 500) |
+| `PATCH /api/v1/ai/chats/{id}` | `{title?, context?}` | `Chat`. `context` replaces the whole list. `title` is whitespace-collapsed, 1 to 200 characters. Neither changes `updatedAt`, so the list order stays. |
+| `DELETE /api/v1/ai/chats/{id}` | | 204 |
+| `POST /api/v1/ai/ask` | `{chatId?, context?, question, attachments?}` | `{chat, message: Message, steps: [{tool, args, bytes}], contextStatus: ("ok" \| "hidden")[]}` |
+
+`POST /api/v1/ai/ask`:
+- **Without `chatId`** it creates a chat with `context` and a title taken from the question.
+  **With `chatId`** it appends to that chat; a `context` in the same request replaces the chat's
+  context first (the UI sends it after the user edits the chips).
+- **Context check:** each reference is checked as the asking user on every ask. A reference the
+  user can no longer see is not sent to the model and is reported `"hidden"` in `contextStatus`
+  (same order as `chat.context`). Context summaries reach the model redacted and wrapped as
+  untrusted data, like tool results.
+- **Context references** are canonicalised like thread targets: the cluster must be registered,
+  the API group is filled in from the kind table or the one visible inventory row (400 when that is
+  ambiguous or not visible), and duplicates are dropped, keeping the first.
+- **Limits:** `question` at most 8 KiB, a request body at most 256 KiB (413), 10 context
+  references, 1000 messages per chat (409 once full), 200 chats per user (creating one more
+  deletes the least recently used). Chats are deleted
+  `store.retention.chatDays` (default 30) after their last message.
+- **Attachments:** optional `attachments: [{kind: "logs" | "yaml", source, lines[]}]` carry log
+  lines or a YAML excerpt the user selected in the UI.
+  - **Limits:** at most 3 attachments, 500 lines and 32 KiB in total.
+  - **When accepted:** `logs` only when `ai.allowLogs` is on (see `features.aiLogs`), otherwise 400;
+    `yaml` always, because the model can already read the same redacted YAML through
+    `get_resource`. It is redacted as YAML.
+  - **Handling:** lines are redacted and passed to the model as untrusted data, never as part of the
+    question. They are not stored in the chat.
+- The AI message's `author.client` is the model id, and `meta.provider` names the provider. For chat
+  messages, `Message.threadId` holds the chat id.
+- **History:** the last 10 messages of the chat (each capped at 2 KiB) go to the model redacted, as
+  one untrusted-data block, not as earlier turns, so an earlier answer cannot act as an instruction.
+- **Errors:** over the per-user limit gives 429 `rate_limited`; invalid input gives 400; an unknown
+  or foreign `chatId` gives 404; the `aiEnabled` kill switch gives 503 `disabled` on asks, while
+  listing, reading, renaming and deleting chats keep working.
+- The reply comes back in one piece, with no streaming in v1.0.
+
+To mention a resource (`@` in the question, or the **+** picker), the UI uses
+`GET /api/v1/search`, which is already filtered by the user's access.
 
 ## Personal access tokens
 

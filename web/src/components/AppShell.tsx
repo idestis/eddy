@@ -4,10 +4,10 @@ import { useCluster, useMe } from "../api/queries";
 import { StreamProvider } from "../api/stream";
 import type { ClusterInfo } from "../api/types";
 import { AppStateProvider, useAppState } from "../lib/appState";
+import { ChatProvider, useChatState } from "../lib/chatState";
 import { applyClusterIdentity } from "../lib/clusterColor";
 import { BINDINGS, type Binding, installKeyboard, useKeys, usePendingSequence } from "../lib/keys";
 import { PrefsProvider, useOrderedClusters, useRecordVisits } from "../lib/prefs";
-import { AskAIProvider } from "./AskAI";
 import { ClusterMenu } from "./ClusterSwitch";
 import { CommandPalette } from "./CommandPalette";
 import { ConfirmProvider } from "./ConfirmDialog";
@@ -67,6 +67,7 @@ function GlobalKeys() {
   const clusters = useOrderedClusters();
   const current = useRouteCluster();
   const { palette, openPalette, closePalette, help, setHelp, ask, pane, setPane } = useAppState();
+  const { newChat } = useChatState();
 
   const goCluster = (i: number) => {
     const c = clusters[(i + clusters.length) % clusters.length];
@@ -92,6 +93,7 @@ function GlobalKeys() {
     ask: () =>
       !current ? toast("Open a cluster to ask AI about it.") : pane === "ai" ? setPane("details") : ask(),
     details: () => setPane("details"),
+    newChat: () => (!current ? toast("Open a cluster to ask AI about it.") : newChat()),
   });
   return null;
 }
@@ -164,9 +166,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <ToastProvider>
           <ConfirmProvider>
             <StreamProvider>
-              <AskAIProvider>
+              <ChatProvider>
                 <Frame>{children}</Frame>
-              </AskAIProvider>
+              </ChatProvider>
             </StreamProvider>
           </ConfirmProvider>
         </ToastProvider>

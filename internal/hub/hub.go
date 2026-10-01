@@ -224,7 +224,7 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 
 	h.threads = threads.New(h.store.Threads(), h.fleet, rec, h.threadChanged)
 	aiOpts := append([]ai.Option{ai.WithRateLimits(h.store.RateLimits())}, o.AIOptions...)
-	if h.ai, err = ai.New(cfg.AI, h.fleet, h.threads, rec, h.flags, groupForKind, log, aiOpts...); err != nil {
+	if h.ai, err = ai.New(cfg.AI, h.fleet, h.store.Chats(), rec, h.flags, groupForKind, log, aiOpts...); err != nil {
 		return nil, err
 	}
 	mcpH, err := mcp.NewHandler(mcp.Options{

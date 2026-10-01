@@ -3,10 +3,12 @@
 
 import { request, seg } from "./client";
 import type {
-  AskAttachment,
+  AskRequest,
   AskResponse,
   AttentionResponse,
   AuditEvent,
+  Chat,
+  ChatDetail,
   ClusterInfo,
   ClusterInput,
   ClusterPermissions,
@@ -188,7 +190,7 @@ export interface ThreadQuery {
   namespace?: string;
   name?: string;
   status?: ThreadStatus;
-  type?: "discussion" | "ask";
+  type?: "discussion";
   cursor?: string;
   limit?: number;
 }
@@ -209,13 +211,16 @@ export const setThreadStatus = (id: string, status: ThreadStatus) =>
 
 // Ask AI
 
-export const askAI = (body: {
-  cluster: string;
-  resourceId?: string;
-  threadId?: string;
-  question: string;
-  attachments?: AskAttachment[];
-}) => request<AskResponse>(`${V1}/ai/ask`, { method: "POST", body });
+export const listChats = (q: { cursor?: string; limit?: number } = {}) =>
+  request<Page<Chat>>(`${V1}/ai/chats`, { query: { ...q } });
+export const createChat = (body: { context?: ResourceRef[] }) =>
+  request<Chat>(`${V1}/ai/chats`, { method: "POST", body });
+export const getChat = (id: string, q: { cursor?: string; limit?: number } = {}) =>
+  request<ChatDetail>(`${V1}/ai/chats/${seg(id)}`, { query: { ...q } });
+export const updateChat = (id: string, body: { title?: string; context?: ResourceRef[] }) =>
+  request<Chat>(`${V1}/ai/chats/${seg(id)}`, { method: "PATCH", body });
+export const deleteChat = (id: string) => request<void>(`${V1}/ai/chats/${seg(id)}`, { method: "DELETE" });
+export const askAI = (body: AskRequest) => request<AskResponse>(`${V1}/ai/ask`, { method: "POST", body });
 
 // Tokens
 

@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
-	"time"
 
 	"github.com/idestis/eddy/internal/fleet"
 	"github.com/idestis/eddy/internal/identity"
@@ -22,6 +20,7 @@ type fakeFleet struct {
 	forbidden  map[string]bool
 	logs       []string
 	principals []identity.Principal
+	canGets    []string
 	writes     int
 }
 
@@ -111,60 +110,16 @@ func (f *fakeFleet) Resume(_ context.Context, p identity.Principal, _ string, _ 
 	return f.write(p)
 }
 
-func (f *fakeFleet) CanGet(context.Context, identity.Principal, string, model.Ref) (bool, error) {
-	return true, nil
+func (f *fakeFleet) CanGet(_ context.Context, p identity.Principal, _ string, ref model.Ref) (bool, error) {
+	f.seen(p)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.canGets = append(f.canGets, ref.ID())
+	return !f.forbidden[ref.ID()], nil
 }
 
 func (f *fakeFleet) CanPatch(context.Context, identity.Principal, string, model.Ref) (bool, error) {
 	return true, nil
-}
-
-// fakeThreads is an in-memory ThreadStore without RBAC.
-type fakeThreads struct {
-	mu       sync.Mutex
-	threads  map[string]store.Thread
-	messages map[string][]store.Message
-	n        int
-}
-
-func newFakeThreads() *fakeThreads {
-	return &fakeThreads{threads: map[string]store.Thread{}, messages: map[string][]store.Message{}}
-}
-
-func (t *fakeThreads) Get(_ context.Context, _ identity.Principal, id, _ string, _ int) (store.Thread, []store.Message, string, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	th, ok := t.threads[id]
-	if !ok {
-		return store.Thread{}, nil, "", store.ErrNotFound
-	}
-	return th, append([]store.Message(nil), t.messages[id]...), "", nil
-}
-
-func (t *fakeThreads) Create(_ context.Context, _ identity.Principal, in CreateInput) (store.Thread, store.Message, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.n++
-	th := store.Thread{
-		ID: fmt.Sprintf("t%d", t.n), Ref: in.Ref, Type: in.Type, Visibility: in.Visibility,
-		Title: in.Title, Status: store.ThreadOpen, CreatedBy: in.Author, CreatedAt: time.Now(),
-	}
-	m := store.Message{ID: fmt.Sprintf("m%d", t.n), ThreadID: th.ID, Author: in.Author, Body: in.Body, Meta: in.Meta}
-	t.threads[th.ID] = th
-	t.messages[th.ID] = []store.Message{m}
-	return th, m, nil
-}
-
-func (t *fakeThreads) Reply(_ context.Context, _ identity.Principal, id, body string, a store.Author, meta json.RawMessage) (store.Message, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if _, ok := t.threads[id]; !ok {
-		return store.Message{}, store.ErrNotFound
-	}
-	t.n++
-	m := store.Message{ID: fmt.Sprintf("m%d", t.n), ThreadID: id, Author: a, Body: body, Meta: meta}
-	t.messages[id] = append(t.messages[id], m)
-	return m, nil
 }
 
 // fakeAudit collects audit events.

@@ -12,7 +12,6 @@ import (
 func TestAskWithLogAttachment(t *testing.T) {
 	h := newHarness(t, config.AI{AllowLogs: true}, Response{StopReason: StopEndTurn, Content: []Block{TextBlock("ok")}})
 	_, err := h.svc.Ask(context.Background(), alice, AskRequest{
-		Cluster:  "prod",
 		Question: "why does this fail?",
 		Attachments: []Attachment{{
 			Kind:   "logs",
@@ -61,7 +60,7 @@ func TestAskAttachmentRules(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newHarness(t, config.AI{AllowLogs: tt.allowLogs})
-			_, err := h.svc.Ask(context.Background(), alice, AskRequest{Cluster: "prod", Question: "q", Attachments: tt.atts})
+			_, err := h.svc.Ask(context.Background(), alice, AskRequest{Question: "q", Attachments: tt.atts})
 			if !errors.Is(err, ErrInvalid) {
 				t.Fatalf("err = %v, want ErrInvalid", err)
 			}
@@ -76,7 +75,6 @@ func TestAskWithYAMLAttachment(t *testing.T) {
 	// YAML attachments work even with log access off, and are redacted as YAML.
 	h := newHarness(t, config.AI{AllowLogs: false}, Response{StopReason: StopEndTurn, Content: []Block{TextBlock("ok")}})
 	_, err := h.svc.Ask(context.Background(), alice, AskRequest{
-		Cluster:  "prod",
 		Question: "is this disruption budget sane?",
 		Attachments: []Attachment{{
 			Kind:   "yaml",

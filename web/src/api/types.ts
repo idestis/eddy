@@ -334,7 +334,7 @@ export interface JobsSnapshot extends ResourceSnapshot {
   hidden: { total: number; next?: string };
 }
 
-/** The target of a thread (store.ResourceRef). Kind "" means the whole cluster. */
+/** The target of a thread or an Ask AI context entry (store.ResourceRef). Kind "" means the whole cluster. */
 export interface ResourceRef extends Ref {
   cluster: string;
 }
@@ -351,7 +351,7 @@ export interface Author {
   client?: string;
 }
 
-export type ThreadType = "discussion" | "ask";
+export type ThreadType = "discussion";
 export type ThreadStatus = "open" | "resolved";
 
 export interface Thread {
@@ -398,10 +398,43 @@ export interface AskAttachment {
   lines: string[];
 }
 
+/** An Ask AI conversation (ADR-0007). It belongs to its owner, not to a resource. */
+export interface Chat {
+  id: string;
+  owner: string;
+  title: string;
+  /** At most 10 references, from any cluster; kind "" means a whole cluster. */
+  context: ResourceRef[];
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+/** GET /ai/chats/{id}: the chat and a page of its messages, oldest first. */
+export interface ChatDetail {
+  chat: Chat;
+  messages: Message[];
+  next?: string;
+}
+
+/** Whether the asking user can still see a context reference ("hidden" ones are not sent). */
+export type ContextStatus = "ok" | "hidden";
+
+/** POST /ai/ask. Without `chatId` a chat is created with `context`. */
+export interface AskRequest {
+  chatId?: string;
+  /** Replaces the chat's context first; sent only after the user changed it. */
+  context?: ResourceRef[];
+  question: string;
+  attachments?: AskAttachment[];
+}
+
 export interface AskResponse {
-  threadId: string;
+  chat: Chat;
   message: Message;
   steps: AskStep[];
+  /** Same order as `chat.context`. */
+  contextStatus: ContextStatus[];
 }
 
 export type TokenScope = "read" | "operate";

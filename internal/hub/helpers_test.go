@@ -75,6 +75,13 @@ type testEnv struct {
 
 func newEnv(t *testing.T, extraYAML string) *testEnv {
 	t.Helper()
+	return newEnvOpts(t, extraYAML, nil)
+}
+
+// newEnvOpts is newEnv with a hook that may change the hub Options, for
+// example to inject an Ask AI provider or runtime flags.
+func newEnvOpts(t *testing.T, extraYAML string, opt func(*Options)) *testEnv {
+	t.Helper()
 	dir := t.TempDir()
 	key := filepath.Join(dir, "key")
 	if err := os.WriteFile(key, []byte("0123456789abcdef0123456789abcdef-test-key"), 0o600); err != nil {
@@ -118,13 +125,17 @@ staticClusters:
 		t.Fatal(err)
 	}
 	st := memory.New()
-	hb, err := New(context.Background(), cfg, Options{
+	o := Options{
 		Log:            quietLog(),
 		Store:          st,
 		Flags:          runtimeflags.Static{MCPEnabled: true, MCPWrites: true},
 		SPA:            http.NotFoundHandler(),
 		RequestTimeout: 3 * time.Second,
-	})
+	}
+	if opt != nil {
+		opt(&o)
+	}
+	hb, err := New(context.Background(), cfg, o)
 	if err != nil {
 		t.Fatal(err)
 	}

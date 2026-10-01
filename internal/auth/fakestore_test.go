@@ -30,6 +30,7 @@ func newFakeStore() *fakeStore {
 func (f *fakeStore) Sessions() store.Sessions           { return f.sess }
 func (f *fakeStore) Tokens() store.Tokens               { return f.tok }
 func (f *fakeStore) Threads() store.Threads             { return nil }
+func (f *fakeStore) Chats() store.Chats                 { return nil }
 func (f *fakeStore) Audit() store.Audit                 { return nil }
 func (f *fakeStore) Prefs() store.Prefs                 { return nil }
 func (f *fakeStore) RateLimits() store.RateLimits       { return f.limits }

@@ -1,5 +1,6 @@
-// The row under each AI answer: save it as a discussion thread on the same object, and copy
-// a ready prompt that hands that thread to Claude Code over MCP.
+// The row under each AI answer: save it as a discussion thread on one of the chat's context
+// entries (the first by default, picked when there are several), and copy a ready prompt that
+// hands that thread to Claude Code over MCP.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -10,9 +11,12 @@ import { keys, tokensQuery } from "../api/queries";
 import type { Message, ResourceRef } from "../api/types";
 import { claudeCodePrompt, threadBody, threadTitle } from "../lib/answerThread";
 import { useAppState } from "../lib/appState";
+import { contextKey, isClusterRef } from "../lib/chatContext";
+import { kindInfo } from "../lib/kinds";
 import { detailLink } from "../lib/links";
 import type { PendingAttachment } from "../lib/logAttachments";
 import { Icon } from "./Icon";
+import { Select } from "./Select";
 import { Spinner } from "./Status";
 import { useToast } from "./Toasts";
 
@@ -47,31 +51,41 @@ export function AnswerActions({
   provider,
   question,
   attachment,
-  target,
+  targets,
 }: {
   message: Message;
   provider?: string;
   question: string;
   attachment?: PendingAttachment;
-  target: ResourceRef;
+  /** Where the thread can go: the chat's context entries the user can still see. */
+  targets: readonly ResourceRef[];
 }) {
   const toast = useToast();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { setPane } = useAppState();
-  const [threadId, setThreadId] = useState<string>();
+  const [saved, setSaved] = useState<{ id: string; target: ResourceRef }>();
   const [hint, setHint] = useState(false);
+  const [picked, setPicked] = useState<string>();
+  const target = (saved?.target ?? targets.find((t) => contextKey(t) === picked) ?? targets[0]) as
+    | ResourceRef
+    | undefined;
+  const threadId = saved?.id;
 
-  const open = (id: string) => {
+  const open = (id: string, t: ResourceRef) => {
     setPane("details");
-    const d = detailLink(target.cluster, target, "threads");
+    if (isClusterRef(t)) {
+      void navigate({ to: "/threads" });
+      return;
+    }
+    const d = detailLink(t.cluster, t, "threads");
     void navigate({ ...d, search: { ...d.search, thread: id } });
   };
 
   const save = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (ref: ResourceRef) => {
       const res = await createThread({
-        ref: target,
+        ref,
         title: threadTitle(question),
         body: threadBody({
           question,
@@ -81,24 +95,26 @@ export function AnswerActions({
           attachment,
         }),
       });
-      return res.thread.id;
+      return { id: res.thread.id, target: ref };
     },
-    onSuccess: (id) => {
-      setThreadId(id);
+    onSuccess: (s) => {
+      setSaved(s);
       void qc.invalidateQueries({ queryKey: keys.threadsAll });
     },
     onError: (err) => toast(saveError(err), "bad"),
   });
 
+  if (!target) return null;
+
   const saveClick = async () => {
     if (threadId || save.isPending) return;
-    const id = await save.mutateAsync().catch(() => undefined);
-    if (id) toast("Saved as thread", "ok", { action: { label: "Open", run: () => open(id) } });
+    const s = await save.mutateAsync(target).catch(() => undefined);
+    if (s) toast("Saved as thread", "ok", { action: { label: "Open", run: () => open(s.id, s.target) } });
   };
 
   const copyClick = async () => {
     if (save.isPending) return;
-    const id = threadId ?? (await save.mutateAsync().catch(() => undefined));
+    const id = threadId ?? (await save.mutateAsync(target).catch(() => undefined))?.id;
     if (!id) return;
     try {
       await navigator.clipboard.writeText(claudeCodePrompt(id, target.cluster, target));
@@ -134,8 +150,34 @@ export function AnswerActions({
           <Icon name="copy" className="size-3.5" />
           Copy for Claude Code
         </button>
-        {threadId && (
-          <button type="button" className={`${BTN} border-transparent`} onClick={() => open(threadId)}>
+        {targets.length > 1 && !threadId && (
+          <Select
+            label="Save the thread on"
+            value={contextKey(target)}
+            onChange={setPicked}
+            options={targets.map((t) => ({
+              value: contextKey(t),
+              label: isClusterRef(t) ? t.cluster : `${kindInfo(t.kind).abbr} ${t.name}`,
+              text: isClusterRef(t) ? `the cluster ${t.cluster}` : `${t.kind} ${t.name}`,
+              meta: isClusterRef(t) ? "cluster" : t.cluster,
+            }))}
+            renderTrigger={({ ref, props }) => (
+              <button ref={ref} {...props} className={`${BTN} border-dashed`} title="Save the thread on">
+                on{" "}
+                <span className="max-w-40 truncate font-mono">
+                  {isClusterRef(target) ? target.cluster : target.name}
+                </span>
+                <Icon name="updown" className="size-3" />
+              </button>
+            )}
+          />
+        )}
+        {threadId && saved && (
+          <button
+            type="button"
+            className={`${BTN} border-transparent`}
+            onClick={() => open(threadId, saved.target)}
+          >
             Open thread
           </button>
         )}
