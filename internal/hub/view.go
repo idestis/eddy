@@ -69,6 +69,8 @@ type clusterView struct {
 	findings []model.Finding
 	// stage is the snapshot being received, nil when none is.
 	stage *stagedSnapshot
+	// idx is the T1 index (index.go), nil until an index request needs it.
+	idx *viewIndex
 }
 
 // stagedSnapshot is a snapshot whose parts are still arriving.
@@ -139,6 +141,7 @@ func (v *clusterView) replace(rs []model.Resource) {
 	v.mu.Lock()
 	v.stopStageLocked()
 	v.resources, v.attention = m, att
+	v.dropIndexLocked()
 	v.recountLocked()
 	v.synced = true
 	v.rv = v.rvSeq.Add(1)
@@ -194,6 +197,7 @@ func (v *clusterView) commitLocked() {
 	st := v.stage
 	v.stopStageLocked()
 	v.resources, v.attention = st.resources, attentionOf(st.resources)
+	v.dropIndexLocked()
 	v.recountLocked()
 	v.synced = true
 	v.rv = v.rvSeq.Add(1)
@@ -234,18 +238,60 @@ func (v *clusterView) stageDeltaLocked(d protocol.Delta) bool {
 	return false
 }
 
-// apply patches the view and returns what actually changed. parents maps
-// the id of every deleted inventory-only row to its owner, so SSE can
-// filter the delete by the parent's visibility. While a snapshot is
-// staged, d goes to the stage instead and nothing changes yet; committed
-// reports that d completed the snapshot.
-func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes []string, parents map[string]model.Ref, committed bool) {
+// applied is what a delta actually changed in a view.
+type applied struct {
+	upserts []model.Resource
+	deletes []string
+	// parents maps the id of every deleted inventory-only row to its
+	// owner, so SSE can filter the delete by the parent's visibility.
+	parents map[string]model.Ref
+	// attnUpserts are the upserted rows that need attention (new or
+	// still); attnDeletes the ids that left the attention set (healed or
+	// deleted). They feed the SSE attention events (ADR-0006 P2).
+	attnUpserts []model.Resource
+	attnDeletes []string
+	// committed reports that the delta completed a staged snapshot.
+	committed bool
+}
+
+// event returns the evChange event of the change.
+func (a applied) event(cluster string) event {
+	return event{kind: evChange, cluster: cluster, upserts: a.upserts, deletes: a.deletes, parents: a.parents,
+		attnUpserts: a.attnUpserts, attnDeletes: a.attnDeletes}
+}
+
+// changeEvents are the bus events of an applied (uncommitted) delta: the
+// change itself, then an evClusters that names what it touched.
+func changeEvents(cluster string, ch applied, findingsChanged bool) []event {
+	var why clustersWhy
+	if findingsChanged {
+		why = whyFindings
+	}
+	if len(ch.upserts) == 0 && len(ch.deletes) == 0 {
+		if why == 0 {
+			return nil
+		}
+		return []event{{kind: evClusters, cluster: cluster, why: why}}
+	}
+	return []event{ch.event(cluster), {kind: evClusters, cluster: cluster, why: why | whyCounts}}
+}
+
+// apply patches the view and returns what actually changed. While a
+// snapshot is staged, d goes to the stage instead and nothing changes yet;
+// committed reports that d completed the snapshot.
+func (v *clusterView) apply(d protocol.Delta) (out applied) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.stage != nil {
-		return nil, nil, nil, v.stageDeltaLocked(d)
+		out.committed = v.stageDeltaLocked(d)
+		return out
 	}
-	upserts = make([]model.Resource, 0, len(d.Upserts))
+	v.indexBeginLocked(len(d.Upserts) + len(d.Deletes))
+	var (
+		upserts = make([]model.Resource, 0, len(d.Upserts))
+		deletes []string
+		parents map[string]model.Ref
+	)
 	for _, r := range d.Upserts {
 		r, ok := sanitizeResource(r)
 		if !ok {
@@ -262,10 +308,17 @@ func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes
 			v.countRow(r, 1)
 		}
 		v.resources[r.ID] = r
+		if exists {
+			v.indexUpsertLocked(&old, &r)
+		} else {
+			v.indexUpsertLocked(nil, &r)
+		}
 		if needsAttention(r) {
 			v.attention[r.ID] = struct{}{}
-		} else {
+			out.attnUpserts = append(out.attnUpserts, r)
+		} else if _, was := v.attention[r.ID]; was {
 			delete(v.attention, r.ID)
+			out.attnDeletes = append(out.attnDeletes, r.ID)
 		}
 		upserts = append(upserts, r)
 	}
@@ -275,7 +328,11 @@ func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes
 				v.countRow(old, -1)
 			}
 			delete(v.resources, id)
-			delete(v.attention, id)
+			v.indexDeleteLocked(&old)
+			if _, was := v.attention[id]; was {
+				delete(v.attention, id)
+				out.attnDeletes = append(out.attnDeletes, id)
+			}
 			deletes = append(deletes, id)
 			if old.InventoryOnly && old.Owner != nil {
 				if parents == nil {
@@ -288,7 +345,8 @@ func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes
 	if len(upserts) > 0 || len(deletes) > 0 {
 		v.rv = v.rvSeq.Add(1)
 	}
-	return upserts, deletes, parents, false
+	out.upserts, out.deletes, out.parents = upserts, deletes, parents
+	return out
 }
 
 // setFindings replaces the findings when fs is set and reports whether they

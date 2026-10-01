@@ -14,7 +14,7 @@ type eventKind int
 const (
 	evChange     eventKind = iota // resource upserts and deletes on one cluster
 	evResync                      // a cluster's view was replaced (snapshot or reconnect)
-	evClusters                    // connection state or counts may have changed
+	evClusters                    // connection state, counts or findings may have changed (see clustersWhy)
 	evThread                      // a thread changed
 	evConnection                  // a cluster's onboarding state changed (ADR-0005)
 	evFindings                    // a cluster's findings changed (relayed to peers; SSE clients get them via clusters)
@@ -32,7 +32,24 @@ type event struct {
 	thread  store.Thread
 	// findings is the new finding set of an evFindings event.
 	findings []model.Finding
+	// attnUpserts and attnDeletes are an evChange's moves into and out of
+	// the needs-attention set (applied).
+	attnUpserts []model.Resource
+	attnDeletes []string
+	// why narrows an evClusters event that names a cluster: only its
+	// counts (whyCounts) or findings (whyFindings) changed. Zero means
+	// anything may have changed (connection state, the cluster set, a
+	// snapshot), and scoped streams then resend clusters.
+	why clustersWhy
 }
+
+// clustersWhy says what an evClusters event is about (a bit set).
+type clustersWhy uint8
+
+const (
+	whyCounts clustersWhy = 1 << iota
+	whyFindings
+)
 
 // subBuffer is the per-subscriber queue. A subscriber that falls this far
 // behind is marked overflowed and resynced rather than blocking publishers.

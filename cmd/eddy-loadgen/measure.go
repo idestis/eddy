@@ -75,6 +75,8 @@ type samples struct {
 	wire    []int64
 	decoded []int64
 	status  map[int]int
+	// partial counts /search responses that skipped clusters.
+	partial atomic.Int64
 }
 
 func (s *samples) add(d time.Duration, wire, decoded int64, status int) {

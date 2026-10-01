@@ -29,6 +29,9 @@ import (
 //	go test ./internal/hub -run '^$' -bench . -benchmem -loadgen.full
 var loadgenFull = flag.Bool("loadgen.full", false, "run the hub benchmarks at 100 clusters × 15k resources")
 
+// noRulesBench answers access with SubjectAccessReviews only (P1).
+var noRulesBench = flag.Bool("loadgen.norules", false, "benchmark without rules reviews (SubjectAccessReviews only, as in P1)")
+
 func benchSize() (clusters, resources int) {
 	if *loadgenFull {
 		return 100, 15000
@@ -44,7 +47,9 @@ type benchFleet struct {
 	agents   *agents
 	clusters []*synth.Cluster
 	checks   atomic.Int64
+	reviews  atomic.Int64 // rules reviews, one per namespace
 	users    map[synth.Role]identity.Principal
+	rules    rulesSender
 }
 
 var (
@@ -86,6 +91,17 @@ func getBenchFleet(tb testing.TB, n, m int) *benchFleet {
 		}
 		return out, nil
 	}, met)
+	bf.rules = func(_ context.Context, _ string, id protocol.Identity, namespaces []string) ([]protocol.NamespaceRules, error) {
+		bf.reviews.Add(int64(len(namespaces)))
+		out := make([]protocol.NamespaceRules, len(namespaces))
+		for i, ns := range namespaces {
+			out[i] = protocol.NamespaceRules{Namespace: ns, Rules: synth.Rules(id, ns)}
+		}
+		return out, nil
+	}
+	if !*noRulesBench {
+		bf.f.authz.rules = bf.rules
+	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
 	for _, c := range bf.clusters {
@@ -227,20 +243,22 @@ func BenchmarkClustersColdSAR(b *testing.B) {
 	for _, role := range roles {
 		b.Run(string(role), func(b *testing.B) {
 			p := bf.users[role]
-			var checks int64
+			var checks, reviews int64
 			for b.Loop() {
 				b.StopTimer()
 				bf.f.authz.mu.Lock()
 				bf.f.authz.cache = map[accessKey]accessEntry{}
+				bf.f.authz.rc = newRulesCache()
 				bf.f.authz.mu.Unlock()
-				before := bf.checks.Load()
+				before, rbefore := bf.checks.Load(), bf.reviews.Load()
 				b.StartTimer()
 				if _, err := bf.f.Clusters(context.Background(), p); err != nil {
 					b.Fatal(err)
 				}
-				checks = bf.checks.Load() - before
+				checks, reviews = bf.checks.Load()-before, bf.reviews.Load()-rbefore
 			}
 			b.ReportMetric(float64(checks), "checks/op")
+			b.ReportMetric(float64(reviews), "reviews/op")
 		})
 	}
 }

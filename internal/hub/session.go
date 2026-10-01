@@ -380,12 +380,12 @@ func (s *agentSession) snapshotDone() {
 }
 
 func (s *agentSession) applyDelta(d protocol.Delta) {
-	upserts, deletes, parents, committed := s.apply(d)
+	ch := s.apply(d)
 	// Findings travel as a full replacement and are independent of snapshot
 	// staging, so they are applied even when this delta commits a staged view;
 	// returning first would drop them (a reconnect race).
 	findingsChanged := s.setFindings(d.Findings)
-	if committed {
+	if ch.committed {
 		s.snapshotDone()
 		if findingsChanged {
 			s.emit(s, event{kind: evFindings, cluster: s.cluster, findings: s.findingList()})
@@ -394,15 +394,10 @@ func (s *agentSession) applyDelta(d protocol.Delta) {
 	}
 	if findingsChanged {
 		s.emit(s, event{kind: evFindings, cluster: s.cluster, findings: s.findingList()})
-		if len(upserts) == 0 && len(deletes) == 0 {
-			s.emit(s, event{kind: evClusters})
-		}
 	}
-	if len(upserts) == 0 && len(deletes) == 0 {
-		return
+	for _, e := range changeEvents(s.cluster, ch, findingsChanged) {
+		s.emit(s, e)
 	}
-	s.emit(s, event{kind: evChange, cluster: s.cluster, upserts: upserts, deletes: deletes, parents: parents})
-	s.emit(s, event{kind: evClusters})
 }
 
 // --- requests -------------------------------------------------------------

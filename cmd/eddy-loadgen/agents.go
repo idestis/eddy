@@ -17,11 +17,34 @@ import (
 	"github.com/idestis/eddy/internal/protocol"
 )
 
-// sarCounter counts the access checks the fake agents answer, per user.
+// sarCounter counts the access checks and rules reviews (one per
+// namespace) the fake agents answer, per user.
 type sarCounter struct {
-	mu       sync.Mutex
-	byUser   map[string]int64
-	requests atomic.Int64
+	mu            sync.Mutex
+	byUser        map[string]int64
+	rulesByUser   map[string]int64
+	requests      atomic.Int64
+	rulesRequests atomic.Int64
+}
+
+func (c *sarCounter) addRules(user string, n int) {
+	c.mu.Lock()
+	if c.rulesByUser == nil {
+		c.rulesByUser = map[string]int64{}
+	}
+	c.rulesByUser[user] += int64(n)
+	c.mu.Unlock()
+	c.rulesRequests.Add(1)
+}
+
+func (c *sarCounter) rulesSnapshot() map[string]int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]int64, len(c.rulesByUser))
+	for k, v := range c.rulesByUser {
+		out[k] = v
+	}
+	return out
 }
 
 func (c *sarCounter) add(user string, n int) {
@@ -44,13 +67,28 @@ func (c *sarCounter) snapshot() map[string]int64 {
 	return out
 }
 
-// fakeHandler answers hub requests like an agent: access checks from the
-// synthetic RBAC policy; every other op is refused.
+// fakeHandler answers hub requests like an agent: access checks and rules
+// reviews from the synthetic RBAC policy; every other op is refused.
+// noRules answers OpRules like an agent that predates it.
 type fakeHandler struct {
-	sar *sarCounter
+	sar     *sarCounter
+	noRules bool
 }
 
 func (h *fakeHandler) Handle(_ context.Context, req protocol.Request, _ func(protocol.LogChunk) error) (json.RawMessage, *protocol.Error) {
+	if req.Op == protocol.OpRules && !h.noRules {
+		var args protocol.RulesArgs
+		if err := json.Unmarshal(req.Args, &args); err != nil {
+			return nil, &protocol.Error{Code: 400, Message: "bad rules args"}
+		}
+		out := make([]protocol.NamespaceRules, len(args.Namespaces))
+		for i, ns := range args.Namespaces {
+			out[i] = protocol.NamespaceRules{Namespace: ns, Rules: synth.Rules(req.Identity, ns)}
+		}
+		h.sar.addRules(req.Identity.User, len(args.Namespaces))
+		b, _ := json.Marshal(protocol.RulesResult{Namespaces: out})
+		return b, nil
+	}
 	if req.Op != protocol.OpAccess {
 		return nil, &protocol.Error{Code: 400, Message: "loadgen agent: unsupported op " + string(req.Op)}
 	}

@@ -45,6 +45,12 @@ type fleetService struct {
 	rec          *audit.Recorder
 	denyPrefixes []string
 	log          *slog.Logger
+
+	// Created on first use (lazyInit): the visible tuple sets of index
+	// lists and the hub-wide search scan slots.
+	lazy  sync.Once
+	vis   *visibleCache
+	scans *scanSlots
 }
 
 var _ fleet.Service = (*fleetService)(nil)
@@ -349,6 +355,44 @@ func (f *fleetService) counts(ctx context.Context, p identity.Principal, s clust
 		}
 	}
 	return out, kinds, nil
+}
+
+// clusterCounts is counts for one registered cluster's live or stale
+// view; ok is false when it has none or the access checks failed.
+func (f *fleetService) clusterCounts(ctx context.Context, p identity.Principal, cluster string) (map[model.Status]int, map[string]map[model.Status]int, bool) {
+	s := f.readerOf(cluster)
+	if s == nil || f.validPrincipal(p) != nil {
+		return nil, nil, false
+	}
+	counts, kinds, err := f.counts(ctx, p, s)
+	if err != nil {
+		f.log.Debug("cluster counts unavailable", "cluster", cluster, "err", err)
+		return nil, nil, false
+	}
+	return counts, kinds, true
+}
+
+// clusterFindings is visibleFindings for one registered cluster.
+func (f *fleetService) clusterFindings(ctx context.Context, p identity.Principal, cluster string) ([]model.Finding, bool) {
+	s := f.readerOf(cluster)
+	if s == nil || f.validPrincipal(p) != nil {
+		return nil, false
+	}
+	fs, err := f.visibleFindings(ctx, p, s)
+	if err != nil {
+		f.log.Debug("cluster findings unavailable", "cluster", cluster, "err", err)
+		return nil, false
+	}
+	return fs, true
+}
+
+// readerOf returns the session that serves reads of a registered cluster,
+// or nil.
+func (f *fleetService) readerOf(cluster string) clusterSession {
+	if _, ok := f.reg.Get(cluster); !ok {
+		return nil
+	}
+	return f.agents.reader(cluster)
 }
 
 // tupleKinds maps (group, plural) to the Kind of the kind table.

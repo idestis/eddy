@@ -86,6 +86,15 @@ var validStatuses = model.Statuses
 func (a *api) handleResources(w http.ResponseWriter, r *http.Request) {
 	p, _ := identity.From(r.Context())
 	q := r.URL.Query()
+	switch q.Get("view") {
+	case "", "full":
+	case "index":
+		a.handleIndex(w, r, p)
+		return
+	default:
+		a.fail(w, r, badRequest("view must be full or index"))
+		return
+	}
 	var fl fleet.Filter
 	for _, v := range q["kind"] {
 		fl.Kinds = append(fl.Kinds, strings.Split(v, ",")...)
@@ -260,11 +269,18 @@ func (a *api) handleKinds(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// handleSearch serves GET /api/v1/search?q=&scope=cluster|fleet&cluster=&limit=.
+// handleSearch serves GET /api/v1/search?q=&scope=cluster|fleet&cluster=&kind=&limit=.
 func (a *api) handleSearch(w http.ResponseWriter, r *http.Request) {
 	p, _ := identity.From(r.Context())
 	q := r.URL.Query()
 	o := searchOptions{Query: q.Get("q"), Cluster: q.Get("cluster")}
+	for _, v := range q["kind"] {
+		o.Kinds = append(o.Kinds, strings.Split(v, ",")...)
+	}
+	if len(o.Kinds) > searchMaxKinds {
+		a.fail(w, r, badRequest("kind names at most %d kinds", searchMaxKinds))
+		return
+	}
 	switch q.Get("scope") {
 	case "", "fleet":
 		o.Fleet = true
@@ -324,4 +340,33 @@ func (a *api) handleAttention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// handleIndex serves GET …/resources?view=index (ADR-0006 P2): one page of
+// index rows with the total and facets (index_list.go).
+func (a *api) handleIndex(w http.ResponseWriter, r *http.Request, p identity.Principal) {
+	q := r.URL.Query()
+	if q.Get("includeHidden") != "" {
+		a.fail(w, r, badRequest("includeHidden does not apply to view=index"))
+		return
+	}
+	iq, err := parseIndexQuery(q)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	cluster := r.PathValue("cluster")
+	if version, stale, ok := a.fleet.viewVersion(cluster); ok {
+		a.markStale(w, stale)
+		if a.listNotModified(w, r, p, version) {
+			return
+		}
+	}
+	page, err := a.fleet.indexList(r.Context(), p, cluster, iq)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	a.metrics.indexLists.Add(1)
+	writeJSON(w, http.StatusOK, page)
 }

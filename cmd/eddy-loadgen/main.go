@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -53,6 +54,8 @@ type options struct {
 	label                      string
 	role                       string
 	sseProfile                 string
+	watch                      int
+	index                      bool
 }
 
 func main() {
@@ -71,8 +74,14 @@ func main() {
 	flag.BoolVar(&o.fullFetch, "full-fetch", true, "also measure the old UI path that fetches every cluster's snapshot (sidebar, palette)")
 	flag.StringVar(&o.label, "label", "", "label printed in the report")
 	flag.StringVar(&o.sseProfile, "sse-cpuprofile", "", "write a CPU profile of the SSE fan-out phase to this file")
+	flag.IntVar(&o.watch, "watch", -1, "clusters each user's SSE stream watches (0–5, ADR-0006 P2); -1 opens the unscoped stream without ?watch=")
+	flag.BoolVar(&o.index, "index", false, "the list page fetches view=index&limit=200 (first page and facets, ADR-0006 P2) instead of the full list")
 	flag.StringVar(&o.role, "role", "", "make every user admin, team or mixed (default: 20% admin, 50% team, 30% mixed)")
 	flag.Parse()
+	if o.watch > 5 {
+		fmt.Fprintln(os.Stderr, "eddy-loadgen: -watch is at most 5")
+		os.Exit(2)
+	}
 	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, "eddy-loadgen:", err)
 		os.Exit(1)
@@ -240,7 +249,7 @@ func run(o options) error {
 		for started < len(e.clusters) && started-len(complete) < o.connectConcurrency {
 			c := e.clusters[started]
 			for r := range o.agentReplicas {
-				agents = append(agents, startAgent(ctx, e.agentURL, e.tokens[started], fmt.Sprintf("%s-%d", c.Name, r), c, &fakeHandler{sar: e.sar}, agentOptions{deflate: o.deflate}))
+				agents = append(agents, startAgent(ctx, e.agentURL, e.tokens[started], fmt.Sprintf("%s-%d", c.Name, r), c, &fakeHandler{sar: e.sar, noRules: *noRules}, agentOptions{deflate: o.deflate}))
 			}
 			started++
 		}
@@ -328,17 +337,25 @@ func run(o options) error {
 	// ---- SSE fan-out ----
 	fmt.Fprintln(os.Stderr, "sse fan-out…")
 	var streams []*stream
-	for _, b := range browsers {
-		s, err := b.openStream(ctx)
+	for i, b := range browsers {
+		var watch []string
+		if o.watch >= 0 {
+			watch = []string{}
+			for j := range min(o.watch, len(e.clusters)) {
+				watch = append(watch, e.clusters[(i+j)%len(e.clusters)].Name)
+			}
+		}
+		s, err := b.openStream(ctx, watch)
 		if err != nil {
 			return fmt.Errorf("open stream for %s: %w", b.user.Name, err)
 		}
 		streams = append(streams, s)
 	}
 	time.Sleep(2 * time.Second)
-	var w0, ev0, ch0 int64
+	var w0, ev0, ch0, co0, at0 int64
 	for _, s := range streams {
 		w0, ev0, ch0 = w0+s.wire.Load(), ev0+s.events.Load(), ch0+s.changes.Load()
+		co0, at0 = co0+s.counts.Load(), at0+s.attention.Load()
 	}
 	if o.sseProfile != "" {
 		f, err := os.Create(o.sseProfile)
@@ -353,9 +370,10 @@ func run(o options) error {
 	if o.sseProfile != "" {
 		pprof.StopCPUProfile()
 	}
-	var w1, ev1, ch1 int64
+	var w1, ev1, ch1, co1, at1 int64
 	for _, s := range streams {
 		w1, ev1, ch1 = w1+s.wire.Load(), ev1+s.events.Load(), ch1+s.changes.Load()
+		co1, at1 = co1+s.counts.Load(), at1+s.attention.Load()
 	}
 	ssec := o.sseFor.Seconds()
 	nu := float64(max(1, len(streams)))
@@ -364,7 +382,12 @@ func run(o options) error {
 	rep.add("| Metric | Value |")
 	rep.add("|---|---|")
 	rep.add("| Wire bytes/s per user | %s/s |", bytesStr(int64(float64(w1-w0)/ssec/nu)))
-	rep.add("| Events/s per user (change events) | %.1f (%.1f) |", float64(ev1-ev0)/ssec/nu, float64(ch1-ch0)/ssec/nu)
+	watchDesc := "unscoped (no ?watch=)"
+	if o.watch >= 0 {
+		watchDesc = fmt.Sprintf("?watch= %d cluster(s)", o.watch)
+	}
+	rep.add("| Stream | %s |", watchDesc)
+	rep.add("| Events/s per user (change · counts · attention) | %.1f (%.1f · %.1f · %.1f) |", float64(ev1-ev0)/ssec/nu, float64(ch1-ch0)/ssec/nu, float64(co1-co0)/ssec/nu, float64(at1-at0)/ssec/nu)
 	rep.add("| Hub process CPU with streams | %.1f %% of one core (%.1f %% without) |", 100*sseCPU.Seconds()/ssec, 100*steadyCPU.Seconds()/sec)
 	rep.add("| SSE cost per user | %.2f %% of one core |", 100*(sseCPU.Seconds()/ssec-steadyCPU.Seconds()/sec)/nu)
 	rep.add("| Streams that received their first `clusters` event | %d of %d |", streamsWithClusters(streams), len(streams))
@@ -426,6 +449,7 @@ func run(o options) error {
 	// ---- concurrent users ----
 	fmt.Fprintf(os.Stderr, "concurrent users for %s…\n", o.userFor)
 	sar0 := e.sar.snapshot()
+	rules0 := e.sar.rulesSnapshot()
 	byEndpoint := map[string]*samples{}
 	var mu sync.Mutex
 	sampleFor := func(name string) *samples {
@@ -448,14 +472,18 @@ func run(o options) error {
 			iter := i
 			for uctx.Err() == nil {
 				for _, rq := range pageRequests(e, p1, iter) {
-					r, err := b.get(uctx, rq.path, false, true)
+					r, err := b.get(uctx, rq.path, rq.search, true)
 					if err != nil {
 						if uctx.Err() == nil {
 							errs.Add(1)
 						}
 						continue
 					}
-					sampleFor(rq.name).add(r.dur, r.wire, r.decoded, r.status)
+					s := sampleFor(rq.name)
+					s.add(r.dur, r.wire, r.decoded, r.status)
+					if rq.search && r.status == http.StatusOK && hasPartial(r.body) {
+						s.partial.Add(1)
+					}
 				}
 				iter++
 				select {
@@ -473,8 +501,8 @@ func run(o options) error {
 
 	rep.add("### %d concurrent users for %s (think time %s, SSE open, churn on)", len(browsers), o.userFor, o.think)
 	rep.add("")
-	rep.add("| Request | n | p50 | p95 | max | Wire avg | Decoded avg | Statuses |")
-	rep.add("|---|---|---|---|---|---|---|---|")
+	rep.add("| Request | n | p50 | p95 | max | Wire avg | Decoded avg | Statuses | Partial |")
+	rep.add("|---|---|---|---|---|---|---|---|---|")
 	names := make([]string, 0, len(byEndpoint))
 	for n := range byEndpoint {
 		names = append(names, n)
@@ -482,7 +510,11 @@ func run(o options) error {
 	slices.Sort(names)
 	for _, n := range names {
 		s := byEndpoint[n].summary()
-		rep.add("| %s | %d | %s | %s | %s | %s | %s | %v |", n, s.n, ms(s.p50), ms(s.p95), ms(s.max), bytesStr(s.wireAvg), bytesStr(s.decodeAvg), s.statuses)
+		partial := ""
+		if p := byEndpoint[n].partial.Load(); p > 0 || strings.Contains(n, "search") {
+			partial = fmt.Sprintf("%d (%.1f %%)", p, 100*float64(p)/float64(max(1, s.n)))
+		}
+		rep.add("| %s | %d | %s | %s | %s | %s | %s | %v | %s |", n, s.n, ms(s.p50), ms(s.p95), ms(s.max), bytesStr(s.wireAvg), bytesStr(s.decodeAvg), s.statuses, partial)
 	}
 	rep.add("")
 	rep.add("- Hub process CPU: %.1f %% of one core; hub→browser bytes %s/s; request errors %d", 100*userCPU.Seconds()/o.userFor.Seconds(), bytesStr(int64(float64(uiBytes)/o.userFor.Seconds())), errs.Load())
@@ -508,6 +540,9 @@ func run(o options) error {
 		}
 		rep.add("- SAR checks per user per minute, %s: %.0f", role, sum/float64(len(v)))
 	}
+	for _, l := range rulesReport(e, browsers, rules0, o.userFor) {
+		rep.add("%s", l)
+	}
 	var total int64
 	for _, v := range sar1 {
 		total += v
@@ -520,7 +555,19 @@ func run(o options) error {
 	return nil
 }
 
-type pageRequest struct{ name, path string }
+type pageRequest struct {
+	name, path string
+	// search marks /search requests, whose bodies are read for partial.
+	search bool
+}
+
+// hasPartial reports whether a /search body lists skipped clusters.
+func hasPartial(body []byte) bool {
+	var r struct {
+		Partial []string `json:"partial"`
+	}
+	return json.Unmarshal(body, &r) == nil && len(r.Partial) > 0
+}
 
 var searchTerms = []string{"api", "billing worker", "nightly", "crashloop", "redis", "pay sync", "team-03", "gw"}
 
@@ -529,16 +576,19 @@ var searchTerms = []string{"api", "billing worker", "nightly", "crashloop", "red
 func pageRequests(e *env, p1 bool, i int) []pageRequest {
 	c := e.clusters[i%len(e.clusters)].Name
 	out := []pageRequest{
-		{"fleet: GET /clusters", "/api/v1/clusters"},
-		{"sidebar: GET /clusters/{c}/kinds", "/api/v1/clusters/" + c + "/kinds"},
-		{"list: GET /clusters/{c}/resources", "/api/v1/clusters/" + c + "/resources"},
+		{name: "fleet: GET /clusters", path: "/api/v1/clusters"},
+		{name: "sidebar: GET /clusters/{c}/kinds", path: "/api/v1/clusters/" + c + "/kinds"},
+		{name: "list: GET /clusters/{c}/resources", path: "/api/v1/clusters/" + c + "/resources"},
+	}
+	if e.o.index {
+		out[2] = pageRequest{name: "list: GET /clusters/{c}/resources?view=index&limit=200", path: "/api/v1/clusters/" + c + "/resources?view=index&limit=200"}
 	}
 	if p1 {
 		q := strings.ReplaceAll(searchTerms[i%len(searchTerms)], " ", "+")
 		out = append(out,
-			pageRequest{"palette: GET /search?scope=fleet", "/api/v1/search?scope=fleet&limit=30&q=" + q},
-			pageRequest{"palette: GET /search?scope=cluster", "/api/v1/search?scope=cluster&limit=30&cluster=" + c + "&q=" + q},
-			pageRequest{"attention: GET /attention", "/api/v1/attention?limit=200"},
+			pageRequest{name: "palette: GET /search?scope=fleet", path: "/api/v1/search?scope=fleet&limit=30&q=" + q, search: true},
+			pageRequest{name: "palette: GET /search?scope=cluster", path: "/api/v1/search?scope=cluster&limit=30&cluster=" + c + "&q=" + q, search: true},
+			pageRequest{name: "attention: GET /attention", path: "/api/v1/attention?limit=200"},
 		)
 	}
 	return out

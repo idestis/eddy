@@ -25,6 +25,7 @@ import (
 	"github.com/idestis/eddy/internal/flux"
 	"github.com/idestis/eddy/internal/identity"
 	"github.com/idestis/eddy/internal/mcp"
+	"github.com/idestis/eddy/internal/protocol"
 	"github.com/idestis/eddy/internal/runtimeflags"
 	"github.com/idestis/eddy/internal/store"
 	"github.com/idestis/eddy/internal/store/storeopen"
@@ -158,7 +159,13 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 	h.agents = newAgents(b, h.metrics)
 	h.fleet = &fleetService{reg: h.reg, agents: h.agents, rec: rec, denyPrefixes: cfg.Auth.DenyUserPrefixes, log: log.With("component", "fleet")}
 	h.fleet.authz = newAuthorizer(h.fleet.sendAccess, h.metrics)
-	h.fleet.authz.stale = h.agents.isStale
+	h.fleet.authz.rules = h.fleet.sendRules
+	h.fleet.authz.staleSince = h.agents.staleSince
+	h.fleet.authz.staleTTL = cfg.Auth.StaleAccessTTLOrDefault()
+	h.fleet.authz.selfReview = func(cluster string) bool {
+		s := h.agents.reader(cluster)
+		return s != nil && s.hello().Mode == protocol.ModeLocal
+	}
 	pod := cmp.Or(o.PodName, cfg.Peer.PodName)
 	if pod == "" {
 		return nil, errors.New("hub: no replica name: set POD_NAME or peer.podName")

@@ -127,6 +127,8 @@ type stream struct {
 	wire, events atomic.Int64
 	changes      atomic.Int64
 	clusters     atomic.Int64
+	counts       atomic.Int64
+	attention    atomic.Int64
 	done         chan struct{}
 }
 
@@ -140,8 +142,14 @@ func streamsWithClusters(ss []*stream) int {
 	return n
 }
 
-func (b *browser) openStream(ctx context.Context) (*stream, error) {
-	req, err := b.newRequest(ctx, "/api/v1/stream")
+// openStream opens /api/v1/stream. With watch nil the stream is the
+// unscoped (pre-P2) one; otherwise ?watch= names these clusters.
+func (b *browser) openStream(ctx context.Context, watch []string) (*stream, error) {
+	path := "/api/v1/stream"
+	if watch != nil {
+		path += "?watch=" + strings.Join(watch, ",")
+	}
+	req, err := b.newRequest(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +187,10 @@ func (b *browser) openStream(ctx context.Context) (*stream, error) {
 					s.changes.Add(1)
 				case "clusters":
 					s.clusters.Add(1)
+				case "counts":
+					s.counts.Add(1)
+				case "attention":
+					s.attention.Add(1)
 				}
 			}
 		}

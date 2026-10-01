@@ -112,24 +112,19 @@ func (r *remoteSession) handle(f protocol.Frame) error {
 		if err := json.Unmarshal(f.Payload, &d); err != nil {
 			return fmt.Errorf("decode relayed delta: %w", err)
 		}
-		ups, dels, parents, committed := r.apply(d)
+		ch := r.apply(d)
 		// As on the agent session: findings apply even when the delta commits a staged view.
 		findingsChanged := r.setFindings(d.Findings)
-		if committed {
+		if ch.committed {
 			r.snapshotDone()
 			if findingsChanged {
-				r.agents.emit(r, event{kind: evClusters})
+				r.agents.emit(r, event{kind: evClusters, cluster: r.cluster, why: whyFindings})
 			}
 			return nil
 		}
-		if findingsChanged && len(ups) == 0 && len(dels) == 0 {
-			r.agents.emit(r, event{kind: evClusters})
+		for _, e := range changeEvents(r.cluster, ch, findingsChanged) {
+			r.agents.emit(r, e)
 		}
-		if len(ups) == 0 && len(dels) == 0 {
-			return nil
-		}
-		r.agents.emit(r, event{kind: evChange, cluster: r.cluster, upserts: ups, deletes: dels, parents: parents})
-		r.agents.emit(r, event{kind: evClusters})
 	}
 	return nil
 }
