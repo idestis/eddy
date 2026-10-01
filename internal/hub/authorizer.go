@@ -3,14 +3,12 @@ package hub
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/idestis/eddy/internal/fleet"
 	"github.com/idestis/eddy/internal/flux"
 	"github.com/idestis/eddy/internal/identity"
 	"github.com/idestis/eddy/internal/model"
@@ -110,8 +108,9 @@ type accessCall struct {
 // accessSender sends one batch of checks to a cluster's agent as id.
 type accessSender func(ctx context.Context, cluster string, id protocol.Identity, checks []protocol.AccessCheck) ([]bool, error)
 
-// authorizer answers "may this user do verb on resource" by asking the
-// cluster's agent for SubjectAccessReviews. Answers are cached per
+// authorizer answers "may this user do verb on resource" from the user's
+// rules reviews where they are exact, else by asking the cluster's agent
+// for SubjectAccessReviews. Answers are cached per
 // (cluster, user and groups, check) for accessTTL, the cache is bounded,
 // and concurrent identical questions share one agent round trip. Errors
 // are never cached: callers fail closed.
@@ -121,25 +120,39 @@ type authorizer struct {
 	now     func() time.Time
 	ttl     time.Duration
 	max     int
-	// stale reports whether a cluster is served from a stale view (its
-	// agent is disconnected). Only then may an expired answer, at most
-	// staleAccessGrace old, stand in for one the agent cannot give.
-	stale func(cluster string) bool
+	// rules, when set, fetches rules reviews: namespaced read checks are
+	// then answered from them where that is exact (rules.go).
+	rules rulesSender
+	// selfReview reports whether a cluster's agent reviews as its own
+	// identity (local mode), for SARs and rules alike; such a cluster needs
+	// no baseline.
+	selfReview func(cluster string) bool
+	// staleSince reports whether a cluster is served from a stale view (its
+	// agent is disconnected) and since when. Only then, and for at most
+	// staleTTL, may an expired answer stand in for one the agent cannot
+	// give. staleTTL 0 fails closed at once.
+	staleSince func(cluster string) (time.Time, bool)
+	staleTTL   time.Duration
 
-	mu       sync.Mutex
-	cache    map[accessKey]accessEntry
-	inflight map[accessKey]*accessCall
+	mu           sync.Mutex
+	cache        map[accessKey]accessEntry
+	inflight     map[accessKey]*accessCall
+	rc           rulesCache
+	baselineSubj string
 }
 
 func newAuthorizer(send accessSender, m *metrics) *authorizer {
 	return &authorizer{
-		send:     send,
-		metrics:  m,
-		now:      time.Now,
-		ttl:      accessTTL,
-		max:      accessMaxCached,
-		cache:    map[accessKey]accessEntry{},
-		inflight: map[accessKey]*accessCall{},
+		send:         send,
+		metrics:      m,
+		now:          time.Now,
+		ttl:          accessTTL,
+		max:          accessMaxCached,
+		staleTTL:     defaultStaleAccessTTL,
+		cache:        map[accessKey]accessEntry{},
+		inflight:     map[accessKey]*accessCall{},
+		rc:           newRulesCache(),
+		baselineSubj: subjectKey(identity.Principal{User: rulesBaselineUser}),
 	}
 }
 
@@ -156,6 +169,10 @@ func subjectKey(p identity.Principal) string {
 func (a *authorizer) check(ctx context.Context, p identity.Principal, cluster string, checks []protocol.AccessCheck) ([]bool, error) {
 	subj := subjectKey(p)
 	out := make([]bool, len(checks))
+	pending, err := a.answerFromRules(ctx, p, subj, cluster, checks, out)
+	if err != nil {
+		return nil, err
+	}
 	now := a.now()
 
 	type wait struct {
@@ -170,7 +187,8 @@ func (a *authorizer) check(ctx context.Context, p identity.Principal, cluster st
 		misses uint64
 	)
 	a.mu.Lock()
-	for i, c := range checks {
+	for _, i := range pending {
+		c := checks[i]
 		k := accessKey{cluster: cluster, subject: subj, check: c}
 		if e, ok := a.cache[k]; ok && now.Before(e.expires) {
 			out[i] = e.allowed
@@ -233,7 +251,6 @@ func (a *authorizer) resolve(ctx context.Context, p identity.Principal, cluster 
 		}
 		now := a.now()
 		expires := now.Add(a.ttl)
-		staleOK := err != nil && errors.Is(err, fleet.ErrDisconnected) && a.stale != nil && a.stale(cluster)
 		a.mu.Lock()
 		if err == nil {
 			a.makeRoom(len(batch))
@@ -241,7 +258,7 @@ func (a *authorizer) resolve(ctx context.Context, p identity.Principal, cluster 
 		for i, k := range batch {
 			call := owned[k]
 			if err != nil {
-				if e, ok := a.cache[k]; staleOK && ok && now.Before(e.expires.Add(staleAccessGrace)) {
+				if e, ok := a.cache[k]; ok && a.staleUsable(cluster, err, e.expires, now) {
 					call.allowed = e.allowed
 				} else {
 					call.err = err

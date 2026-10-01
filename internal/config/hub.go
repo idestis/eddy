@@ -74,6 +74,27 @@ type Auth struct {
 	KeyFile string `json:"keyFile"`
 	// AuditViewerGroups (already prefixed, e.g. eddy:platform) may read everyone's audit events.
 	AuditViewerGroups []string `json:"auditViewerGroups"`
+	// StaleAccessTTL is how long after a cluster's agent disconnects the
+	// hub may still use expired cached access answers to filter reads of
+	// the cluster's stale view. Unset means DefaultStaleAccessTTL; 0 fails
+	// closed at once (the stale view is then visible to nobody).
+	StaleAccessTTL *Duration `json:"staleAccessTTL,omitempty"`
+}
+
+// DefaultStaleAccessTTL is the default of auth.staleAccessTTL, and
+// MaxStaleAccessTTL its upper bound.
+const (
+	DefaultStaleAccessTTL = 2 * time.Minute
+	MaxStaleAccessTTL     = 10 * time.Minute
+)
+
+// StaleAccessTTLOrDefault returns auth.staleAccessTTL, or its default when
+// unset.
+func (a Auth) StaleAccessTTLOrDefault() time.Duration {
+	if a.StaleAccessTTL == nil {
+		return DefaultStaleAccessTTL
+	}
+	return a.StaleAccessTTL.Duration
 }
 
 type LocalAuth struct {
@@ -413,6 +434,9 @@ func (h *Hub) Validate() error {
 		if !p.InsecureSkipSharedSecret && len(os.Getenv(p.SharedSecretEnv)) < 32 {
 			errs = append(errs, fmt.Errorf("auth.proxy: %s must hold ≥32 bytes (or set insecureSkipSharedSecret)", p.SharedSecretEnv))
 		}
+	}
+	if d := h.Auth.StaleAccessTTLOrDefault(); d < 0 || d > MaxStaleAccessTTL {
+		errs = append(errs, fmt.Errorf("auth.staleAccessTTL must be between 0 and %s, got %s", MaxStaleAccessTTL, d))
 	}
 	if !strings.HasSuffix(h.Auth.Groups.Prefix, ":") {
 		errs = append(errs, errors.New("auth.groups.prefix must end with ':'"))

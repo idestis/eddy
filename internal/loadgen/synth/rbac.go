@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/idestis/eddy/internal/flux"
 	"github.com/idestis/eddy/internal/protocol"
 )
 
@@ -90,4 +91,40 @@ func Allow(id protocol.Identity, c protocol.AccessCheck) bool {
 		}
 	}
 	return false
+}
+
+// Rules is the fake SelfSubjectRulesReview of id in namespace, consistent
+// with Allow. Like a real impersonated review it includes what every
+// authenticated user may do (create self reviews), which the hub's
+// baseline user also gets.
+func Rules(id protocol.Identity, namespace string) []protocol.ResourceRule {
+	read := []string{"get", "list", "watch"}
+	out := []protocol.ResourceRule{{
+		Verbs: []string{"create"}, APIGroups: []string{"authorization.k8s.io"},
+		Resources: []string{"selfsubjectaccessreviews", "selfsubjectrulesreviews"},
+	}}
+	if slices.Contains(id.Groups, GroupAdmin) {
+		out = append(out, protocol.ResourceRule{Verbs: []string{"*"}, APIGroups: []string{"*"}, Resources: []string{"*"}})
+	}
+	if slices.Contains(id.Groups, GroupFluxViewers) {
+		out = append(out, protocol.ResourceRule{Verbs: read, APIGroups: fluxGroups(), Resources: []string{"*"}})
+	}
+	for _, g := range id.Groups {
+		if t, ok := strings.CutPrefix(g, groupTeamPrefix); ok && strings.HasPrefix(namespace, "team-"+t+"-") {
+			out = append(out, protocol.ResourceRule{Verbs: read, APIGroups: []string{"*"}, Resources: []string{"*"}})
+		}
+	}
+	return out
+}
+
+// fluxGroups lists the API groups of the kind table ending in
+// .toolkit.fluxcd.io.
+func fluxGroups() []string {
+	var out []string
+	for _, k := range flux.All() {
+		if strings.HasSuffix(k.Group, ".toolkit.fluxcd.io") && !slices.Contains(out, k.Group) {
+			out = append(out, k.Group)
+		}
+	}
+	return out
 }

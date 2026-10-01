@@ -133,3 +133,35 @@ func TestAgentPresets(t *testing.T) {
 		}
 	}
 }
+
+func TestHubStaleAccessTTL(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		want    time.Duration
+		wantErr string
+	}{
+		{name: "unset is 2m", yaml: "", want: 2 * time.Minute},
+		{name: "0 fails closed", yaml: "auth: {staleAccessTTL: 0s}\n", want: 0},
+		{name: "set", yaml: "auth: {staleAccessTTL: 30s}\n", want: 30 * time.Second},
+		{name: "at most 10m", yaml: "auth: {staleAccessTTL: 11m}\n", wantErr: "auth.staleAccessTTL"},
+		{name: "not negative", yaml: "auth: {staleAccessTTL: -1s}\n", wantErr: "auth.staleAccessTTL"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h, err := ParseHub([]byte(minimalHub + "store: {driver: memory}\n" + tc.yaml))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error %v, want one containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := h.Auth.StaleAccessTTLOrDefault(); got != tc.want {
+				t.Fatalf("staleAccessTTL %s, want %s", got, tc.want)
+			}
+		})
+	}
+}

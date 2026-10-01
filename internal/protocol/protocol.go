@@ -163,7 +163,59 @@ const (
 	// impersonation: the hub restricts Namespaces to those where the caller
 	// may list Jobs (SAR) and filters the result again.
 	OpHiddenJobs Op = "hiddenJobs"
+	// OpRules lists the resource rules of the request identity, one
+	// SelfSubjectRulesReview per namespace, created by the agent as the
+	// impersonated identity (so the review evaluates the user's own
+	// permissions, never the agent's). The hub answers namespaced read
+	// checks from the rules when they are complete. Agents that do not know
+	// the op answer 400; the hub then asks SubjectAccessReviews as before.
+	OpRules Op = "rules"
 )
+
+// Rules limits: namespaces per OpRules request, and resource rules per
+// namespace. A namespace with more rules is sent with Truncated set and no
+// rules.
+const (
+	MaxRulesNamespaces   = 50
+	MaxRulesPerNamespace = 2000
+)
+
+// RulesArgs for OpRules: distinct, non-empty namespace names.
+type RulesArgs struct {
+	Namespaces []string `json:"namespaces"`
+}
+
+// ResourceRule is one rule of a SelfSubjectRulesReview, with the RBAC
+// meaning of its fields ("*" matches every verb, group or resource,
+// "*/<sub>" every resource's subresource, and ResourceNames, when set,
+// limits the rule to requests for those names).
+type ResourceRule struct {
+	Verbs         []string `json:"verbs"`
+	APIGroups     []string `json:"apiGroups,omitempty"`
+	Resources     []string `json:"resources,omitempty"`
+	ResourceNames []string `json:"resourceNames,omitempty"`
+}
+
+// NamespaceRules is the rules review of one namespace. The hub uses Rules
+// only when Incomplete, EvaluationError, Truncated and Error are all
+// unset; otherwise it asks SubjectAccessReviews for the namespace.
+type NamespaceRules struct {
+	Namespace string         `json:"namespace"`
+	Rules     []ResourceRule `json:"rules,omitempty"`
+	// Incomplete and EvaluationError are the review's status fields.
+	Incomplete      bool   `json:"incomplete,omitempty"`
+	EvaluationError string `json:"evaluationError,omitempty"`
+	// Truncated is set when the rules did not fit (MaxRulesPerNamespace,
+	// or the frame budget); Rules is then empty.
+	Truncated bool `json:"truncated,omitempty"`
+	// Error is set when the review could not be created.
+	Error string `json:"error,omitempty"`
+}
+
+// RulesResult answers RulesArgs, one entry per namespace, in order.
+type RulesResult struct {
+	Namespaces []NamespaceRules `json:"namespaces"`
+}
 
 // HiddenJobsArgs for OpHiddenJobs. Jobs are ordered by namespace, then
 // newest finished first.

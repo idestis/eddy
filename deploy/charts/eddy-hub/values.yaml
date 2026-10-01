@@ -82,6 +82,9 @@ config:
       maxGroups: 64
       maxGroupLength: 128
     denyUserPrefixes: ["system:", "eks:", "kubernetes-admin"]
+    # How long after a cluster's agent disconnects cached access answers may
+    # still filter its stale view (0 = fail closed at once; at most 10m).
+    staleAccessTTL: 2m
     session:
       idleTimeout: 8h
       absoluteTimeout: 24h

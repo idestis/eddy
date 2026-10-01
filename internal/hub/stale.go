@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/idestis/eddy/internal/config"
 	"github.com/idestis/eddy/internal/fleet"
 	"github.com/idestis/eddy/internal/protocol"
 )
@@ -20,12 +21,14 @@ import (
 // the oldest is evicted first.
 const staleMaxRows = 1_000_000
 
-// staleAccessGrace is how long after expiry a cached SAR answer may still
-// filter reads of a stale view: no agent can be asked while the cluster is
-// disconnected, and failing closed would hide the view from everyone.
-// Group changes still apply at once (the cache key includes the groups);
-// answers never asked before fail closed.
-const staleAccessGrace = 10 * time.Minute
+// defaultStaleAccessTTL is how long after its agent disconnects a cached
+// access answer (SAR or rules review) may still filter reads of a stale
+// view once it has expired (auth.staleAccessTTL; 0 fails closed at once).
+// No agent can be asked while the cluster is disconnected, and failing
+// closed at once would hide the view from everyone. Group changes still
+// apply at once (the cache key includes the groups); answers never asked
+// before fail closed.
+const defaultStaleAccessTTL = config.DefaultStaleAccessTTL
 
 // staleView is the last view of a disconnected cluster.
 type staleView struct {
@@ -123,6 +126,15 @@ func (a *agents) reader(cluster string) clusterSession {
 		return sv
 	}
 	return nil
+}
+
+// staleSince reports whether cluster is served from a stale view, and since
+// when.
+func (a *agents) staleSince(cluster string) (time.Time, bool) {
+	if sv := a.staleOf(cluster); sv != nil {
+		return sv.since, true
+	}
+	return time.Time{}, false
 }
 
 // isStale reports whether cluster is served from a stale view.

@@ -136,15 +136,17 @@ func TestAuthorizerShortcutNeverOverGrants(t *testing.T) {
 }
 
 // TestAuthorizerStaleFallback: while a cluster is served from a stale
-// view, an expired answer (at most staleAccessGrace old) still filters
-// reads; a fresh question, or one for a live cluster, fails closed.
+// view, an expired answer still filters reads for at most staleTTL after
+// the agent disconnected; a fresh question, or one for a live cluster,
+// fails closed, and staleTTL 0 fails closed at once.
 func TestAuthorizerStaleFallback(t *testing.T) {
 	cs := &countingSender{allow: rbacAllow}
 	a := newAuthorizer(cs.send, newMetrics())
 	now := time.Unix(1000, 0)
 	a.now = func() time.Time { return now }
 	stale := false
-	a.stale = func(string) bool { return stale }
+	var since time.Time
+	a.staleSince = func(string) (time.Time, bool) { return since, stale }
 	p := identity.Principal{User: "u", Groups: []string{"eddy:ns-01"}}
 	known := []protocol.AccessCheck{{Verb: "list", Group: "apps", Resource: "deployments", Namespace: "ns-01"}}
 	if res, err := a.check(context.Background(), p, "dev", known); err != nil || !res[0] {
@@ -156,10 +158,15 @@ func TestAuthorizerStaleFallback(t *testing.T) {
 	if _, err := a.check(context.Background(), p, "dev", known); err == nil {
 		t.Fatal("an expired answer was used for a cluster that is not stale")
 	}
-	stale = true
+	stale, since = true, now.Add(-time.Second)
 	if res, err := a.check(context.Background(), p, "dev", known); err != nil || !res[0] {
 		t.Fatalf("stale cluster, known answer: %v %v, want the last answer", res, err)
 	}
+	a.staleTTL = 0
+	if _, err := a.check(context.Background(), p, "dev", known); err == nil {
+		t.Fatal("staleAccessTTL 0 used an expired answer")
+	}
+	a.staleTTL = defaultStaleAccessTTL
 	unknown := []protocol.AccessCheck{{Verb: "list", Group: "apps", Resource: "deployments", Namespace: "ns-02"}}
 	if _, err := a.check(context.Background(), p, "dev", unknown); err == nil {
 		t.Fatal("a question never asked was answered while the agent is gone")
@@ -168,8 +175,14 @@ func TestAuthorizerStaleFallback(t *testing.T) {
 	if _, err := a.check(context.Background(), other, "dev", known); err == nil {
 		t.Fatal("changed groups reused an old answer")
 	}
-	now = now.Add(staleAccessGrace)
+	now = since.Add(defaultStaleAccessTTL)
 	if _, err := a.check(context.Background(), p, "dev", known); err == nil {
-		t.Fatal("an answer older than staleAccessGrace was used")
+		t.Fatal("an answer was used staleAccessTTL after the agent disconnected")
+	}
+	// Disconnected long after the answer expired: the answer is too old.
+	since = now
+	now = now.Add(time.Second)
+	if _, err := a.check(context.Background(), p, "dev", known); err == nil {
+		t.Fatal("an answer that expired more than staleAccessTTL ago was used")
 	}
 }

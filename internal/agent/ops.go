@@ -50,8 +50,8 @@ const (
 const fieldManager = "eddy"
 
 // Handler executes hub requests. Every cluster read and write goes through a
-// client that impersonates the request identity; only SubjectAccessReviews
-// use the agent's own client.
+// client that impersonates the request identity (rules reviews included);
+// only SubjectAccessReviews use the agent's own client.
 //
 // Local mode (dev builds only, see local_dev.go) swaps Impersonate and review
 // for the kubeconfig's own identity and sets readOnly; release binaries never
@@ -72,6 +72,9 @@ type Handler struct {
 	// review answers one access check; nil creates a SubjectAccessReview for
 	// the identity through Self.
 	review accessReviewer
+	// rulesReview creates one rules review as the impersonated identity;
+	// nil uses SelfSubjectRulesReview. Tests replace it.
+	rulesReview rulesReviewer
 	// readOnly, when set, refuses every write op with a 403 carrying it.
 	readOnly string
 
@@ -153,6 +156,13 @@ func (h *Handler) dispatch(ctx context.Context, req protocol.Request, stream fun
 			return nil, err
 		}
 		return h.access(ctx, req.Identity, args)
+	}
+	if req.Op == protocol.OpRules {
+		var args protocol.RulesArgs
+		if err := decodeArgs(req.Args, &args); err != nil {
+			return nil, err
+		}
+		return h.rules(ctx, req.Identity, args)
 	}
 	if req.Op == protocol.OpHiddenJobs {
 		var args protocol.HiddenJobsArgs
