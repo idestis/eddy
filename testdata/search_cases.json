@@ -1,0 +1,1018 @@
+{
+  "description": "Shared cases for web/src/lib/fuzzy.ts and internal/hub/fuzzy.go (ADR-0006). Generated from fuzzy.ts; both test suites must pass them. rank items tiebreak on `order` (lower first): statusRank*2 + (cluster is current ? 0 : 1).",
+  "fieldCases": [
+    {
+      "term": "redis",
+      "text": "redis",
+      "primary": true,
+      "match": {
+        "score": 960,
+        "ranges": [
+          [
+            0,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "term": "red",
+      "text": "redis",
+      "primary": true,
+      "match": {
+        "score": 844,
+        "ranges": [
+          [
+            0,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "term": "sys",
+      "text": "flux-system",
+      "primary": true,
+      "match": {
+        "score": 728.4090909090909,
+        "ranges": [
+          [
+            5,
+            8
+          ]
+        ]
+      }
+    },
+    {
+      "term": "ystem",
+      "text": "flux-system",
+      "primary": true,
+      "match": {
+        "score": 635.1818181818181,
+        "ranges": [
+          [
+            6,
+            11
+          ]
+        ]
+      }
+    },
+    {
+      "term": "cm",
+      "text": "cert-manager",
+      "primary": true,
+      "match": {
+        "score": 150.8,
+        "ranges": [
+          [
+            0,
+            1
+          ],
+          [
+            5,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "term": "fs",
+      "text": "flux-system",
+      "primary": false,
+      "match": null
+    },
+    {
+      "term": "flux-sy",
+      "text": "flux-system",
+      "primary": false,
+      "match": {
+        "score": 445.45454545454544,
+        "ranges": [
+          [
+            0,
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "term": "fdp",
+      "text": "podinfo",
+      "primary": true,
+      "match": null
+    },
+    {
+      "term": "xyz",
+      "text": "podinfo",
+      "primary": true,
+      "match": null
+    },
+    {
+      "term": "oif",
+      "text": "podinfo",
+      "primary": true,
+      "match": null
+    },
+    {
+      "term": "redis",
+      "text": "redis-master",
+      "primary": true,
+      "match": {
+        "score": 836.6666666666666,
+        "ranges": [
+          [
+            0,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "term": "redis",
+      "text": "redis-replicas-long-name",
+      "primary": true,
+      "match": {
+        "score": 828.3333333333334,
+        "ranges": [
+          [
+            0,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "term": "REDIS",
+      "text": "Redis-Master",
+      "primary": true,
+      "match": {
+        "score": 836.6666666666666,
+        "ranges": [
+          [
+            0,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "term": "master",
+      "text": "redis-master",
+      "primary": false,
+      "match": {
+        "score": 337,
+        "ranges": [
+          [
+            6,
+            12
+          ]
+        ]
+      }
+    },
+    {
+      "term": "ks",
+      "text": "KS",
+      "primary": false,
+      "match": {
+        "score": 560,
+        "ranges": [
+          [
+            0,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "term": "hr",
+      "text": "HelmRelease",
+      "primary": false,
+      "match": null
+    },
+    {
+      "term": "helm",
+      "text": "HelmRelease",
+      "primary": false,
+      "match": {
+        "score": 434.54545454545456,
+        "ranges": [
+          [
+            0,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "term": "release",
+      "text": "HelmRelease",
+      "primary": false,
+      "match": {
+        "score": 243.45454545454544,
+        "ranges": [
+          [
+            4,
+            11
+          ]
+        ]
+      }
+    },
+    {
+      "term": "nightly",
+      "text": "billing-api-nightly-29004096",
+      "primary": true,
+      "match": {
+        "score": 724,
+        "ranges": [
+          [
+            12,
+            19
+          ]
+        ]
+      }
+    },
+    {
+      "term": "29004",
+      "text": "billing-api-nightly-29004096",
+      "primary": true,
+      "match": {
+        "score": 717.1428571428571,
+        "ranges": [
+          [
+            20,
+            25
+          ]
+        ]
+      }
+    },
+    {
+      "term": "ban",
+      "text": "billing-api-nightly-29004096",
+      "primary": true,
+      "match": {
+        "score": 150.4,
+        "ranges": [
+          [
+            0,
+            1
+          ],
+          [
+            8,
+            9
+          ],
+          [
+            12,
+            13
+          ]
+        ]
+      }
+    },
+    {
+      "term": "bapi",
+      "text": "billing-api-nightly-29004096",
+      "primary": true,
+      "match": {
+        "score": 157.8,
+        "ranges": [
+          [
+            0,
+            1
+          ],
+          [
+            8,
+            11
+          ]
+        ]
+      }
+    },
+    {
+      "term": "api",
+      "text": "",
+      "primary": true,
+      "match": null
+    },
+    {
+      "term": "a",
+      "text": "a",
+      "primary": true,
+      "match": {
+        "score": 960,
+        "ranges": [
+          [
+            0,
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "term": "a",
+      "text": "ba",
+      "primary": true,
+      "match": {
+        "score": 639.5,
+        "ranges": [
+          [
+            1,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "term": "kube",
+      "text": "kube-system",
+      "primary": false,
+      "match": {
+        "score": 434.54545454545456,
+        "ranges": [
+          [
+            0,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "term": "team-03",
+      "text": "team-03-billing-1",
+      "primary": false,
+      "match": {
+        "score": 436.47058823529414,
+        "ranges": [
+          [
+            0,
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "term": "0",
+      "text": "team-03-billing-1",
+      "primary": false,
+      "match": {
+        "score": 319.8529411764706,
+        "ranges": [
+          [
+            5,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "term": "gw",
+      "text": "gateway-7d9f-x2",
+      "primary": true,
+      "match": null
+    },
+    {
+      "term": "gwx",
+      "text": "gateway-7d9f-x2",
+      "primary": true,
+      "match": {
+        "score": 146.2,
+        "ranges": [
+          [
+            0,
+            1
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            13,
+            14
+          ]
+        ]
+      }
+    },
+    {
+      "term": "g7x",
+      "text": "gateway-7d9f-x2",
+      "primary": true,
+      "match": {
+        "score": 150.2,
+        "ranges": [
+          [
+            0,
+            1
+          ],
+          [
+            8,
+            9
+          ],
+          [
+            13,
+            14
+          ]
+        ]
+      }
+    },
+    {
+      "term": "pod",
+      "text": "podinfo-6b8d9c-abcde",
+      "primary": true,
+      "match": {
+        "score": 826,
+        "ranges": [
+          [
+            0,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "term": "info",
+      "text": "podinfo",
+      "primary": true,
+      "match": {
+        "score": 641.3571428571429,
+        "ranges": [
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "term": "podinfoextra",
+      "text": "podinfo",
+      "primary": true,
+      "match": null
+    },
+    {
+      "term": "@",
+      "text": "a@b",
+      "primary": true,
+      "match": {
+        "score": 632.8333333333334,
+        "ranges": [
+          [
+            1,
+            2
+          ]
+        ]
+      }
+    },
+    {
+      "term": "b.c",
+      "text": "a.b.c",
+      "primary": true,
+      "match": {
+        "score": 743,
+        "ranges": [
+          [
+            2,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "term": "c",
+      "text": "a/b:c",
+      "primary": true,
+      "match": {
+        "score": 726,
+        "ranges": [
+          [
+            4,
+            5
+          ]
+        ]
+      }
+    }
+  ],
+  "itemCases": [
+    {
+      "query": "pod staging",
+      "primary": "podinfo",
+      "secondary": [
+        "apps",
+        "HelmRelease",
+        "HR",
+        "staging"
+      ],
+      "match": {
+        "score": 698.5714285714286,
+        "primary": [
+          [
+            0,
+            3
+          ]
+        ],
+        "secondary": [
+          [],
+          [],
+          [],
+          [
+            [
+              0,
+              7
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "query": "pod prod",
+      "primary": "podinfo",
+      "secondary": [
+        "apps",
+        "HelmRelease",
+        "HR",
+        "staging"
+      ],
+      "match": null
+    },
+    {
+      "query": "",
+      "primary": "anything",
+      "secondary": [],
+      "match": {
+        "score": 1,
+        "primary": [],
+        "secondary": []
+      }
+    },
+    {
+      "query": "  hr   podinfo ",
+      "primary": "podinfo",
+      "secondary": [
+        "apps",
+        "HelmRelease",
+        "HR",
+        "prod-eu"
+      ],
+      "match": {
+        "score": 760,
+        "primary": [
+          [
+            0,
+            7
+          ]
+        ],
+        "secondary": [
+          [],
+          [],
+          [
+            [
+              0,
+              2
+            ]
+          ],
+          []
+        ]
+      }
+    },
+    {
+      "query": "billing nightly",
+      "primary": "billing-api-nightly-29004096",
+      "secondary": [
+        "team-03-billing-1",
+        "Job",
+        "JOB",
+        "lg-003"
+      ],
+      "match": {
+        "score": 777,
+        "primary": [
+          [
+            0,
+            7
+          ],
+          [
+            12,
+            19
+          ]
+        ],
+        "secondary": [
+          [],
+          [],
+          [],
+          []
+        ]
+      }
+    },
+    {
+      "query": "job team-03",
+      "primary": "billing-api-nightly-29004096",
+      "secondary": [
+        "team-03-billing-1",
+        "Job",
+        "JOB",
+        "lg-003"
+      ],
+      "match": {
+        "score": 498.2352941176471,
+        "primary": [],
+        "secondary": [
+          [
+            [
+              0,
+              7
+            ]
+          ],
+          [
+            [
+              0,
+              3
+            ]
+          ],
+          [],
+          []
+        ]
+      }
+    },
+    {
+      "query": "ks flux",
+      "primary": "apps",
+      "secondary": [
+        "flux-system",
+        "Kustomization",
+        "KS",
+        "dev"
+      ],
+      "match": {
+        "score": 497.27272727272725,
+        "primary": [],
+        "secondary": [
+          [
+            [
+              0,
+              4
+            ]
+          ],
+          [],
+          [
+            [
+              0,
+              2
+            ]
+          ],
+          []
+        ]
+      }
+    },
+    {
+      "query": "bapi lg",
+      "primary": "billing-api-nightly-29004096",
+      "secondary": [
+        "team-03-billing-1",
+        "Job",
+        "JOB",
+        "lg-003"
+      ],
+      "match": {
+        "score": 295.56666666666666,
+        "primary": [
+          [
+            0,
+            1
+          ],
+          [
+            8,
+            11
+          ]
+        ],
+        "secondary": [
+          [],
+          [],
+          [],
+          [
+            [
+              0,
+              2
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "query": "zzz",
+      "primary": "podinfo",
+      "secondary": [
+        "apps",
+        "HelmRelease",
+        "HR",
+        "staging"
+      ],
+      "match": null
+    },
+    {
+      "query": "deploy",
+      "primary": "web",
+      "secondary": [
+        "shop",
+        "Deployment",
+        "DEP",
+        "prod"
+      ],
+      "match": {
+        "score": 444,
+        "primary": [],
+        "secondary": [
+          [],
+          [
+            [
+              0,
+              6
+            ]
+          ],
+          [],
+          []
+        ]
+      }
+    }
+  ],
+  "rankItems": [
+    {
+      "id": "prod/HelmRelease/apps/podinfo",
+      "primary": "podinfo",
+      "secondary": [
+        "apps",
+        "HelmRelease",
+        "HR",
+        "prod"
+      ],
+      "order": 9
+    },
+    {
+      "id": "staging/HelmRelease/apps/podinfo",
+      "primary": "podinfo",
+      "secondary": [
+        "apps",
+        "HelmRelease",
+        "HR",
+        "staging"
+      ],
+      "order": 8
+    },
+    {
+      "id": "dev/HelmRelease/apps/podinfo",
+      "primary": "podinfo",
+      "secondary": [
+        "apps",
+        "HelmRelease",
+        "HR",
+        "dev"
+      ],
+      "order": 1
+    },
+    {
+      "id": "prod/Deployment/apps/podinfo-frontend",
+      "primary": "podinfo-frontend",
+      "secondary": [
+        "apps",
+        "Deployment",
+        "DEP",
+        "prod"
+      ],
+      "order": 9
+    },
+    {
+      "id": "prod/Pod/apps/podinfo-6b8d9c-abcde",
+      "primary": "podinfo-6b8d9c-abcde",
+      "secondary": [
+        "apps",
+        "Pod",
+        "POD",
+        "prod"
+      ],
+      "order": 11
+    },
+    {
+      "id": "prod/Kustomization/flux-system/apps",
+      "primary": "apps",
+      "secondary": [
+        "flux-system",
+        "Kustomization",
+        "KS",
+        "prod"
+      ],
+      "order": 3
+    },
+    {
+      "id": "staging/Kustomization/flux-system/infra-controllers",
+      "primary": "infra-controllers",
+      "secondary": [
+        "flux-system",
+        "Kustomization",
+        "KS",
+        "staging"
+      ],
+      "order": 8
+    },
+    {
+      "id": "prod/Service/redis/redis-master",
+      "primary": "redis-master",
+      "secondary": [
+        "redis",
+        "Service",
+        "SVC",
+        "prod"
+      ],
+      "order": 9
+    },
+    {
+      "id": "prod/StatefulSet/redis/redis-replicas-long-name",
+      "primary": "redis-replicas-long-name",
+      "secondary": [
+        "redis",
+        "StatefulSet",
+        "STS",
+        "prod"
+      ],
+      "order": 1
+    },
+    {
+      "id": "dev/ConfigMap/apps/podinfo-config",
+      "primary": "podinfo-config",
+      "secondary": [
+        "apps",
+        "ConfigMap",
+        "CM",
+        "dev"
+      ],
+      "order": 19
+    },
+    {
+      "id": "lg-003/Job/team-03-billing-1/billing-api-nightly-29004096",
+      "primary": "billing-api-nightly-29004096",
+      "secondary": [
+        "team-03-billing-1",
+        "Job",
+        "JOB",
+        "lg-003"
+      ],
+      "order": 11
+    },
+    {
+      "id": "lg-003/Job/team-03-billing-1/billing-api-nightly-29008192",
+      "primary": "billing-api-nightly-29008192",
+      "secondary": [
+        "team-03-billing-1",
+        "Job",
+        "JOB",
+        "lg-003"
+      ],
+      "order": 1
+    },
+    {
+      "id": "lg-004/CronJob/team-04-search-1/search-sync-nightly",
+      "primary": "search-sync-nightly",
+      "secondary": [
+        "team-04-search-1",
+        "CronJob",
+        "CJ",
+        "lg-004"
+      ],
+      "order": 9
+    }
+  ],
+  "rankCases": [
+    {
+      "query": "podinfo",
+      "limit": 30,
+      "expected": [
+        "dev/HelmRelease/apps/podinfo",
+        "staging/HelmRelease/apps/podinfo",
+        "prod/HelmRelease/apps/podinfo",
+        "prod/Deployment/apps/podinfo-frontend",
+        "prod/Pod/apps/podinfo-6b8d9c-abcde",
+        "dev/ConfigMap/apps/podinfo-config"
+      ]
+    },
+    {
+      "query": "pod",
+      "limit": 30,
+      "expected": [
+        "dev/HelmRelease/apps/podinfo",
+        "staging/HelmRelease/apps/podinfo",
+        "prod/HelmRelease/apps/podinfo",
+        "prod/Deployment/apps/podinfo-frontend",
+        "prod/Pod/apps/podinfo-6b8d9c-abcde",
+        "dev/ConfigMap/apps/podinfo-config"
+      ]
+    },
+    {
+      "query": "redis",
+      "limit": 30,
+      "expected": [
+        "prod/StatefulSet/redis/redis-replicas-long-name",
+        "prod/Service/redis/redis-master"
+      ]
+    },
+    {
+      "query": "apps",
+      "limit": 30,
+      "expected": [
+        "prod/Kustomization/flux-system/apps",
+        "dev/HelmRelease/apps/podinfo",
+        "staging/HelmRelease/apps/podinfo",
+        "prod/HelmRelease/apps/podinfo",
+        "prod/Deployment/apps/podinfo-frontend",
+        "prod/Pod/apps/podinfo-6b8d9c-abcde",
+        "dev/ConfigMap/apps/podinfo-config"
+      ]
+    },
+    {
+      "query": "ks",
+      "limit": 30,
+      "expected": [
+        "prod/Kustomization/flux-system/apps",
+        "staging/Kustomization/flux-system/infra-controllers"
+      ]
+    },
+    {
+      "query": "nightly",
+      "limit": 30,
+      "expected": [
+        "lg-003/Job/team-03-billing-1/billing-api-nightly-29008192",
+        "lg-004/CronJob/team-04-search-1/search-sync-nightly",
+        "lg-003/Job/team-03-billing-1/billing-api-nightly-29004096"
+      ]
+    },
+    {
+      "query": "billing nightly",
+      "limit": 30,
+      "expected": [
+        "lg-003/Job/team-03-billing-1/billing-api-nightly-29008192",
+        "lg-003/Job/team-03-billing-1/billing-api-nightly-29004096"
+      ]
+    },
+    {
+      "query": "pdi",
+      "limit": 30,
+      "expected": [
+        "dev/HelmRelease/apps/podinfo",
+        "staging/HelmRelease/apps/podinfo",
+        "prod/HelmRelease/apps/podinfo",
+        "prod/Deployment/apps/podinfo-frontend",
+        "prod/Pod/apps/podinfo-6b8d9c-abcde",
+        "dev/ConfigMap/apps/podinfo-config"
+      ]
+    },
+    {
+      "query": "hr apps",
+      "limit": 30,
+      "expected": [
+        "dev/HelmRelease/apps/podinfo",
+        "staging/HelmRelease/apps/podinfo",
+        "prod/HelmRelease/apps/podinfo"
+      ]
+    },
+    {
+      "query": "prod pod",
+      "limit": 30,
+      "expected": [
+        "prod/HelmRelease/apps/podinfo",
+        "prod/Deployment/apps/podinfo-frontend",
+        "prod/Pod/apps/podinfo-6b8d9c-abcde"
+      ]
+    },
+    {
+      "query": "sync",
+      "limit": 30,
+      "expected": [
+        "lg-004/CronJob/team-04-search-1/search-sync-nightly"
+      ]
+    },
+    {
+      "query": "zzz",
+      "limit": 30,
+      "expected": []
+    },
+    {
+      "query": "p",
+      "limit": 30,
+      "expected": [
+        "dev/HelmRelease/apps/podinfo",
+        "staging/HelmRelease/apps/podinfo",
+        "prod/HelmRelease/apps/podinfo",
+        "prod/Deployment/apps/podinfo-frontend",
+        "prod/Pod/apps/podinfo-6b8d9c-abcde",
+        "dev/ConfigMap/apps/podinfo-config",
+        "prod/StatefulSet/redis/redis-replicas-long-name",
+        "lg-003/Job/team-03-billing-1/billing-api-nightly-29008192",
+        "prod/Kustomization/flux-system/apps",
+        "lg-003/Job/team-03-billing-1/billing-api-nightly-29004096",
+        "prod/Service/redis/redis-master"
+      ]
+    },
+    {
+      "query": "pod",
+      "limit": 3,
+      "expected": [
+        "dev/HelmRelease/apps/podinfo",
+        "staging/HelmRelease/apps/podinfo",
+        "prod/HelmRelease/apps/podinfo"
+      ]
+    }
+  ]
+}

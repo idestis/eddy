@@ -178,13 +178,17 @@ func TestAuthorizerFilterList(t *testing.T) {
 	if len(got) != 3 || !names["k1"] || !names["k2"] || !names["h1"] {
 		t.Fatalf("filtered %v", names)
 	}
-	// One batch with one check per distinct (group, resource, namespace).
-	if cs.calls() != 1 || len(cs.batches[0]) != 4 {
+	// Two batches: the cluster-scope check per (group, resource), then,
+	// as alice may list nothing cluster-wide, one check per distinct
+	// (group, resource, namespace).
+	if cs.calls() != 2 || len(cs.batches[0]) != 3 || len(cs.batches[1]) != 4 {
 		t.Fatalf("batches %v", cs.batches)
 	}
-	for _, c := range cs.batches[0] {
-		if c.Verb != "list" || c.Name != "" {
-			t.Fatalf("unexpected check %+v", c)
+	for i, b := range cs.batches {
+		for _, c := range b {
+			if c.Verb != "list" || c.Name != "" || (i == 0) != (c.Namespace == "") {
+				t.Fatalf("unexpected check %+v in batch %d", c, i)
+			}
 		}
 	}
 }

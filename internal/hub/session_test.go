@@ -52,11 +52,11 @@ func TestSnapshotChunksAndDeltas(t *testing.T) {
 		frame protocol.Frame
 		want  []string
 	}{
-		{"snapshot replaces the view", frame(t, protocol.TypeSnapshot, protocol.Snapshot{Resources: []model.Resource{a1, secret, replicaSet}}), []string{a1.ID}},
-		{"snapshot remainder arrives as upsert-only deltas", frame(t, protocol.TypeDelta, protocol.Delta{Upserts: []model.Resource{a2, a3}}), []string{a1.ID, a2.ID, a3.ID}},
+		{"a chunked snapshot is staged", frame(t, protocol.TypeSnapshot, protocol.Snapshot{Resources: []model.Resource{a1, secret, replicaSet}, Parts: 2}), nil},
+		{"the last part swaps the snapshot in", frame(t, protocol.TypeDelta, protocol.Delta{Upserts: []model.Resource{a2, a3}, Part: 2}), []string{a1.ID, a2.ID, a3.ID}},
 		{"ids are recomputed", frame(t, protocol.TypeDelta, protocol.Delta{Upserts: []model.Resource{forged}}), []string{a1.ID, a2.ID, a3.ID, forged.Ref.ID()}},
 		{"deletes remove", frame(t, protocol.TypeDelta, protocol.Delta{Deletes: []string{a2.ID, "unknown/X/y/z"}}), []string{a1.ID, a3.ID, forged.Ref.ID()}},
-		{"a new snapshot starts over", frame(t, protocol.TypeSnapshot, protocol.Snapshot{Resources: []model.Resource{a3}}), []string{a3.ID}},
+		{"a new snapshot starts over", frame(t, protocol.TypeSnapshot, protocol.Snapshot{Resources: []model.Resource{a3}, Parts: 1}), []string{a3.ID}},
 	}
 	for _, st := range steps {
 		if err := s.handle(st.frame); err != nil {
@@ -96,7 +96,7 @@ func TestTupleCountsCachedPerVersion(t *testing.T) {
 	s := testSession(newBus())
 	_ = s.handle(frame(t, protocol.TypeSnapshot, protocol.Snapshot{Resources: []model.Resource{
 		res("Kustomization", "a", "1", model.StatusReady), res("Kustomization", "a", "2", model.StatusFailed),
-	}}))
+	}, Parts: 1}))
 	c := s.tupleCounts()
 	tk := accessTuple{Group: "kustomize.toolkit.fluxcd.io", Resource: "kustomizations", Namespace: "a"}
 	if c[tk][model.StatusReady] != 1 || c[tk][model.StatusFailed] != 1 {

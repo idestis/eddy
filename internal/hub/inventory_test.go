@@ -77,7 +77,7 @@ func TestInventoryRowsNotCountedAndDeletesFiltered(t *testing.T) {
 	ks := res("Kustomization", "team-a", "apps", model.StatusReady)
 	cm := invRow("", "ConfigMap", "team-a", "cfg", "team-a")
 	hidden := invRow("", "ConfigMap", "team-b", "cfg", "team-b")
-	if err := s.handle(frame(t, protocol.TypeSnapshot, protocol.Snapshot{Resources: []model.Resource{ks, cm, hidden}})); err != nil {
+	if err := s.handle(frame(t, protocol.TypeSnapshot, protocol.Snapshot{Resources: []model.Resource{ks, cm, hidden}, Parts: 1})); err != nil {
 		t.Fatal(err)
 	}
 	total := 0

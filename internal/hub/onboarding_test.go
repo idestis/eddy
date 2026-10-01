@@ -331,7 +331,7 @@ func TestOnboardingEndToEnd(t *testing.T) {
 		t.Fatal("an expired join token must not be consumed")
 	}
 	// The previous token for edge-2 was revoked by the new one.
-	if toks, _ := st.JoinTokens().List(context.Background(), "edge-2"); len(toks) != 2 || toks[1].RevokedAt == nil {
+	if toks, _ := st.JoinTokens().List(context.Background(), "edge-2"); len(toks) != 2 || toks[0].ID != id || toks[0].RevokedAt != nil || toks[1].RevokedAt == nil {
 		t.Fatalf("edge-2 tokens %+v", toks)
 	}
 

@@ -23,7 +23,7 @@ func TestLocalModeHelloExposedAndReadOnlyEnforced(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.close)
-	a.sendFrame(protocol.TypeSnapshot, "", protocol.Snapshot{Resources: []model.Resource{res("Kustomization", "team-a", "apps", model.StatusReady)}})
+	a.sendFrame(protocol.TypeSnapshot, "", protocol.Snapshot{Resources: []model.Resource{res("Kustomization", "team-a", "apps", model.StatusReady)}, Parts: 1})
 	go a.serve()
 	waitFor(t, func() bool { s := e.hub.agents.get("dev"); return s != nil && s.size() == 1 })
 

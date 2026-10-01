@@ -27,6 +27,7 @@ type api struct {
 	metrics    *metrics
 	streams    *concurrencyLimiter
 	logStreams *concurrencyLimiter
+	searches   *concurrencyLimiter
 	shutdown   <-chan struct{}
 	ephemeral  bool
 	onboard    *onboarding
@@ -41,7 +42,8 @@ type api struct {
 //	/        the embedded SPA
 //
 // Everything is wrapped in the access log, panic recovery, body cap and
-// security headers.
+// security headers. GET responses under /api/v1 may be gzipped
+// (compress.go lists the routes that never are).
 func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/v1/me", a.handleMe)
@@ -64,7 +66,10 @@ func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
 	m.HandleFunc("GET /api/v1/clusters/{cluster}/workloads/{kind}/{ns}/{name}/logs", a.handleWorkloadLogs)
 	m.HandleFunc("GET /api/v1/clusters/{cluster}/findings", a.handleFindings)
 	m.HandleFunc("GET /api/v1/clusters/{cluster}/kinds", a.handleKinds)
+	m.HandleFunc("GET /api/v1/clusters/{cluster}/graph", a.handleGraph)
 	m.HandleFunc("GET /api/v1/stream", a.handleStream)
+	m.HandleFunc("GET /api/v1/search", a.handleSearch)
+	m.HandleFunc("GET /api/v1/attention", a.handleAttention)
 
 	m.HandleFunc("GET /api/v1/threads", a.handleListThreads)
 	m.HandleFunc("POST /api/v1/threads", a.handleCreateThread)
@@ -86,7 +91,7 @@ func (a *api) routes(mcpHandler, spa http.Handler) http.Handler {
 	authH := a.auth.Authenticate(recordUser(am))
 
 	root := http.NewServeMux()
-	root.Handle("/api/", apiH)
+	root.Handle("/api/", gzipResponses(a.metrics, apiH))
 	root.Handle("/auth/", authH)
 	root.Handle("/mcp", mcpHandler)
 	// The peer endpoint lives on its own listener only.

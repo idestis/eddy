@@ -152,7 +152,12 @@ func (a *api) handleFindings(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	body := map[string]any{"items": items}
+	if a.fleet.agents.isStale(r.PathValue("cluster")) {
+		a.markStale(w, true)
+		body["stale"] = true
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // Hidden Job pages of GET …/resources?kind=Job&includeHidden=1.

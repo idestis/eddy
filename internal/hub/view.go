@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/idestis/eddy/internal/flux"
 	"github.com/idestis/eddy/internal/model"
 	"github.com/idestis/eddy/internal/protocol"
 )
@@ -26,6 +28,7 @@ type clusterSession interface {
 	lookup(id string) (model.Resource, bool)
 	size() int
 	tupleCounts() map[accessTuple]map[model.Status]int
+	counted() *countSnapshot
 	findingList() []model.Finding
 	do(ctx context.Context, req protocol.Request) (json.RawMessage, error)
 	stream(ctx context.Context, req protocol.Request, onChunk func(protocol.LogChunk) error) error
@@ -42,6 +45,10 @@ var (
 // clusterView is a cluster's resources as one source reported them. Views
 // are replaced by a snapshot and patched by deltas; every change bumps rv,
 // a hub-wide sequence, so a resourceVersion never repeats across sessions.
+//
+// A snapshot larger than a frame arrives in parts (a Snapshot, then
+// upsert-only Deltas). The parts are staged and swapped in together, so the
+// view is synced, and its sources emit a resync, only once it is complete.
 type clusterView struct {
 	rvSeq *atomic.Uint64
 
@@ -49,53 +56,226 @@ type clusterView struct {
 	resources map[string]model.Resource
 	synced    bool
 	rv        uint64
+	// counts are the live counts per tuple and status, updated with every
+	// change; countSnap is their copy at countsRV (counted).
 	counts    map[accessTuple]map[model.Status]int
+	countSnap *countSnapshot
 	countsRV  uint64
+	// attention holds the ids of rows that need attention (needsAttention),
+	// kept in step with resources.
+	attention map[string]struct{}
 	// findings are the cluster's findings (sanitizeFindings), replaced as
 	// a whole.
 	findings []model.Finding
+	// stage is the snapshot being received, nil when none is.
+	stage *stagedSnapshot
 }
+
+// stagedSnapshot is a snapshot whose parts are still arriving.
+type stagedSnapshot struct {
+	resources map[string]model.Resource
+	findings  *protocol.FindingSet
+	// parts is Snapshot.Parts: 0 for an agent that does not mark its
+	// parts (the snapshot ends after a quiet period), else the frame count.
+	parts   int
+	started time.Time
+	quiet   *time.Timer
+}
+
+// Snapshot staging for agents that do not mark their snapshot parts: the
+// parts follow the Snapshot back to back, so the snapshot is complete once
+// no frame arrived for legacySnapshotQuiet (agents send deltas every 250 ms
+// at most), or after legacySnapshotMax at the latest.
+var (
+	legacySnapshotQuiet = 200 * time.Millisecond
+	legacySnapshotMax   = 10 * time.Second
+)
 
 func newClusterView(rvSeq *atomic.Uint64) *clusterView {
-	return &clusterView{rvSeq: rvSeq, resources: map[string]model.Resource{}, rv: rvSeq.Add(1)}
+	return &clusterView{rvSeq: rvSeq, resources: map[string]model.Resource{}, attention: map[string]struct{}{}, rv: rvSeq.Add(1)}
 }
 
-// replace swaps in a snapshot. Only surfaced kinds are kept (sanitizeResource).
-func (v *clusterView) replace(rs []model.Resource) {
+// needsAttention reports whether r is a "needs attention" row (ADR-0006):
+// failed, or a Flux object that is reconciling or suspended.
+func needsAttention(r model.Resource) bool {
+	if r.InventoryOnly {
+		return false
+	}
+	switch r.Status {
+	case model.StatusFailed:
+		return true
+	case model.StatusReconciling, model.StatusSuspended:
+		k, ok := flux.KindByName(r.Kind)
+		return ok && k.Flux
+	}
+	return false
+}
+
+func sanitizedMap(rs []model.Resource) map[string]model.Resource {
 	m := make(map[string]model.Resource, len(rs))
 	for _, r := range rs {
 		if r, ok := sanitizeResource(r); ok && len(m) < maxResources {
 			m[r.ID] = r
 		}
 	}
+	return m
+}
+
+func attentionOf(m map[string]model.Resource) map[string]struct{} {
+	out := map[string]struct{}{}
+	for id, r := range m {
+		if needsAttention(r) {
+			out[id] = struct{}{}
+		}
+	}
+	return out
+}
+
+// replace swaps in a complete snapshot. Only surfaced kinds are kept
+// (sanitizeResource).
+func (v *clusterView) replace(rs []model.Resource) {
+	m := sanitizedMap(rs)
+	att := attentionOf(m)
 	v.mu.Lock()
-	v.resources = m
+	v.stopStageLocked()
+	v.resources, v.attention = m, att
+	v.recountLocked()
 	v.synced = true
 	v.rv = v.rvSeq.Add(1)
 	v.mu.Unlock()
 }
 
+// startSnapshot applies the first frame of a snapshot. It reports true
+// when the snapshot is complete (one part); otherwise the view keeps
+// serving its current rows until the last part arrives (applyDelta
+// reports it) or, for an agent that does not mark parts, until onQuiet
+// commits it after a quiet period.
+func (v *clusterView) startSnapshot(snap protocol.Snapshot, onQuiet func()) bool {
+	if snap.Parts == 1 {
+		v.replace(snap.Resources)
+		v.replaceFindings(snap.Findings)
+		return true
+	}
+	st := &stagedSnapshot{resources: sanitizedMap(snap.Resources), findings: snap.Findings, parts: snap.Parts, started: time.Now()}
+	v.mu.Lock()
+	v.stopStageLocked()
+	v.stage = st
+	if st.parts == 0 {
+		st.quiet = time.AfterFunc(legacySnapshotQuiet, func() {
+			if v.commitStage(st) {
+				onQuiet()
+			}
+		})
+	}
+	v.mu.Unlock()
+	return false
+}
+
+func (v *clusterView) stopStageLocked() {
+	if v.stage != nil && v.stage.quiet != nil {
+		v.stage.quiet.Stop()
+	}
+	v.stage = nil
+}
+
+// commitStage swaps in st if it is still the staged snapshot.
+func (v *clusterView) commitStage(st *stagedSnapshot) bool {
+	v.mu.Lock()
+	if v.stage != st {
+		v.mu.Unlock()
+		return false
+	}
+	v.commitLocked()
+	v.mu.Unlock()
+	return true
+}
+
+func (v *clusterView) commitLocked() {
+	st := v.stage
+	v.stopStageLocked()
+	v.resources, v.attention = st.resources, attentionOf(st.resources)
+	v.recountLocked()
+	v.synced = true
+	v.rv = v.rvSeq.Add(1)
+	fs := st.findings
+	if fs == nil {
+		fs = &protocol.FindingSet{}
+	}
+	v.findings = sanitizeFindings(fs.Items)
+}
+
+// stageDeltaLocked applies d to the staged snapshot and reports whether
+// that completed it.
+func (v *clusterView) stageDeltaLocked(d protocol.Delta) bool {
+	st := v.stage
+	for _, r := range d.Upserts {
+		if r, ok := sanitizeResource(r); ok {
+			if _, exists := st.resources[r.ID]; exists || len(st.resources) < maxResources {
+				st.resources[r.ID] = r
+			}
+		}
+	}
+	for _, id := range d.Deletes {
+		delete(st.resources, id)
+	}
+	if d.Findings != nil {
+		st.findings = d.Findings
+	}
+	switch {
+	case st.parts > 0 && d.Part >= st.parts:
+		v.commitLocked()
+		return true
+	case st.parts == 0 && time.Since(st.started) >= legacySnapshotMax:
+		v.commitLocked()
+		return true
+	case st.parts == 0:
+		st.quiet.Reset(legacySnapshotQuiet)
+	}
+	return false
+}
+
 // apply patches the view and returns what actually changed. parents maps
 // the id of every deleted inventory-only row to its owner, so SSE can
-// filter the delete by the parent's visibility.
-func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes []string, parents map[string]model.Ref) {
-	upserts = make([]model.Resource, 0, len(d.Upserts))
+// filter the delete by the parent's visibility. While a snapshot is
+// staged, d goes to the stage instead and nothing changes yet; committed
+// reports that d completed the snapshot.
+func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes []string, parents map[string]model.Ref, committed bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.stage != nil {
+		return nil, nil, nil, v.stageDeltaLocked(d)
+	}
+	upserts = make([]model.Resource, 0, len(d.Upserts))
 	for _, r := range d.Upserts {
 		r, ok := sanitizeResource(r)
 		if !ok {
 			continue
 		}
-		if _, exists := v.resources[r.ID]; !exists && len(v.resources) >= maxResources {
+		old, exists := v.resources[r.ID]
+		if !exists && len(v.resources) >= maxResources {
 			continue
 		}
+		if v.counts != nil {
+			if exists {
+				v.countRow(old, -1)
+			}
+			v.countRow(r, 1)
+		}
 		v.resources[r.ID] = r
+		if needsAttention(r) {
+			v.attention[r.ID] = struct{}{}
+		} else {
+			delete(v.attention, r.ID)
+		}
 		upserts = append(upserts, r)
 	}
 	for _, id := range d.Deletes {
 		if old, ok := v.resources[id]; ok {
+			if v.counts != nil {
+				v.countRow(old, -1)
+			}
 			delete(v.resources, id)
+			delete(v.attention, id)
 			deletes = append(deletes, id)
 			if old.InventoryOnly && old.Owner != nil {
 				if parents == nil {
@@ -108,7 +288,7 @@ func (v *clusterView) apply(d protocol.Delta) (upserts []model.Resource, deletes
 	if len(upserts) > 0 || len(deletes) > 0 {
 		v.rv = v.rvSeq.Add(1)
 	}
-	return upserts, deletes, parents
+	return upserts, deletes, parents, false
 }
 
 // setFindings replaces the findings when fs is set and reports whether they
@@ -124,6 +304,7 @@ func (v *clusterView) setFindings(fs *protocol.FindingSet) bool {
 		return false
 	}
 	v.findings = clean
+	v.rvSeq.Add(1) // the fleet version (ETags of /clusters) covers findings
 	return true
 }
 
@@ -215,43 +396,206 @@ func (v *clusterView) lookup(id string) (model.Resource, bool) {
 	return r, ok
 }
 
+// version returns the view's resourceVersion without copying rows.
+func (v *clusterView) version() string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return strconv.FormatUint(v.rv, 10)
+}
+
+// scanIDs calls fn with every row id under the read lock. fn must be quick
+// and must not call back into the view; it returns false to stop.
+func (v *clusterView) scanIDs(fn func(id string) bool) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	for id := range v.resources {
+		if !fn(id) {
+			return
+		}
+	}
+}
+
+// rowMeta is what search needs of a row to rank it and check its
+// visibility, without copying the row.
+type rowMeta struct {
+	found  bool
+	status model.Status
+	// tuple indexes the tuples rowMetas returns: the row's own tuple, or
+	// -1 when its kind has none. inventory is set (and tuple unused) for
+	// inventory-only rows, which need requiredTuples.
+	tuple     int32
+	inventory *model.Resource
+}
+
+func (m rowMeta) order(cluster, current string) int {
+	return tiebreakOrder(model.Resource{Status: m.status, InventoryOnly: m.inventory != nil}, cluster, current)
+}
+
+// visible applies the list rule given the answers for tuples.
+func (m rowMeta) visible(tuples []accessTuple, allowed map[accessTuple]bool) bool {
+	switch {
+	case !m.found:
+		return false
+	case m.inventory != nil:
+		return allTuplesAllowed(*m.inventory, allowed)
+	case m.tuple < 0:
+		return false
+	}
+	return allowed[tuples[m.tuple]]
+}
+
+// rowMetas appends the metadata of the rows of ids to out, in order, and
+// returns every tuple they need answered.
+func (v *clusterView) rowMetas(ids []string, out []rowMeta) ([]rowMeta, []accessTuple) {
+	var tuples []accessTuple
+	index := map[accessTuple]int32{}
+	add := func(t accessTuple) int32 {
+		i, ok := index[t]
+		if !ok {
+			i = int32(len(tuples))
+			index[t] = i
+			tuples = append(tuples, t)
+		}
+		return i
+	}
+	kinds := map[string]accessTuple{} // kind → tuple without namespace
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	for _, id := range ids {
+		m := rowMeta{tuple: -1}
+		if r, ok := v.resources[id]; ok {
+			m.found, m.status = true, r.Status
+			if r.InventoryOnly {
+				inv := r
+				m.inventory = &inv
+				ts, _ := requiredTuples(inv)
+				for _, t := range ts {
+					add(t)
+				}
+			} else {
+				t, known := kinds[r.Kind]
+				if !known {
+					t, _ = tupleOf(model.Ref{Kind: r.Kind})
+					kinds[r.Kind] = t
+				}
+				if t.Resource != "" {
+					t.Namespace = r.Namespace
+					m.tuple = add(t)
+				}
+			}
+		}
+		out = append(out, m)
+	}
+	return out, tuples
+}
+
+// attentionRows returns a copy of the rows that need attention.
+func (v *clusterView) attentionRows() []model.Resource {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	out := make([]model.Resource, 0, len(v.attention))
+	for id := range v.attention {
+		out = append(out, v.resources[id])
+	}
+	return out
+}
+
 func (v *clusterView) size() int {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	return len(v.resources)
 }
 
-// tupleCounts returns resource counts by access tuple and status, cached
-// until the view changes. The returned map must not be modified.
-func (v *clusterView) tupleCounts() map[accessTuple]map[model.Status]int {
+// groupResource names a kind by its API group and plural.
+type groupResource struct{ group, resource string }
+
+// countSnapshot is a view's resource counts at one resourceVersion.
+// Inventory-only rows are not counted: their status is always unknown.
+type countSnapshot struct {
+	// tuples are the counts per access tuple and status.
+	tuples map[accessTuple]map[model.Status]int
+	// kinds are the totals per kind, over every namespace.
+	kinds map[groupResource]map[model.Status]int
+	// byKind lists each kind's tuples.
+	byKind map[groupResource][]accessTuple
+}
+
+// countRow adds delta to r's count in the live per-tuple counts. Called
+// with v.mu held for writing.
+func (v *clusterView) countRow(r model.Resource, delta int) {
+	if r.InventoryOnly {
+		return
+	}
+	t, ok := tupleOf(r.Ref)
+	if !ok {
+		return
+	}
+	byStatus := v.counts[t]
+	if byStatus == nil {
+		byStatus = map[model.Status]int{}
+		v.counts[t] = byStatus
+	}
+	if byStatus[r.Status] += delta; byStatus[r.Status] <= 0 {
+		delete(byStatus, r.Status)
+		if len(byStatus) == 0 {
+			delete(v.counts, t)
+		}
+	}
+}
+
+// recountLocked rebuilds the live counts from the rows (after a snapshot).
+func (v *clusterView) recountLocked() {
+	v.counts = map[accessTuple]map[model.Status]int{}
+	for _, r := range v.resources {
+		v.countRow(r, 1)
+	}
+}
+
+// counted returns the counts, copied from the live counts once per
+// resourceVersion (the live ones change in place with every delta). The
+// returned snapshot must not be modified.
+func (v *clusterView) counted() *countSnapshot {
 	v.mu.RLock()
-	if v.counts != nil && v.countsRV == v.rv {
-		c := v.counts
+	if v.countSnap != nil && v.countsRV == v.rv {
+		c := v.countSnap
 		v.mu.RUnlock()
 		return c
 	}
 	v.mu.RUnlock()
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.counts != nil && v.countsRV == v.rv {
-		return v.counts
+	if v.countSnap != nil && v.countsRV == v.rv {
+		return v.countSnap
 	}
-	c := map[accessTuple]map[model.Status]int{}
-	for _, r := range v.resources {
-		if r.InventoryOnly {
-			continue // not counted: its status is always unknown
-		}
-		t, ok := tupleOf(r.Ref)
-		if !ok {
-			continue
-		}
-		if c[t] == nil {
-			c[t] = map[model.Status]int{}
-		}
-		c[t][r.Status]++
+	if v.counts == nil {
+		v.recountLocked()
 	}
-	v.counts, v.countsRV = c, v.rv
+	c := &countSnapshot{
+		tuples: make(map[accessTuple]map[model.Status]int, len(v.counts)),
+		kinds:  map[groupResource]map[model.Status]int{},
+		byKind: map[groupResource][]accessTuple{},
+	}
+	for t, byStatus := range v.counts {
+		c.tuples[t] = maps.Clone(byStatus)
+		gr := groupResource{t.Group, t.Resource}
+		c.byKind[gr] = append(c.byKind[gr], t)
+		k := c.kinds[gr]
+		if k == nil {
+			k = map[model.Status]int{}
+			c.kinds[gr] = k
+		}
+		for st, n := range byStatus {
+			k[st] += n
+		}
+	}
+	v.countSnap, v.countsRV = c, v.rv
 	return c
+}
+
+// tupleCounts returns resource counts by access tuple and status, cached
+// until the view changes. The returned map must not be modified.
+func (v *clusterView) tupleCounts() map[accessTuple]map[model.Status]int {
+	return v.counted().tuples
 }
 
 // splitResources groups resources into chunks whose JSON stays under budget

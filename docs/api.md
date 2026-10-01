@@ -20,7 +20,7 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
   - `conflict` 409
   - `confirm_required` 428
   - `rate_limited` 429
-  - `disconnected` 503: the cluster's agent is not connected. No stale data is served.
+  - `disconnected` 503: the cluster's agent is not connected, and the request needs it (writes, YAML, events, logs), or the hub keeps no stale view of the cluster. Reads of a [stale view](#disconnected-clusters-stale-views) succeed instead.
   - `unavailable` 503: the agent timed out or is busy. It is also returned when PostgreSQL is unreachable, for sign-in, rate-limited writes, Ask AI, and session checks after the 30 s session cache expires. Reads of cluster data keep working.
   - `disabled` 503
   - `internal` 500
@@ -35,6 +35,8 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
   - A store limit, such as too many messages in a thread, gives 409 `conflict`.
 - **Rate limits** are global across hub replicas: login, MCP calls, logs and writes, thread writes, and the Ask AI hourly quota. Concurrency caps are per replica: SSE streams, log streams, MCP in-flight requests and Ask AI concurrency.
 - **Unknown routes:** an unknown `/api` route returns a 404 JSON body, or 401 when the caller is not signed in.
+- **Compression (ADR-0006):** `GET` responses under `/api/v1/` are gzipped (level 5; level 1 with a flush per event for SSE) when the request sends `Accept-Encoding: gzip` and the body is at least 1 KiB. They carry `Vary: Accept-Encoding`. To rule out BREACH, these are never compressed: `/auth/*`, `GET /api/v1/me` (CSRF token), `/api/v1/tokens*` (PATs), `…/join-token`, `…/connection`, pod and workload logs, `/api/v1/ai/*` and `/mcp`.
+- **ETags (ADR-0006):** `GET /api/v1/clusters`, `…/resources` (without `includeHidden`), `…/kinds`, `…/graph`, `/api/v1/attention` and `/api/v1/threads` return a weak `ETag` and `Cache-Control: private, no-cache`. `If-None-Match` with a current value gets `304` with no body and no filtering. The ETag covers the data version, the user and their exact groups, the query and a 45 s time bucket, so a validator never crosses users and a permission change takes effect within 90 s (the SAR cache's own bound). Thread lists hash their body instead.
 
 ## Session
 
@@ -65,11 +67,14 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 
 | Method and path | Response |
 |---|---|
-| `GET /api/v1/clusters` | `{items: ClusterInfo[]}`, counts filtered by RBAC. Agents in dev local mode add `mode: "local"`, `readOnly` and `context`. Writes to a `readOnly` cluster return 403. |
+| `GET /api/v1/clusters` | `{items: ClusterInfo[]}`, counts filtered by RBAC. `counts` is `{status: n}`; `kinds` is the same per Kind (`{Kind: {status: n}}`, watched kinds only, inventory-only rows not counted), enough for navigation without loading any cluster's resources. A disconnected cluster whose last view is kept has `connected: false`, `stale: true` and `lastSeen`. Agents in dev local mode add `mode: "local"`, `readOnly` and `context`. Writes to a `readOnly` cluster return 403. |
+| `GET /api/v1/search?q=&scope=fleet\|cluster&cluster=&limit=` | Server-side palette search; see [Search and attention](#search-and-attention). |
+| `GET /api/v1/attention?cluster=&limit=` | Rows that need attention and warning findings; see [Search and attention](#search-and-attention). |
 | `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot. `kind` may repeat or be comma-separated. A kind outside the table (for example `ConfigMap`) matches inventory-only rows by exact name; a malformed kind or an unknown status gives 400. `resourceVersion` is an opaque hub counter. Finished Jobs the agent hides are not in it; see [Jobs](#jobs-completed-status-hidden-jobs-and-findings). |
 | `GET …/resources?kind=Job&includeHidden=1&namespace=&limit=&cursor=` | `{items, resourceVersion, hidden: {total, next?}}`. Without `cursor`: the listed Jobs plus the first page of hidden ones. With `cursor=hidden.next`: hidden Jobs only (`resourceVersion` is `""`). `limit` is 1–1000 (default 500) hidden Jobs per page. `includeHidden` without `kind=Job` gives 400. |
 | `GET /api/v1/clusters/{c}/findings` | `{items: Finding[]}`, the cluster's findings the user may see. The same list is `ClusterInfo.findings`. |
 | `GET /api/v1/clusters/{c}/kinds` | `{items: KindInfo[], projects: Project[], presets: string[]}` for navigation; see [Kinds and projects](#kinds-and-projects). |
+| `GET /api/v1/clusters/{c}/graph?kinds=flux\|all&focus=<id>&hops=N` | `{nodes, edges, truncated, stale?}`: the dependency graph of the user's RBAC-filtered view; see [Dependency graph](#dependency-graph). |
 | `GET /api/v1/clusters/{c}/objects/{kind}/{ns}/{name}?group=` | `Resource`. Every `…/objects/…` path takes an optional `group` (the API group; `core` for the core group) to pick between kinds of the same name in several groups. Without it the group comes from the kind table, or from the one visible inventory-only row that matches (several groups give 400). `ns` is `_` for cluster-scoped objects. |
 | `GET …/objects/{kind}/{ns}/{name}/children` | `{items: Resource[]}`. Mainly for MCP. The UI builds trees from each summary's `owner`, which is filled from ownerReferences, Flux labels and inventory when known. |
 | `GET …/objects/{kind}/{ns}/{name}/yaml` | `{yaml}`, sanitized by the agent and redacted by the hub; see [YAML and events](#yaml-and-events). Secrets: always 403. |
@@ -79,6 +84,38 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | `POST …/objects/{kind}/{ns}/{name}/resume` | body `{confirm?: string}` → 202 |
 | `GET /api/v1/clusters/{c}/pods/{ns}/{name}/logs?container=&tail=&follow=` | SSE `log` events `{lines: string[]}`, then `end` with `{}` or `{error:{code,message}}` (including when a followed pod stops). `tail` defaults to 500 and must be 1–5000. `follow` is a boolean. At most 4 streams per user, beyond that 429. Works with the session cookie alone, since EventSource cannot send headers. Pod summaries list `containers` for the picker. |
 | `GET /api/v1/clusters/{c}/workloads/{kind}/{ns}/{name}/logs?container=&pods=&allContainers=&tail=&since=&follow=` | SSE logs of every pod of a Deployment, StatefulSet, DaemonSet or Job; see [Workload logs](#workload-logs). |
+
+### Search and attention
+
+`GET /api/v1/search?q=&scope=fleet|cluster&cluster=&limit=` ranks the rows the user may list
+the way the command palette does (`internal/hub/fuzzy.go` ports `web/src/lib/fuzzy.ts`; both
+pass `testdata/search_cases.json`). The name is the primary field; namespace, kind, kind
+abbreviation and cluster are secondary, in that order. Equal tiers are ordered failing first,
+then the `cluster=` cluster first.
+
+- `scope` is `fleet` (the default, every cluster; `cluster` only names the current one for the tiebreak) or `cluster` (needs `cluster`).
+- `limit` defaults to 30, at most 100. `q` is at most 128 characters and 8 terms; an empty `q` returns no items.
+- Response: `{items: [{cluster, resource: Resource, match: {score, primary: [[start, end]], secondary: [[[start, end]] ×4]}, stale?}], partial: [cluster]}`. Ranges are byte offsets, which equal the UTF-16 offsets of `fuzzy.ts` for Kubernetes names. `partial` lists clusters that were skipped because their scan took over 150 ms or their access checks failed.
+- At most 2 searches in flight per user, beyond that 429.
+
+`GET /api/v1/attention?cluster=&limit=` (every cluster when `cluster` is empty): rows that are
+`failed`, or Flux objects that are `reconciling` or `suspended`, that the user may list,
+plus the warning findings they may see.
+
+- Response: `{items: [{cluster, resource, stale?}], total, findings: [{cluster, finding, stale?}], partial: [cluster]}`.
+- Items are sorted failed, reconciling, suspended, then most recently changed. `limit` defaults to 200, at most 1000; `total` counts before the limit. Findings are not capped.
+
+### Disconnected clusters (stale views)
+
+When a cluster loses its agent, the hub keeps its last complete view in memory (after the 5 s
+failover grace with several replicas) and serves reads from it, marked stale. A reconnecting
+agent replaces it in place once its snapshot is complete, so the rows never blink empty.
+
+- `ClusterInfo` has `connected: false`, `stale: true` and `lastSeen`.
+- `…/resources`, `…/kinds`, `…/findings` and `…/children` bodies say `stale: true`; every read from a stale view, `…/objects/…` included, has the header `X-Eddy-Stale: true`; search and attention items say `stale: true`.
+- Writes, YAML, events and logs return 503 `disconnected`.
+- No agent can answer access checks meanwhile. A cached answer the user already had stays usable for 10 minutes after it expired; any other read fails closed (503 `disconnected`). A change of the user's groups is a new subject and gets nothing.
+- Stale views are bounded to 1,000,000 rows per hub replica; the oldest is evicted first. A cluster removed from the registry loses its stale view.
 
 ### Resource fields and inventory-only rows
 
@@ -90,6 +127,82 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 - **Kinds added** to the table: Service, PersistentVolumeClaim (core), Ingress (networking.k8s.io), Job, CronJob (batch) and HorizontalPodAutoscaler (autoscaling).
 - **Statuses:** `ready`, `failed`, `reconciling`, `suspended`, `unknown` and `completed`. `completed` is a finished run: a Job with the `Complete` condition or a Pod in phase `Succeeded`. It is healthy (not "needs attention") and has its own bucket in `ClusterInfo.counts`. `?status=completed` filters on it.
 - **OCI HelmRepositories** (`spec.type: oci`) without a `Ready` condition are `ready` with the message "OCI repository · not reconciled by source-controller": since Flux 2.1 source-controller leaves them alone and helm-controller pulls their charts directly. Suspended ones stay `suspended`.
+
+### Dependencies and blocked objects
+
+- **`Resource.dependsOn`** (new, optional): `Ref[]` (`{group, kind, namespace, name}`), the
+  `spec.dependsOn` of a Kustomization (entries are Kustomizations) or a HelmRelease (entries are
+  HelmReleases), in spec order, at most 32. A namespace left out in the spec is the object's
+  own. The hub accepts it only on those two kinds, keeps only entries of the row's own kind with
+  a valid namespace and name, and removes entries in namespaces the viewer may not list (the
+  same SAR tuples as the resource list), on every read path: lists, objects, children, SSE
+  deltas, search, MCP and Ask AI. An entry whose target is not in the view is a missing
+  dependency, not a hidden one.
+- **`Resource.blocked`** (new, optional): `true` while a Kustomization or HelmRelease waits for
+  a dependency, that is `Ready=False` with reason `DependencyNotReady`
+  (`meta.DependencyNotReadyReason`). The status is then `reconciling`, not `failed`, and the
+  message is `Waiting for <namespace>/<name>`, with ` (not found)` when the dependency does
+  not exist (`Waiting for dependencies` when the controller's message names none). `suspended`
+  and `Stalled=True` take precedence. The raw condition message, which names the dependency
+  too, stays in `conditions`.
+- **`Resource.source`** of a HelmRelease is `spec.chartRef` (an OCIRepository or HelmChart, group
+  `source.toolkit.fluxcd.io` unless its `apiVersion` says otherwise) when set, otherwise
+  `spec.chart.spec.sourceRef`.
+- **UI rule:** draw an edge (`dependsOn`, `source`, `owner`) only when its target row is in the
+  user's view; `source` and `owner` are not stripped server-side, so a target outside the view
+  is either missing or not visible and must not be shown as a node.
+
+### Dependency graph
+
+`GET /api/v1/clusters/{c}/graph?kinds=flux|all&focus=<id>&hops=N`, computed from the
+user's SAR-filtered view of the cluster:
+
+- `kinds`: `flux` (default) for Flux kinds only, `all` for every row (inventory-only rows too).
+- `focus`: a resource id (`<group>/<Kind>/<namespace>/<name>`, kind case-insensitive for kinds
+  in the table). Only nodes within `hops` edges of it, in either direction, are returned,
+  nearest first; `hops` is 1–6 (default 2, larger values are capped). A focus the user cannot
+  see, or outside `kinds`, is 404.
+- Without `focus`, all nodes, Flux kinds first, then watched kinds, then inventory-only rows.
+- At most 2000 nodes; `truncated: true` says some were cut. Edges join returned nodes only.
+- An owner with more than 20 children of one kind gets one group node instead of them, with an
+  `owns` edge to it; everything owned by the collapsed children is left out, and their other
+  edges move to the group. The focus and its owners are never collapsed.
+
+```json
+{
+  "nodes": [
+    {"id": "kustomize.toolkit.fluxcd.io/Kustomization/flux-system/apps", "kind": "Kustomization",
+     "group": "kustomize.toolkit.fluxcd.io", "namespace": "flux-system", "name": "apps",
+     "status": "reconciling", "message": "Waiting for flux-system/infra", "blocked": true,
+     "revision": "main@sha1:abc", "lastChanged": "2026-10-01T10:00:00Z"},
+    {"id": "kustomize.toolkit.fluxcd.io/Kustomization/flux-system/infra", "kind": "Kustomization",
+     "group": "kustomize.toolkit.fluxcd.io", "namespace": "flux-system", "name": "infra",
+     "status": "unknown", "missing": true},
+    {"id": "group:kustomize.toolkit.fluxcd.io/Kustomization/flux-system/apps/Deployment",
+     "kind": "Deployment", "group": "apps", "namespace": "web", "count": 25,
+     "statuses": {"ready": 24, "failed": 1}, "owner": "kustomize.toolkit.fluxcd.io/Kustomization/flux-system/apps"}
+  ],
+  "edges": [
+    {"from": "kustomize.toolkit.fluxcd.io/Kustomization/flux-system/apps",
+     "to": "kustomize.toolkit.fluxcd.io/Kustomization/flux-system/infra", "type": "dependsOn"},
+    {"from": "kustomize.toolkit.fluxcd.io/Kustomization/flux-system/apps",
+     "to": "group:kustomize.toolkit.fluxcd.io/Kustomization/flux-system/apps/Deployment", "type": "owns"}
+  ],
+  "truncated": false
+}
+```
+
+- **Edges** are directed: `dependsOn` from the dependent to its dependency, `source` from a
+  Kustomization, HelmRelease or HelmChart to its source, `owns` from the owner (`Resource.owner`:
+  inventory, Flux labels, ownerReferences) to the owned row or group.
+- **Nodes:** `name`, `status`, `message`, `blocked`, `revision`, `lastChanged` and
+  `inventoryOnly` come from the row. `missing: true` is a `dependsOn` target that is not in the
+  view (it does not exist, or the agent has not seen it yet). Group nodes have an id
+  `group:<owner id>/<Kind>`, `count`, `statuses` and `owner`, and no `name`; `group` or
+  `namespace` is `""` when the children differ.
+- `source` and `owns` edges are drawn only between visible rows, so the graph never names an
+  object the user cannot list. The response has an ETag like `…/kinds` and says `stale: true`
+  for a disconnected cluster.
 
 ### YAML and events
 
@@ -272,7 +385,7 @@ Access and limits:
 | Event | Data |
 |---|---|
 | `hello` | `{}` |
-| `clusters` | `{items: ClusterInfo[]}` when connection state, counts or findings change (at most once a second) |
+| `clusters` | `{items: ClusterInfo[]}` when connection state, counts or findings change (at most once a second). Items carry `kinds` and `stale` like `GET /api/v1/clusters`. |
 | `change` | `{cluster, upserts: Resource[], deletes: string[]}`, filtered per user |
 | `resync` | `{cluster}`: the client refetches that cluster's resources |
 | `thread` | `{threadId, ref}`: a thread the user can see changed |
@@ -281,7 +394,9 @@ Access and limits:
 - **Keepalive:** the hub sends a comment line every 20 s. Clients treat 45 s without data as a dead stream and reconnect with backoff.
 - **On connect:** a `clusters` event follows `hello` straight away.
 - **Slow clients** get `resync` for every cluster instead of the missed deltas.
-- **Disconnects:** when an agent disconnects, clients get `resync {cluster}`.
+- **Disconnects:** when an agent disconnects, clients get `resync {cluster}`; the refetch returns the stale view while the hub keeps one.
+- **Snapshots:** `resync {cluster}` for a (re)connected agent is sent only once its whole snapshot has arrived, never after the first chunk.
+- **Compression:** the stream is gzipped (level 1, flushed per event) when the request accepts gzip.
 - **Limits:** at most 8 streams per user, beyond that 429.
 
 ## Threads
@@ -290,11 +405,12 @@ A thread attaches to a resource (`ref` = `{cluster, group, kind, namespace, name
 a whole cluster (`kind: ""`).
 
 - You can see a thread only if you can `get` its target, or it is a private thread you created.
+- **Targets outside the kind table** (inventory-only rows such as a `ConfigMap`, or a kind of another API group): `ref.group` (or `?group=` on the list) names the API group, `core` for the core group. Without it the hub uses the group of the one visible inventory row of that kind, namespace and name, gives 400 when several groups have one, and 404 (an empty list) when none is visible. Such a thread is visible to whoever can see the row (the inventory rule above), and only its author may resolve it.
 - To resolve a thread you must be its author or be allowed to `patch` the target.
 
 | Method and path | Body / query | Response |
 |---|---|---|
-| `GET /api/v1/threads?cluster=&kind=&namespace=&name=&status=&type=&cursor=&limit=` | | `{items: Thread[], next}`. An empty `kind` means no filter. |
+| `GET /api/v1/threads?cluster=&group=&kind=&namespace=&name=&status=&type=&cursor=&limit=` | | `{items: Thread[], next}`. An empty `kind` means no filter. |
 | `POST /api/v1/threads` | `{ref, title, body, type?: "discussion"}` | 201 `{thread, message}`. Any other `type` gives 400. |
 | `GET /api/v1/threads/{id}` | | `{thread, messages: Message[], next}` |
 | `POST /api/v1/threads/{id}/messages` | `{body}` | 201 `Message` |

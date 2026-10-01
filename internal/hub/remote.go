@@ -104,17 +104,25 @@ func (r *remoteSession) handle(f protocol.Frame) error {
 		if err := json.Unmarshal(f.Payload, &snap); err != nil {
 			return fmt.Errorf("decode relayed snapshot: %w", err)
 		}
-		r.replace(snap.Resources)
-		r.replaceFindings(snap.Findings)
-		r.agents.emit(r, event{kind: evResync, cluster: r.cluster})
-		r.agents.emit(r, event{kind: evClusters})
+		if r.startSnapshot(snap, r.snapshotDone) {
+			r.snapshotDone()
+		}
 	case protocol.TypeDelta:
 		var d protocol.Delta
 		if err := json.Unmarshal(f.Payload, &d); err != nil {
 			return fmt.Errorf("decode relayed delta: %w", err)
 		}
-		ups, dels, parents := r.apply(d)
-		if r.setFindings(d.Findings) && len(ups) == 0 && len(dels) == 0 {
+		ups, dels, parents, committed := r.apply(d)
+		// As on the agent session: findings apply even when the delta commits a staged view.
+		findingsChanged := r.setFindings(d.Findings)
+		if committed {
+			r.snapshotDone()
+			if findingsChanged {
+				r.agents.emit(r, event{kind: evClusters})
+			}
+			return nil
+		}
+		if findingsChanged && len(ups) == 0 && len(dels) == 0 {
 			r.agents.emit(r, event{kind: evClusters})
 		}
 		if len(ups) == 0 && len(dels) == 0 {
@@ -124,6 +132,12 @@ func (r *remoteSession) handle(f protocol.Frame) error {
 		r.agents.emit(r, event{kind: evClusters})
 	}
 	return nil
+}
+
+// snapshotDone announces a complete relayed snapshot.
+func (r *remoteSession) snapshotDone() {
+	r.agents.emit(r, event{kind: evResync, cluster: r.cluster})
+	r.agents.emit(r, event{kind: evClusters})
 }
 
 // do relays a non-streaming request to the owner.

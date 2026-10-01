@@ -231,12 +231,6 @@ func (s *agentSession) readLoop(ctx context.Context) error {
 			return fmt.Errorf("hub: read from agent %s: %w", s.cluster, err)
 		}
 		s.lastSeen.Store(time.Now().UnixNano())
-		if !s.limiter.Allow() {
-			s.metrics.framesThrottled.Add(1)
-			if err := s.limiter.Wait(ctx); err != nil {
-				return fmt.Errorf("hub: agent %s: %w", s.cluster, err)
-			}
-		}
 		if typ != websocket.MessageText {
 			continue
 		}
@@ -245,6 +239,17 @@ func (s *agentSession) readLoop(ctx context.Context) error {
 			s.metrics.framesInvalid.Add(1)
 			s.log.Warn("invalid frame from agent", "err", err)
 			continue
+		}
+		// Replies to the hub's own requests are bounded by the hub's
+		// requests in flight; only frames the agent sends on its own are
+		// rate limited. Waiting here also stops pongs from being read, so
+		// throttling a burst of SAR answers would make the agent's pings
+		// time out and the session drop.
+		if f.Type != protocol.TypeResponse && !s.limiter.Allow() {
+			s.metrics.framesThrottled.Add(1)
+			if err := s.limiter.Wait(ctx); err != nil {
+				return fmt.Errorf("hub: agent %s: %w", s.cluster, err)
+			}
 		}
 		s.metrics.frame(f.Type)
 		if err := s.handle(f); err != nil {
@@ -318,6 +323,7 @@ func sanitizeResource(r model.Resource) (model.Resource, bool) {
 	r.ID = r.Ref.ID()
 	r.Project = flux.ProjectOf(k.Group).ID
 	r.Details = sanitizeDetails(r.Details)
+	r.DependsOn, r.Blocked = sanitizeDependsOn(r), r.Blocked && hasDependsOn(k)
 	return r, true
 }
 
@@ -361,15 +367,32 @@ func sanitizeInventoryRow(r model.Resource) (model.Resource, bool) {
 }
 
 func (s *agentSession) applySnapshot(snap protocol.Snapshot) {
-	s.replace(snap.Resources)
-	s.replaceFindings(snap.Findings)
+	if s.startSnapshot(snap, s.snapshotDone) {
+		s.snapshotDone()
+	}
+}
+
+// snapshotDone announces a complete snapshot: SSE clients refetch and the
+// session may become the primary.
+func (s *agentSession) snapshotDone() {
 	s.emit(s, event{kind: evResync, cluster: s.cluster})
 	s.emit(s, event{kind: evClusters})
 }
 
 func (s *agentSession) applyDelta(d protocol.Delta) {
-	upserts, deletes, parents := s.apply(d)
-	if s.setFindings(d.Findings) {
+	upserts, deletes, parents, committed := s.apply(d)
+	// Findings travel as a full replacement and are independent of snapshot
+	// staging, so they are applied even when this delta commits a staged view;
+	// returning first would drop them (a reconnect race).
+	findingsChanged := s.setFindings(d.Findings)
+	if committed {
+		s.snapshotDone()
+		if findingsChanged {
+			s.emit(s, event{kind: evFindings, cluster: s.cluster, findings: s.findingList()})
+		}
+		return
+	}
+	if findingsChanged {
 		s.emit(s, event{kind: evFindings, cluster: s.cluster, findings: s.findingList()})
 		if len(upserts) == 0 && len(deletes) == 0 {
 			s.emit(s, event{kind: evClusters})

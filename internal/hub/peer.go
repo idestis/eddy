@@ -267,7 +267,7 @@ func (n *peerNode) accept(w http.ResponseWriter, r *http.Request) {
 	}
 	unix := strconv.FormatInt(now.Unix(), 10)
 	w.Header().Set(peerReplyHeader, n.pod+":"+unix+":"+peerMAC(n.key, "accept", n.pod, unix, pod, mac))
-	conn, err := websocket.Accept(w, r, nil)
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
 		n.log.Warn("peer websocket upgrade failed", "peer", pod, "err", err)
 		return
@@ -297,6 +297,7 @@ func (n *peerNode) dial(ctx context.Context, addr string) (*peerLink, error) {
 			"Authorization": []string{peerAuthScheme + " " + n.pod + ":" + unix + ":" + mac},
 			peerAddrHeader:  []string{self},
 		},
+		CompressionMode: websocket.CompressionContextTakeover,
 	})
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
@@ -703,6 +704,14 @@ func (l *peerLink) handle(pf protocol.PeerFrame) {
 	}
 }
 
+// subscribed reports whether sub is still the peer's subscription to its
+// cluster. Called with sub.mu held (the lock order is sub.mu, then l.mu).
+func (l *peerLink) subscribed(sub *peerSub) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.subs[sub.cluster] == sub
+}
+
 func (l *peerLink) mirror(cluster string) *remoteSession {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -898,18 +907,25 @@ func (n *peerNode) resend(sub *peerSub) {
 	frames := []protocol.PeerFrame{
 		{Cluster: sub.cluster, Frame: protocol.Frame{Type: protocol.TypeHello, Payload: payload(s.hello())}},
 	}
-	snap := protocol.Snapshot{Resources: []model.Resource{}, Findings: &protocol.FindingSet{Items: s.findingList()}}
+	snap := protocol.Snapshot{Resources: []model.Resource{}, Findings: &protocol.FindingSet{Items: s.findingList()}, Parts: max(1, len(chunks))}
 	if len(chunks) > 0 {
 		snap.Resources = chunks[0]
 	}
 	frames = append(frames, protocol.PeerFrame{Cluster: sub.cluster, Frame: protocol.Frame{Type: protocol.TypeSnapshot, Payload: payload(snap)}})
-	for _, c := range chunks[min(1, len(chunks)):] {
-		frames = append(frames, protocol.PeerFrame{Cluster: sub.cluster, Frame: protocol.Frame{Type: protocol.TypeDelta, Payload: payload(protocol.Delta{Upserts: c})}})
+	for i, c := range chunks[min(1, len(chunks)):] {
+		frames = append(frames, protocol.PeerFrame{Cluster: sub.cluster, Frame: protocol.Frame{Type: protocol.TypeDelta, Payload: payload(protocol.Delta{Upserts: c, Part: i + 2})}})
 	}
 	sub.mu.Lock()
 	defer sub.mu.Unlock()
 	if sub.gen != gen {
 		return // a newer resend took over
+	}
+	if !l.subscribed(sub) {
+		// The peer unsubscribed or subscribed again since this resend
+		// started (resends run in the background): the view read above may
+		// be older than deltas already sent to the newer subscription, and
+		// applying it after them would silently undo them.
+		return
 	}
 	for _, f := range append(frames, sub.buf...) {
 		if l.enqueue(f) != nil {

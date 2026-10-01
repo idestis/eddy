@@ -116,6 +116,12 @@ type Snapshot struct {
 	// Findings, when set, replaces the cluster's findings (absent from
 	// older agents, which have none).
 	Findings *FindingSet `json:"findings,omitempty"`
+	// Parts is the number of frames of this snapshot: this Snapshot is part
+	// 1 and parts 2..Parts follow at once as Deltas with Delta.Part set.
+	// The hub swaps the snapshot in, and calls the view synced, only after
+	// the last part. 0 (older agents) means the parts are not marked; the
+	// hub then ends the snapshot after a short quiet period.
+	Parts int `json:"parts,omitempty"`
 }
 
 // Delta carries changes since the previous snapshot or delta.
@@ -124,6 +130,9 @@ type Delta struct {
 	Deletes []string         `json:"deletes,omitempty"` // Resource ids
 	// Findings, when set, replaces the cluster's findings.
 	Findings *FindingSet `json:"findings,omitempty"`
+	// Part is set on the continuation frames of a chunked snapshot: the
+	// part number, 2..Snapshot.Parts. Such a Delta carries upserts only.
+	Part int `json:"part,omitempty"`
 }
 
 // FindingSet is the complete set of a cluster's findings.

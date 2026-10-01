@@ -20,12 +20,19 @@ const recentThreadWindow = 5 * time.Second
 //   - agent:  re-check agent session ownership and mirrors;
 //   - resync: all of the above for everything, after events may have
 //     been missed.
+//
+// Every subscription starts with a resync: events published before
+// Subscribe returned are never delivered. Without it, an agent that
+// connected to another replica while this one was still subscribing (at
+// start, or after a store outage) would only be mirrored at the next
+// periodic evaluation, peerEvaluateEvery later.
 func (h *Hub) runEvents(ctx context.Context) {
 	for ctx.Err() == nil {
 		ch, err := h.store.Events().Subscribe(ctx)
 		if err != nil {
 			h.log.Warn("subscribing to store events failed; retrying", "err", err)
 		} else {
+			h.onEvent(ctx, store.Event{Kind: store.EventResync})
 			for e := range ch {
 				h.onEvent(ctx, e)
 			}

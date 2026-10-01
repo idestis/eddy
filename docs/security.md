@@ -42,6 +42,9 @@ The agent acts on behalf of the user with the Kubernetes impersonation headers. 
 - `system:*` users and groups are never impersonated, and groups must match `allowedGroupPrefixes` (default `eddy:`). The hub enforces `denyUserPrefixes` (`system:`, `eks:`, `kubernetes-admin`), and the agent checks again on its own.
 - For the tightest setup, pin the agent's RBAC `impersonate` permission on groups to an exact list (`impersonation.groups` in the agent chart).
 - Writes are not pre-checked by the hub. They run impersonated, so the API server is the authority. Reads are filtered with a per-user SubjectAccessReview cache (45 seconds), because all users share one cache per cluster. This covers thread lists, Ask AI and MCP results as well as the UI.
+  - The cache asks the cluster-scope question `(group, resource, namespace "")` first. When it is allowed, every namespace of that kind is allowed; this is the check the API server makes for `kubectl get <kind> -A`, so nothing is over-granted. Users without cluster-wide access are still checked per namespace.
+  - A disconnected cluster's last view is served as stale (ADR-0006). No agent can answer access checks then, so a user's cached answer stays usable for at most 10 minutes after it expired. Anything not cached, including a user whose groups changed, fails closed.
+  - List ETags include the user and their exact groups and a 45 s time bucket, so a validator never crosses users and a permission change takes effect within 90 s. `GET` responses are gzipped only on routes that carry no secret (never `/auth/*`, `/api/v1/me`, `/api/v1/tokens*`, join tokens or logs), against BREACH.
 
 A compromised hub cannot reach any cluster directly. The worst it can do is ask an agent to perform actions as a user it names, and the agent refuses privileged identities, so the damage is bounded by the RBAC of `eddy:` groups you granted.
 

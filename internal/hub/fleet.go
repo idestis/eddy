@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -74,14 +75,16 @@ func protoIdentity(p identity.Principal) protocol.Identity {
 	return protocol.Identity{User: p.User, Groups: slices.Clone(p.Groups)}
 }
 
-// session returns the primary session of a registered cluster: a local
-// agent session, or a relay to the replica that holds one.
+// session returns what serves reads of a registered cluster: its primary
+// session (a local agent session, or a relay to the replica that holds
+// one), or the stale view of a disconnected cluster, whose requests fail
+// with ErrDisconnected.
 func (f *fleetService) session(cluster string) (ClusterSpec, clusterSession, error) {
 	spec, ok := f.reg.Get(cluster)
 	if !ok {
 		return ClusterSpec{}, nil, fmt.Errorf("%w: cluster %q", fleet.ErrNotFound, cluster)
 	}
-	s := f.agents.session(cluster)
+	s := f.agents.reader(cluster)
 	if s == nil {
 		return spec, nil, fmt.Errorf("%w: %s", fleet.ErrDisconnected, cluster)
 	}
@@ -261,24 +264,29 @@ func (f *fleetService) Clusters(ctx context.Context, p identity.Principal) ([]mo
 			Name: spec.Name, DisplayName: spec.DisplayName, Environment: spec.Environment, Region: spec.Region,
 			Color: spec.Color, Protected: spec.Protected, Order: spec.Order,
 		}
-		s := f.agents.session(spec.Name)
-		if s == nil {
+		ci := &out[i]
+		var s clusterSession
+		if live := f.agents.session(spec.Name); live != nil {
+			s = live
+			ci.Connected = true
+		} else if sv := f.agents.staleOf(spec.Name); sv != nil {
+			s = sv
+			ci.Stale = true
+		} else {
 			continue
 		}
-		ci := &out[i]
 		h := s.hello()
-		ci.Connected = true
 		ci.LastSeen = s.lastSeenAt()
 		ci.AgentVersion, ci.KubernetesVersion, ci.FluxVersion = h.AgentVersion, h.KubernetesVersion, h.FluxVersion
 		ci.Mode, ci.ReadOnly, ci.Context = h.Mode, h.ReadOnly, h.Context
 		ci.Presets = slices.Clone(h.Presets)
 		wg.Go(func() {
-			counts, err := f.counts(ctx, p, s)
+			counts, kinds, err := f.counts(ctx, p, s)
 			if err != nil {
 				f.log.Debug("cluster counts unavailable", "cluster", s.name(), "err", err)
 				return
 			}
-			ci.Counts = counts
+			ci.Counts, ci.Kinds = counts, kinds
 			if ci.Findings, err = f.visibleFindings(ctx, p, s); err != nil {
 				f.log.Debug("cluster findings unavailable", "cluster", s.name(), "err", err)
 			}
@@ -288,27 +296,97 @@ func (f *fleetService) Clusters(ctx context.Context, p identity.Principal) ([]mo
 	return out, nil
 }
 
-// counts sums the per-tuple status counts p may list.
-func (f *fleetService) counts(ctx context.Context, p identity.Principal, s clusterSession) (map[model.Status]int, error) {
-	byTuple := s.tupleCounts()
-	tuples := make([]accessTuple, 0, len(byTuple))
-	for t := range byTuple {
-		tuples = append(tuples, t)
+// counts sums the status counts p may list, in total and per kind. A
+// kind p may list cluster-wide is counted from its precomputed total; only
+// the other kinds are summed per namespace (ADR-0006: O(kinds) for
+// cluster-wide readers).
+func (f *fleetService) counts(ctx context.Context, p identity.Principal, s clusterSession) (map[model.Status]int, map[string]map[model.Status]int, error) {
+	snap := s.counted()
+	wide := make([]accessTuple, 0, len(snap.kinds))
+	for gr := range snap.kinds {
+		wide = append(wide, accessTuple{Group: gr.group, Resource: gr.resource})
 	}
-	allowed, err := f.authz.allowedTuples(ctx, p, s.name(), "list", tuples)
+	allowedWide, err := f.authz.allowedTuples(ctx, p, s.name(), "list", wide)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := map[model.Status]int{}
-	for t, byStatus := range byTuple {
-		if !allowed[t] {
-			continue
+	kinds := map[string]map[model.Status]int{}
+	add := func(gr groupResource, byStatus map[model.Status]int) {
+		kind := kindOfTuple(accessTuple{Group: gr.group, Resource: gr.resource})
+		kc := kinds[kind]
+		if kc == nil {
+			kc = map[model.Status]int{}
+			kinds[kind] = kc
 		}
 		for st, n := range byStatus {
 			out[st] += n
+			kc[st] += n
 		}
 	}
-	return out, nil
+	var rest []accessTuple
+	for _, t := range wide {
+		gr := groupResource{t.Group, t.Resource}
+		if allowedWide[t] {
+			add(gr, snap.kinds[gr])
+			continue
+		}
+		for _, nt := range snap.byKind[gr] {
+			if nt.Namespace != "" {
+				rest = append(rest, nt)
+			}
+		}
+	}
+	if len(rest) > 0 {
+		allowed, err := f.authz.allowedTuples(ctx, p, s.name(), "list", rest)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, t := range rest {
+			if allowed[t] {
+				add(groupResource{t.Group, t.Resource}, snap.tuples[t])
+			}
+		}
+	}
+	return out, kinds, nil
+}
+
+// tupleKinds maps (group, plural) to the Kind of the kind table.
+var tupleKinds = func() map[[2]string]string {
+	m := map[[2]string]string{}
+	for _, k := range flux.All() {
+		m[[2]string{k.Group, k.Plural}] = k.Kind
+	}
+	return m
+}()
+
+func kindOfTuple(t accessTuple) string { return tupleKinds[[2]string{t.Group, t.Resource}] }
+
+// fleetVersion changes whenever anything /clusters shows may have changed:
+// a view (rows or findings), a session or connection state, or the
+// registry. It is the data version of the fleet-wide ETags.
+func (f *fleetService) fleetVersion() string {
+	return strconv.FormatUint(f.agents.rvSeq.Load(), 10)
+}
+
+// viewVersion returns the version of the view that serves reads of
+// cluster (a different session has a different version), whether it is
+// stale, and false when the cluster has none.
+func (f *fleetService) viewVersion(cluster string) (string, bool, bool) {
+	if _, ok := f.reg.Get(cluster); !ok {
+		return "", false, false
+	}
+	s := f.agents.reader(cluster)
+	v := viewOfSession(s)
+	if v == nil {
+		return "", false, false
+	}
+	_, stale := s.(*staleView)
+	version := v.version()
+	if stale {
+		version += ".stale"
+	}
+	return version, stale, true
 }
 
 // matches applies a fleet.Filter whose kinds are already canonical.
@@ -623,16 +701,33 @@ func (f *fleetService) CanPatch(ctx context.Context, p identity.Principal, clust
 	return f.can(ctx, p, cluster, ref, "patch")
 }
 
+// can answers verb on ref. For a kind outside the kind table (an
+// inventory-only row, such as a thread target), get follows the row's
+// visibility rule (locate) and patch is never granted: such objects have
+// no Eddy writes, so only a thread's author may resolve it. ref.Group is
+// exact there: "" is the core group.
 func (f *fleetService) can(ctx context.Context, p identity.Principal, cluster string, ref model.Ref, verb string) (bool, error) {
 	if err := f.validPrincipal(p); err != nil {
 		return false, err
 	}
-	k, ok := flux.KindByName(ref.Kind)
-	if !ok || (ref.Group != "" && ref.Group != k.Group) {
-		return false, nil
-	}
 	if _, ok := f.reg.Get(cluster); !ok {
 		return false, fmt.Errorf("%w: cluster %q", fleet.ErrNotFound, cluster)
+	}
+	k, ok := flux.KindByName(ref.Kind)
+	if !ok || (ref.Group != "" && ref.Group != k.Group) {
+		if verb != "get" || !flux.ValidKindName(ref.Kind) {
+			return false, nil
+		}
+		if ref.Group == "" {
+			ref.Group = coreGroupAlias
+		}
+		if _, _, _, err := f.locate(ctx, p, cluster, ref); err != nil {
+			if errors.Is(err, fleet.ErrNotFound) || errors.Is(err, ErrBadRequest) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
 	}
 	c := protocol.AccessCheck{Verb: verb, Group: k.Group, Resource: k.Plural, Namespace: ref.Namespace, Name: ref.Name}
 	res, err := f.authz.check(ctx, p, cluster, []protocol.AccessCheck{c})

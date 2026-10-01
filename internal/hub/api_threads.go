@@ -1,11 +1,15 @@
 package hub
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/idestis/eddy/internal/fleet"
 	"github.com/idestis/eddy/internal/flux"
 	"github.com/idestis/eddy/internal/identity"
+	"github.com/idestis/eddy/internal/model"
 	"github.com/idestis/eddy/internal/store"
 	"github.com/idestis/eddy/internal/threads"
 )
@@ -27,20 +31,49 @@ func parseLimit(s string, def, max int) (int, error) {
 	return min(n, max), nil
 }
 
-// canonicalThreadRef fills in the API group of a thread target from the
-// kind table and rejects unknown kinds.
+// canonicalThreadRef fills in the API group of a thread target. A kind of
+// the kind table, with no group or its own, gets the table's group. Any
+// other well-formed kind names an inventory-only row (a ConfigMap, a CRD
+// of another group…): kind and group are kept as given, "core" naming the
+// core group. Malformed kinds are refused.
 func canonicalThreadRef(ref store.ResourceRef) (store.ResourceRef, error) {
 	if ref.Kind == "" {
 		return ref, nil
 	}
-	k, ok := flux.KindByName(ref.Kind)
-	if !ok {
+	if k, ok := flux.KindByName(ref.Kind); ok && (ref.Group == "" || ref.Group == k.Group || (ref.Group == coreGroupAlias && k.Group == "")) {
+		ref.Kind, ref.Group = k.Kind, k.Group
+		return ref, nil
+	}
+	if !flux.ValidKindName(ref.Kind) || len(ref.Group) > 253 || strings.ContainsAny(ref.Group, "\x00/ ") {
 		return ref, badRequest("unknown kind %q", truncate(ref.Kind, 64))
 	}
-	if ref.Group != "" && ref.Group != k.Group {
-		return ref, badRequest("kind %s is in group %q", k.Kind, k.Group)
+	if ref.Group == coreGroupAlias {
+		ref.Group = ""
+		return ref, nil
 	}
-	ref.Kind, ref.Group = k.Kind, k.Group
+	if ref.Group == "" {
+		ref.Group = groupUnresolved
+	}
+	return ref, nil
+}
+
+// groupUnresolved marks a ref outside the kind table whose group the
+// caller did not give; resolveThreadRef finds it from the visible rows.
+const groupUnresolved = "\x00"
+
+// resolveThreadRef completes a canonical ref outside the kind table whose
+// group was not given: the group of the one visible inventory row of that
+// kind, namespace and name (400 when several groups have one, ErrNotFound
+// when none is visible).
+func (a *api) resolveThreadRef(r *http.Request, p identity.Principal, ref store.ResourceRef) (store.ResourceRef, error) {
+	if ref.Group != groupUnresolved {
+		return ref, nil
+	}
+	got, _, _, err := a.fleet.locate(r.Context(), p, ref.Cluster, model.Ref{Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name})
+	if err != nil {
+		return ref, err
+	}
+	ref.Group = got.Group
 	return ref, nil
 }
 
@@ -48,8 +81,16 @@ func (a *api) handleListThreads(w http.ResponseWriter, r *http.Request) {
 	p, _ := identity.From(r.Context())
 	q := r.URL.Query()
 	ref, err := canonicalThreadRef(store.ResourceRef{
-		Cluster: q.Get("cluster"), Kind: q.Get("kind"), Namespace: q.Get("namespace"), Name: q.Get("name"),
+		Cluster: q.Get("cluster"), Group: q.Get("group"), Kind: q.Get("kind"), Namespace: q.Get("namespace"), Name: q.Get("name"),
 	})
+	if err == nil {
+		ref, err = a.resolveThreadRef(r, p, ref)
+	}
+	if errors.Is(err, fleet.ErrNotFound) {
+		// Threads on an object p cannot see are not listed.
+		a.writeJSONWithETag(w, r, p, map[string]any{"items": []store.Thread{}, "next": ""})
+		return
+	}
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -81,7 +122,7 @@ func (a *api) handleListThreads(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []store.Thread{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "next": next})
+	a.writeJSONWithETag(w, r, p, map[string]any{"items": items, "next": next})
 }
 
 type createThreadBody struct {
@@ -104,6 +145,9 @@ func (a *api) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref, err := canonicalThreadRef(body.Ref)
+	if err == nil {
+		ref, err = a.resolveThreadRef(r, p, ref)
+	}
 	if err != nil {
 		a.fail(w, r, err)
 		return

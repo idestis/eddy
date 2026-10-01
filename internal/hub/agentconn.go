@@ -66,9 +66,13 @@ type agents struct {
 	graceT   map[string]*time.Timer
 	graceEnd map[string]bool
 	grace    time.Duration
-	rvSeq    atomic.Uint64
-	bus      *bus
-	metrics  *metrics
+	// stale holds the last views of disconnected clusters (stale.go).
+	stale     map[string]*staleView
+	staleRows int
+	staleMax  int
+	rvSeq     atomic.Uint64
+	bus       *bus
+	metrics   *metrics
 
 	// Hooks, set before the first session is added.
 	onChange  func()                        // connection state changed (Cluster status)
@@ -80,7 +84,7 @@ func newAgents(b *bus, m *metrics) *agents {
 	return &agents{
 		local: map[string][]*agentSession{}, remote: map[string]*remoteSession{},
 		primary: map[string]clusterSession{}, graceT: map[string]*time.Timer{}, graceEnd: map[string]bool{},
-		bus: b, metrics: m,
+		stale: map[string]*staleView{}, staleMax: staleMaxRows, bus: b, metrics: m,
 	}
 }
 
@@ -235,6 +239,9 @@ func (a *agents) countLocked() {
 // session, then the oldest unsynced local session. When the primary is
 // lost and only an unsynced session (or nothing) is left, the failover
 // grace period keeps the old view for a while, if one is configured.
+// After it, the lost primary's view is kept as a stale view, which serves
+// reads until a session syncs (an unsynced session does not replace it,
+// so the cluster never blinks empty while its agent resends its snapshot).
 func (a *agents) reselectLocked(cluster string) bool {
 	var synced, unsynced clusterSession
 	for _, s := range a.local[cluster] {
@@ -259,7 +266,12 @@ func (a *agents) reselectLocked(cluster string) bool {
 	inGrace := lost && a.grace > 0 && !a.graceEnd[cluster]
 	want := synced
 	if want == nil && !inGrace {
-		want = unsynced
+		if lost {
+			a.keepStaleLocked(cluster, cur)
+		}
+		if a.stale[cluster] == nil {
+			want = unsynced
+		}
 	}
 	if want != nil {
 		if t := a.graceT[cluster]; t != nil {
@@ -267,6 +279,9 @@ func (a *agents) reselectLocked(cluster string) bool {
 			delete(a.graceT, cluster)
 		}
 		delete(a.graceEnd, cluster)
+		if want == synced {
+			a.dropStaleLocked(cluster)
+		}
 		if had && cur == want {
 			return false
 		}
@@ -308,6 +323,7 @@ func (a *agents) validLocked(cluster string, s clusterSession) bool {
 // after publishes a primary change: SSE clients refetch the cluster's
 // rows, Cluster status is rewritten and peers are told.
 func (a *agents) after(cluster string, changed bool) {
+	a.rvSeq.Add(1) // connection state is part of the fleet version (ETags)
 	if changed {
 		a.bus.publish(event{kind: evResync, cluster: cluster})
 		if a.onPrimary != nil {
@@ -350,14 +366,19 @@ func (a *agents) revalidate(reg *Registry, log *slog.Logger) {
 			s.close(websocket.StatusPolicyViolation, "token no longer valid")
 		}
 	}
-	a.mu.RLock()
+	a.mu.Lock()
 	var gone []*remoteSession
 	for c, r := range a.remote {
 		if _, ok := reg.Get(c); !ok {
 			gone = append(gone, r)
 		}
 	}
-	a.mu.RUnlock()
+	for c := range a.stale {
+		if _, ok := reg.Get(c); !ok {
+			a.dropStaleLocked(c)
+		}
+	}
+	a.mu.Unlock()
 	for _, r := range gone {
 		a.setRemote(r.cluster, nil, r)
 	}
@@ -466,7 +487,9 @@ func (a *agentServer) connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	conn, err := websocket.Accept(w, r, nil)
+	// permessage-deflate with context takeover (ADR-0006), when the agent
+	// offers it. The read limit applies to the decompressed message.
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
 	if err != nil {
 		a.log.Warn("agent websocket upgrade failed", "cluster", cluster, "err", err)
 		return

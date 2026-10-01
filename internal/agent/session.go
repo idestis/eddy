@@ -66,9 +66,10 @@ type RequestHandler interface {
 // every DeltaInterval. A frame may not exceed protocol.MaxFrameBytes, so a
 // large snapshot is split: the first chunk travels as the Snapshot frame
 // (which replaces the hub's view) and the remaining resources follow
-// immediately as Delta frames carrying only upserts. The hub must therefore
-// treat a Snapshot as "replace" and apply the following Deltas on top, which
-// is what it does for any Delta anyway.
+// immediately as Delta frames carrying only upserts. Snapshot.Parts and
+// Delta.Part number the frames, so a hub swaps the snapshot in only once
+// the last part arrived; an older hub ignores them and applies the Deltas
+// on top, which is what it does for any Delta anyway.
 type Session struct {
 	URL     string // hub endpoint, e.g. wss://hub.example.com/agent/v1/connect
 	Cluster string
@@ -91,6 +92,11 @@ type Session struct {
 	// Instance identifies this agent process to the hub (Hello.Instance);
 	// empty uses one random id per process.
 	Instance string
+	// DisableCompression turns off permessage-deflate (ADR-0006), which is
+	// otherwise offered with context takeover. A hub that does not accept
+	// the extension gets plain frames either way. SetReadLimit caps the
+	// decompressed size of a message.
+	DisableCompression bool
 
 	connected atomic.Bool
 	seq       atomic.Int64
@@ -196,9 +202,14 @@ func (s *Session) connectOnce(ctx context.Context) error {
 	token := s.token()
 	joining := isJoinToken(token)
 	dialCtx, cancelDial := context.WithTimeout(ctx, dialTimeout)
+	mode := websocket.CompressionContextTakeover
+	if s.DisableCompression {
+		mode = websocket.CompressionDisabled
+	}
 	conn, resp, err := websocket.Dial(dialCtx, target, &websocket.DialOptions{
-		HTTPClient: &http.Client{Transport: transport},
-		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + token}},
+		HTTPClient:      &http.Client{Transport: transport},
+		HTTPHeader:      http.Header{"Authorization": []string{"Bearer " + token}},
+		CompressionMode: mode,
 	})
 	cancelDial()
 	if err != nil {
@@ -329,11 +340,12 @@ func (s *Session) sendSnapshot(ctx context.Context, c *sessionConn) error {
 	if len(chunks) > 0 {
 		first = chunks[0]
 	}
-	if err := c.send(ctx, protocol.TypeSnapshot, "", protocol.Snapshot{Resources: first, Findings: s.findings(&c.findingsVer, true)}); err != nil {
+	parts := max(1, len(chunks))
+	if err := c.send(ctx, protocol.TypeSnapshot, "", protocol.Snapshot{Resources: first, Findings: s.findings(&c.findingsVer, true), Parts: parts}); err != nil {
 		return err
 	}
-	for _, rs := range chunks[min(1, len(chunks)):] {
-		if err := c.send(ctx, protocol.TypeDelta, "", protocol.Delta{Upserts: rs}); err != nil {
+	for i, rs := range chunks[min(1, len(chunks)):] {
+		if err := c.send(ctx, protocol.TypeDelta, "", protocol.Delta{Upserts: rs, Part: i + 2}); err != nil {
 			return err
 		}
 	}

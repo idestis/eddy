@@ -34,6 +34,9 @@ type kindsResponse struct {
 	Projects []flux.Project `json:"projects"`
 	// Presets are the watch presets the cluster's agent enables.
 	Presets []string `json:"presets"`
+	// Stale is set when the cluster is disconnected and these are the
+	// counts of its last view (ADR-0006).
+	Stale bool `json:"stale,omitempty"`
 }
 
 // Kinds lists the kinds of a cluster's view for navigation: every kind the

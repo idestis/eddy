@@ -95,6 +95,7 @@ type Hub struct {
 	registry  *sessionRegistry
 	peers     *peerNode // nil without peer.listen
 	onboard   *onboarding
+	httpAPI   *api
 
 	recentThreads recentSet
 
@@ -157,6 +158,7 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 	h.agents = newAgents(b, h.metrics)
 	h.fleet = &fleetService{reg: h.reg, agents: h.agents, rec: rec, denyPrefixes: cfg.Auth.DenyUserPrefixes, log: log.With("component", "fleet")}
 	h.fleet.authz = newAuthorizer(h.fleet.sendAccess, h.metrics)
+	h.fleet.authz.stale = h.agents.isStale
 	pod := cmp.Or(o.PodName, cfg.Peer.PodName)
 	if pod == "" {
 		return nil, errors.New("hub: no replica name: set POD_NAME or peer.podName")
@@ -184,6 +186,7 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 		h.peerH = h.peers.handler()
 	}
 	h.reg.OnChange(func() {
+		h.agents.rvSeq.Add(1) // the cluster set is part of the fleet version (ETags)
 		h.agents.revalidate(h.reg, log)
 		b.publish(event{kind: evClusters})
 	})
@@ -246,10 +249,12 @@ func New(ctx context.Context, cfg *config.Hub, o Options) (*Hub, error) {
 		cfg: cfg, log: log.With("component", "api"), auth: h.auth, fleet: h.fleet, reg: h.reg, threads: h.threads,
 		ai: h.ai, store: h.store, flags: h.flags, bus: b, metrics: h.metrics,
 		streams: newConcurrencyLimiter(maxStreamsPerUser), logStreams: newConcurrencyLimiter(maxLogStreamsUser),
+		searches:  newConcurrencyLimiter(searchPerUser),
 		shutdown:  h.shutdown,
 		ephemeral: cfg.EphemeralStore(),
 		onboard:   h.onboard,
 	}
+	h.httpAPI = ap
 	h.ui = ap.routes(mcpH, spa)
 	h.agentH = (&agentServer{
 		reg: h.reg, agents: h.agents, failures: newWindowLimiter(agentAuthFailures, agentAuthWindow),

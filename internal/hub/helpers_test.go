@@ -155,7 +155,7 @@ func (e *testEnv) connectAgent(cluster, token string, resources []model.Resource
 		e.t.Fatalf("dial agent: %v", err)
 	}
 	e.t.Cleanup(a.close)
-	a.sendFrame(protocol.TypeSnapshot, "", protocol.Snapshot{Resources: resources})
+	a.sendFrame(protocol.TypeSnapshot, "", protocol.Snapshot{Resources: resources, Parts: 1})
 	go a.serve()
 	waitFor(e.t, func() bool {
 		s := e.hub.agents.get(cluster)

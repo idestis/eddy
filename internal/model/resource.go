@@ -79,6 +79,15 @@ type Resource struct {
 	Source *Ref `json:"source,omitempty"`
 	// Owner is the Flux object or workload that manages this one, if known.
 	Owner *Ref `json:"owner,omitempty"`
+	// DependsOn lists the spec.dependsOn of a Kustomization (Kustomizations)
+	// or a HelmRelease (HelmReleases), in spec order, at most MaxDependsOn.
+	// A namespace left out in the spec is the object's own. The hub drops
+	// entries in namespaces the viewer may not list.
+	DependsOn []Ref `json:"dependsOn,omitempty"`
+	// Blocked marks a Kustomization or HelmRelease that is waiting for a
+	// dependency (Ready=False with reason DependencyNotReady). Its Status is
+	// then "reconciling", not "failed".
+	Blocked bool `json:"blocked,omitempty"`
 	// Replicas is "ready/desired" for workloads.
 	Replicas string `json:"replicas,omitempty"`
 	// Images lists container images for workloads and pods.
@@ -137,6 +146,9 @@ type Detail struct {
 
 // MaxDetails caps Resource.Details.
 const MaxDetails = 12
+
+// MaxDependsOn caps Resource.DependsOn.
+const MaxDependsOn = 32
 
 // Finding is something the agent noticed about a cluster that is not the
 // status of one resource, such as finished Jobs piling up in a namespace.
@@ -232,14 +244,18 @@ type Event struct {
 
 // ClusterInfo is what the hub knows about a cluster; no credentials.
 type ClusterInfo struct {
-	Name              string    `json:"name"`
-	DisplayName       string    `json:"displayName"`
-	Environment       string    `json:"environment,omitempty"`
-	Region            string    `json:"region,omitempty"`
-	Color             string    `json:"color,omitempty"`
-	Protected         bool      `json:"protected"`
-	Order             int       `json:"order"`
-	Connected         bool      `json:"connected"`
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Environment string `json:"environment,omitempty"`
+	Region      string `json:"region,omitempty"`
+	Color       string `json:"color,omitempty"`
+	Protected   bool   `json:"protected"`
+	Order       int    `json:"order"`
+	Connected   bool   `json:"connected"`
+	// Stale is set while the cluster is disconnected and the hub still
+	// serves its last view (ADR-0006): reads return that view marked
+	// stale, as of LastSeen; writes and live reads are refused.
+	Stale             bool      `json:"stale,omitempty"`
 	LastSeen          time.Time `json:"lastSeen,omitzero"`
 	AgentVersion      string    `json:"agentVersion,omitempty"`
 	KubernetesVersion string    `json:"kubernetesVersion,omitempty"`
@@ -256,6 +272,10 @@ type ClusterInfo struct {
 	Presets []string `json:"presets,omitempty"`
 	// Counts are filtered to what the viewer may list.
 	Counts map[Status]int `json:"counts,omitempty"`
+	// Kinds are Counts per Kind (watched kinds only; inventory-only rows
+	// are not counted), filtered the same way: enough for navigation
+	// without loading the cluster's resources.
+	Kinds map[string]map[Status]int `json:"kinds,omitempty"`
 	// Findings are filtered the same way: a job-buildup finding is shown to
 	// whoever may list Jobs in its namespace.
 	Findings []Finding `json:"findings,omitempty"`

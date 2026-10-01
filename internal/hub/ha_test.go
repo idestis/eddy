@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -174,7 +175,7 @@ func (e *testEnv) dialInstance(cluster, instance string, seq int64, resources []
 		e.t.Fatalf("dial agent: %v", err)
 	}
 	e.t.Cleanup(a.close)
-	a.sendFrame(protocol.TypeSnapshot, "", protocol.Snapshot{Resources: resources})
+	a.sendFrame(protocol.TypeSnapshot, "", protocol.Snapshot{Resources: resources, Parts: 1})
 	go a.serve()
 	return a
 }
@@ -194,11 +195,16 @@ func waitRemote(t *testing.T, e *testEnv, cluster string, size int) *remoteSessi
 	return rs
 }
 
+// waitForLong polls cond for up to d. On a timeout it logs every
+// goroutine's stack first: a relay that normally converges in milliseconds
+// and did not is a stuck state worth a dump.
 func waitForLong(t *testing.T, d time.Duration, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(d)
 	for !cond() {
 		if time.Now().After(deadline) {
+			buf := make([]byte, 8<<20)
+			t.Logf("goroutines at timeout:\n%s", buf[:runtime.Stack(buf, true)])
 			t.Fatal("condition not met in time")
 		}
 		time.Sleep(10 * time.Millisecond)

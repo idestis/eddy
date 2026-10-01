@@ -139,6 +139,20 @@ tasks:
       VITE_MOCK: "1"
     cmds: [pnpm run dev]
 
+  perf:
+    desc: "Synthetic load test of the hub (ADR-0006): CLUSTERS, RESOURCES, USERS, extra flags after --"
+    cmds:
+      - go run -tags dev ./cmd/eddy-loadgen -clusters {{.CLUSTERS | default "10"}} -resources {{.RESOURCES | default "15000"}} -users {{.USERS | default "10"}} {{.CLI_ARGS}}
+
+  perf:bench:
+    desc: "Hub hot-path benchmarks (FULL=1: 100 clusters x 15k)"
+    cmds:
+      - go test ./internal/hub -run '^$' -bench . -benchmem {{if eq .FULL "1"}}-benchtime 10x -loadgen.full{{end}}
+
+  search-cases:
+    desc: Regenerate testdata/search_cases.json from web/src/lib/fuzzy.ts
+    cmds: [node --experimental-strip-types hack/search-cases.ts testdata/search_cases.json]
+
   images:
     desc: Build the hub and agent container images
     cmds:

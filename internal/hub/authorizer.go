@@ -3,12 +3,14 @@ package hub
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/idestis/eddy/internal/fleet"
 	"github.com/idestis/eddy/internal/flux"
 	"github.com/idestis/eddy/internal/identity"
 	"github.com/idestis/eddy/internal/model"
@@ -16,10 +18,12 @@ import (
 )
 
 // Authorizer cache settings (SPEC: a SAR per (group, resource, namespace),
-// cached for 45 s per user).
+// cached for 45 s per user). With the cluster-scope shortcut a user needs
+// about one check per kind per cluster, plus one per namespace for kinds
+// listed per namespace only.
 const (
 	accessTTL       = 45 * time.Second
-	accessMaxCached = 100_000
+	accessMaxCached = 250_000
 	// maxChecksPerRequest matches the agent's limit per access request.
 	maxChecksPerRequest = 100
 	accessTimeout       = 15 * time.Second
@@ -117,6 +121,10 @@ type authorizer struct {
 	now     func() time.Time
 	ttl     time.Duration
 	max     int
+	// stale reports whether a cluster is served from a stale view (its
+	// agent is disconnected). Only then may an expired answer, at most
+	// staleAccessGrace old, stand in for one the agent cannot give.
+	stale func(cluster string) bool
 
 	mu       sync.Mutex
 	cache    map[accessKey]accessEntry
@@ -223,7 +231,9 @@ func (a *authorizer) resolve(ctx context.Context, p identity.Principal, cluster 
 		if err == nil && len(allowed) != len(checks) {
 			err = fmt.Errorf("hub: agent %s answered %d of %d access checks", cluster, len(allowed), len(checks))
 		}
-		expires := a.now().Add(a.ttl)
+		now := a.now()
+		expires := now.Add(a.ttl)
+		staleOK := err != nil && errors.Is(err, fleet.ErrDisconnected) && a.stale != nil && a.stale(cluster)
 		a.mu.Lock()
 		if err == nil {
 			a.makeRoom(len(batch))
@@ -231,7 +241,11 @@ func (a *authorizer) resolve(ctx context.Context, p identity.Principal, cluster 
 		for i, k := range batch {
 			call := owned[k]
 			if err != nil {
-				call.err = err
+				if e, ok := a.cache[k]; staleOK && ok && now.Before(e.expires.Add(staleAccessGrace)) {
+					call.allowed = e.allowed
+				} else {
+					call.err = err
+				}
 			} else {
 				call.allowed = allowed[i]
 				a.cache[k] = accessEntry{allowed: allowed[i], expires: expires}
@@ -264,24 +278,60 @@ func (a *authorizer) makeRoom(n int) {
 }
 
 // allowedTuples answers verb for every tuple.
+//
+// It asks the cluster-scope question first: verb on (group, resource) in
+// every namespace (namespace ""), once per kind. When that is allowed,
+// every namespaced tuple of the kind is allowed: it is the check the API
+// server makes for `kubectl get <kind> -A`, so nothing is over-granted.
+// Per-namespace checks are asked only for kinds denied cluster-wide. This
+// turns ~(kinds × namespaces) checks per user and cluster into ~kinds for
+// users with cluster-wide read access.
 func (a *authorizer) allowedTuples(ctx context.Context, p identity.Principal, cluster, verb string, tuples []accessTuple) (map[accessTuple]bool, error) {
-	checks := make([]protocol.AccessCheck, len(tuples))
-	for i, t := range tuples {
-		checks[i] = t.check(verb)
+	type gr struct{ group, resource string }
+	wide := map[gr]int{} // index into checks
+	var checks []protocol.AccessCheck
+	for _, t := range tuples {
+		k := gr{t.Group, t.Resource}
+		if _, ok := wide[k]; !ok {
+			wide[k] = len(checks)
+			checks = append(checks, accessTuple{Group: t.Group, Resource: t.Resource}.check(verb))
+		}
 	}
 	res, err := a.check(ctx, p, cluster, checks)
 	if err != nil {
 		return nil, err
 	}
 	out := make(map[accessTuple]bool, len(tuples))
-	for i, t := range tuples {
+	var rest []accessTuple
+	for _, t := range tuples {
+		switch {
+		case res[wide[gr{t.Group, t.Resource}]]:
+			out[t] = true
+		case t.Namespace == "":
+			out[t] = false // the cluster-scope check was this tuple's own
+		default:
+			rest = append(rest, t)
+		}
+	}
+	if len(rest) == 0 {
+		return out, nil
+	}
+	checks = make([]protocol.AccessCheck, len(rest))
+	for i, t := range rest {
+		checks[i] = t.check(verb)
+	}
+	if res, err = a.check(ctx, p, cluster, checks); err != nil {
+		return nil, err
+	}
+	for i, t := range rest {
 		out[t] = res[i]
 	}
 	return out, nil
 }
 
 // filter returns the resources whose (group, resource, namespace) p may
-// list, keeping their order. Unknown kinds are dropped. An inventory-only
+// list, keeping their order, with DependsOn entries p may not list removed
+// (withVisibleDependencies). Unknown kinds are dropped. An inventory-only
 // row needs its parent Kustomization to be listable and, when Eddy knows
 // the plural of the row's kind, list on that kind in its namespace too.
 func (a *authorizer) filter(ctx context.Context, p identity.Principal, cluster string, rs []model.Resource) ([]model.Resource, error) {
@@ -292,7 +342,7 @@ func (a *authorizer) filter(ctx context.Context, p identity.Principal, cluster s
 	var tuples []accessTuple
 	for _, r := range rs {
 		ts, _ := requiredTuples(r)
-		for _, t := range ts {
+		for _, t := range append(ts, dependencyTuples(r)...) {
 			if !seen[t] {
 				seen[t] = true
 				tuples = append(tuples, t)
@@ -306,7 +356,7 @@ func (a *authorizer) filter(ctx context.Context, p identity.Principal, cluster s
 	out := rs[:0:0]
 	for _, r := range rs {
 		if allTuplesAllowed(r, allowed) {
-			out = append(out, r)
+			out = append(out, withVisibleDependencies(r, allowed))
 		}
 	}
 	return out, nil

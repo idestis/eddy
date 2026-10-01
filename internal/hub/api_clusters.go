@@ -70,6 +70,9 @@ func (a *api) handleMe(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) handleClusters(w http.ResponseWriter, r *http.Request) {
 	p, _ := identity.From(r.Context())
+	if a.listNotModified(w, r, p, a.fleet.fleetVersion()) {
+		return
+	}
 	items, err := a.fleet.Clusters(r.Context(), p)
 	if err != nil {
 		a.fail(w, r, err)
@@ -108,7 +111,14 @@ func (a *api) handleResources(w http.ResponseWriter, r *http.Request) {
 		a.handleResourcesWithHidden(w, r, p, r.PathValue("cluster"), fl, offset, limit)
 		return
 	}
-	items, rv, err := a.fleet.list(r.Context(), p, r.PathValue("cluster"), fl)
+	cluster := r.PathValue("cluster")
+	if version, stale, ok := a.fleet.viewVersion(cluster); ok {
+		a.markStale(w, stale)
+		if a.listNotModified(w, r, p, version) {
+			return
+		}
+	}
+	items, rv, err := a.fleet.list(r.Context(), p, cluster, fl)
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -116,7 +126,19 @@ func (a *api) handleResources(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []model.Resource{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "resourceVersion": rv})
+	body := map[string]any{"items": items, "resourceVersion": rv}
+	if a.fleet.agents.isStale(cluster) {
+		body["stale"] = true
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// markStale flags a read served from a stale view (ADR-0006) with the
+// X-Eddy-Stale header; list bodies also say "stale": true.
+func (a *api) markStale(w http.ResponseWriter, stale bool) {
+	if stale {
+		w.Header().Set("X-Eddy-Stale", "true")
+	}
 }
 
 func containsStatus(s model.Status) bool {
@@ -148,6 +170,7 @@ func (a *api) handleObject(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
+	a.markStale(w, a.fleet.agents.isStale(r.PathValue("cluster")))
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -158,7 +181,12 @@ func (a *api) handleChildren(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	body := map[string]any{"items": items}
+	if a.fleet.agents.isStale(r.PathValue("cluster")) {
+		a.markStale(w, true)
+		body["stale"] = true
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (a *api) handleYAML(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +244,81 @@ func (a *api) handleAction(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) handleKinds(w http.ResponseWriter, r *http.Request) {
 	p, _ := identity.From(r.Context())
-	res, err := a.fleet.Kinds(r.Context(), p, r.PathValue("cluster"))
+	cluster := r.PathValue("cluster")
+	if version, stale, ok := a.fleet.viewVersion(cluster); ok {
+		a.markStale(w, stale)
+		if a.listNotModified(w, r, p, version) {
+			return
+		}
+	}
+	res, err := a.fleet.Kinds(r.Context(), p, cluster)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	res.Stale = a.fleet.agents.isStale(cluster)
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleSearch serves GET /api/v1/search?q=&scope=cluster|fleet&cluster=&limit=.
+func (a *api) handleSearch(w http.ResponseWriter, r *http.Request) {
+	p, _ := identity.From(r.Context())
+	q := r.URL.Query()
+	o := searchOptions{Query: q.Get("q"), Cluster: q.Get("cluster")}
+	switch q.Get("scope") {
+	case "", "fleet":
+		o.Fleet = true
+	case "cluster":
+		if o.Cluster == "" {
+			a.fail(w, r, badRequest("scope=cluster needs cluster="))
+			return
+		}
+	default:
+		a.fail(w, r, badRequest("scope must be cluster or fleet"))
+		return
+	}
+	var err error
+	if o.Limit, err = parseLimit(q.Get("limit"), searchDefaultLimit, searchMaxLimit); err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	release, ok := a.searches.acquire(p.User)
+	if !ok {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many searches in flight")
+		return
+	}
+	defer release()
+	res, err := a.fleet.Search(r.Context(), p, o)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-cache")
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleAttention serves GET /api/v1/attention?cluster=&limit=.
+func (a *api) handleAttention(w http.ResponseWriter, r *http.Request) {
+	p, _ := identity.From(r.Context())
+	q := r.URL.Query()
+	limit, err := parseLimit(q.Get("limit"), attentionDefaultLimit, attentionMaxLimit)
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	cluster := q.Get("cluster")
+	version := a.fleet.fleetVersion()
+	if cluster != "" {
+		v, _, ok := a.fleet.viewVersion(cluster)
+		if !ok {
+			v = "none"
+		}
+		version = v
+	}
+	if a.listNotModified(w, r, p, version) {
+		return
+	}
+	res, err := a.fleet.Attention(r.Context(), p, cluster, limit)
 	if err != nil {
 		a.fail(w, r, err)
 		return

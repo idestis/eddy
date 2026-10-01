@@ -32,7 +32,7 @@ func inventoryEnv(t *testing.T, hello *protocol.Hello) (*testEnv, *fakeAgent) {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.close)
-	a.sendFrame(protocol.TypeSnapshot, "", protocol.Snapshot{Resources: rows})
+	a.sendFrame(protocol.TypeSnapshot, "", protocol.Snapshot{Resources: rows, Parts: 1})
 	go a.serve()
 	waitFor(t, func() bool { s := e.hub.agents.get("dev"); return s != nil && s.size() == len(rows) })
 	return e, a

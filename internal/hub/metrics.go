@@ -22,6 +22,7 @@ type metrics struct {
 	sseClients      atomic.Int64
 	logStreams      atomic.Int64
 	peerLinks       atomic.Int64
+	staleClusters   atomic.Int64
 
 	agentAuthFailures atomic.Uint64
 	framesThrottled   atomic.Uint64
@@ -31,6 +32,10 @@ type metrics struct {
 	sseDropped        atomic.Uint64
 	peerAuthFailures  atomic.Uint64
 	peerRelayed       atomic.Uint64
+	notModified       atomic.Uint64
+	gzipResponses     atomic.Uint64
+	searches          atomic.Uint64
+	searchPartial     atomic.Uint64
 
 	mu     sync.Mutex
 	http   map[int]uint64
@@ -74,6 +79,7 @@ func (m *metrics) write(w io.Writer) {
 	gauge("eddy_hub_peer_links", "Open links to other hub replicas.", m.peerLinks.Load())
 	gauge("eddy_hub_sse_clients", "Open /api/v1/stream connections.", m.sseClients.Load())
 	gauge("eddy_hub_log_streams", "Open pod log streams.", m.logStreams.Load())
+	gauge("eddy_hub_stale_clusters", "Disconnected clusters whose last view is kept and served as stale.", m.staleClusters.Load())
 	counter("eddy_hub_agent_auth_failures_total", "Rejected agent connection attempts.", m.agentAuthFailures.Load())
 	counter("eddy_hub_agent_frames_throttled_total", "Agent frames delayed by the per-agent rate limit.", m.framesThrottled.Load())
 	counter("eddy_hub_agent_frames_invalid_total", "Agent frames that could not be decoded.", m.framesInvalid.Load())
@@ -82,6 +88,10 @@ func (m *metrics) write(w io.Writer) {
 	counter("eddy_hub_sse_overflows_total", "SSE clients that fell behind and were resynced.", m.sseDropped.Load())
 	counter("eddy_hub_peer_auth_failures_total", "Rejected peer connection attempts.", m.peerAuthFailures.Load())
 	counter("eddy_hub_peer_relayed_requests_total", "Requests this replica ran for another replica.", m.peerRelayed.Load())
+	counter("eddy_hub_http_not_modified_total", "List requests answered 304 Not Modified from an ETag.", m.notModified.Load())
+	counter("eddy_hub_http_gzip_responses_total", "Responses sent gzip-compressed.", m.gzipResponses.Load())
+	counter("eddy_hub_search_requests_total", "Server-side searches (GET /api/v1/search).", m.searches.Load())
+	counter("eddy_hub_search_partial_total", "Searches that skipped a cluster (deadline or access check failure).", m.searchPartial.Load())
 
 	m.mu.Lock()
 	httpCounts := maps.Clone(m.http)
