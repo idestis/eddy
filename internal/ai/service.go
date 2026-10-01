@@ -55,15 +55,17 @@ type AskRequest struct {
 	ResourceID string `json:"resourceId,omitempty"`
 	ThreadID   string `json:"threadId,omitempty"`
 	Question   string `json:"question"`
-	// Attachments are log lines the user selected in the UI. They are
-	// redacted, capped and wrapped as untrusted data, never treated as part
-	// of the question. Accepted only when ai.allowLogs is on.
+	// Attachments are log lines or a YAML excerpt the user selected in the
+	// UI. They are redacted, capped and wrapped as untrusted data, never
+	// treated as part of the question. Log attachments need ai.allowLogs;
+	// YAML attachments do not, since get_resource already exposes the same
+	// redacted YAML to the model.
 	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 // Attachment is one block of user-selected log lines.
 type Attachment struct {
-	Kind   string   `json:"kind"`   // "logs"
+	Kind   string   `json:"kind"`   // "logs" or "yaml"
 	Source string   `json:"source"` // e.g. "apps/podinfo-7d9f/podinfo"; shown to the model as a label
 	Lines  []string `json:"lines"`
 }
@@ -555,11 +557,20 @@ func (a *askRun) userPrompt() string {
 		b.WriteString("\n\n")
 	}
 	for _, att := range a.req.Attachments {
-		text, n := redact.Text(strings.Join(att.Lines, "\n"))
+		raw := strings.Join(att.Lines, "\n")
+		var text string
+		var n int
+		label := "Log lines the user selected"
+		if att.Kind == "yaml" {
+			text, n = redact.YAML(raw)
+			label = "YAML the user selected"
+		} else {
+			text, n = redact.Text(raw)
+		}
 		a.redactions += n
 		text, _ = truncate(text, MaxAttachmentBytes)
-		fmt.Fprintf(&b, "Log lines the user selected (%s):\n", sanitizeLabel(att.Source))
-		b.WriteString(Wrap(a.nonce, "attachment:logs", text))
+		fmt.Fprintf(&b, "%s (%s):\n", label, sanitizeLabel(att.Source))
+		b.WriteString(Wrap(a.nonce, "attachment:"+att.Kind, text))
 		b.WriteString("\n\n")
 	}
 	b.WriteString("Question from the signed-in user:\n")
@@ -574,15 +585,18 @@ func (s *Service) checkAttachments(atts []Attachment) error {
 	if len(atts) == 0 {
 		return nil
 	}
-	if !s.cfg.AllowLogs {
-		return fmt.Errorf("%w: log access for Ask AI is turned off on this hub (ai.allowLogs)", ErrInvalid)
-	}
 	if len(atts) > MaxAttachments {
 		return fmt.Errorf("%w: at most %d attachments", ErrInvalid, MaxAttachments)
 	}
 	lines, size := 0, 0
 	for _, a := range atts {
-		if a.Kind != "logs" {
+		switch a.Kind {
+		case "logs":
+			if !s.cfg.AllowLogs {
+				return fmt.Errorf("%w: log access for Ask AI is turned off on this hub (ai.allowLogs)", ErrInvalid)
+			}
+		case "yaml":
+		default:
 			return fmt.Errorf("%w: unsupported attachment kind %q", ErrInvalid, a.Kind)
 		}
 		lines += len(a.Lines)

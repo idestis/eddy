@@ -56,7 +56,7 @@ func TestAskAttachmentRules(t *testing.T) {
 		{"logs disabled", false, logs(1)},
 		{"too many lines", true, logs(MaxAttachmentLines + 1)},
 		{"too many attachments", true, append(append(append(logs(1), logs(1)...), logs(1)...), logs(1)...)},
-		{"unknown kind", true, []Attachment{{Kind: "yaml", Lines: []string{"a"}}}},
+		{"unknown kind", true, []Attachment{{Kind: "json", Lines: []string{"a"}}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -69,5 +69,29 @@ func TestAskAttachmentRules(t *testing.T) {
 				t.Fatal("provider called despite invalid attachments")
 			}
 		})
+	}
+}
+
+func TestAskWithYAMLAttachment(t *testing.T) {
+	// YAML attachments work even with log access off, and are redacted as YAML.
+	h := newHarness(t, config.AI{AllowLogs: false}, Response{StopReason: StopEndTurn, Content: []Block{TextBlock("ok")}})
+	_, err := h.svc.Ask(context.Background(), alice, AskRequest{
+		Cluster:  "prod",
+		Question: "is this disruption budget sane?",
+		Attachments: []Attachment{{
+			Kind:   "yaml",
+			Source: "karpenter.sh/NodePool/general",
+			Lines:  []string{"spec:", "  disruption:", "    consolidateAfter: 15m", "  template:", "    spec:", "      env:", "      - name: TOKEN", "        value: hunter2-supersecret"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := h.prov.requests[0].Messages[0].Content[0].Text
+	if !strings.Contains(prompt, `source="attachment:yaml"`) || !strings.Contains(prompt, "consolidateAfter: 15m") {
+		t.Fatalf("yaml attachment not wrapped:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "hunter2-supersecret") {
+		t.Fatal("env value in yaml attachment was not redacted")
 	}
 }

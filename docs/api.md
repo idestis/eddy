@@ -314,9 +314,11 @@ Bodies are plain text or Markdown. The UI renders them with no raw HTML and no i
 - **Body:** `{cluster, resourceId?, threadId?, question}`
 - **Response:** `{threadId, message: Message, steps: [{tool, args, bytes}]}`
 
-Optional `attachments: [{kind: "logs", source, lines[]}]` carry log lines the user selected in the UI:
+Optional `attachments: [{kind: "logs" | "yaml", source, lines[]}]` carry log lines or a YAML excerpt the user selected in the UI:
 - **Limits:** at most 3 attachments, 500 lines and 32 KiB in total.
-- **When accepted:** only when `ai.allowLogs` is on (see `features.aiLogs`). Otherwise the request gets 400.
+- **When accepted:**
+  - `logs` only when `ai.allowLogs` is on (see `features.aiLogs`). Otherwise the request gets 400.
+  - `yaml` always, because the model can already read the same redacted YAML through `get_resource`. It is redacted as YAML.
 - **Handling:** lines are redacted and passed to the model as untrusted data, never as part of the question. They are not stored in the thread.
 
 Each ask is stored in a private thread of type `ask`. The AI message's `author.client` is the model id, and `meta.provider` names the provider. If you are over the per-user limit you get 429 `rate_limited`, and invalid input gives 400. The reply comes back in one piece,
