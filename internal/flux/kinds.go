@@ -10,6 +10,7 @@
 package flux
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -26,6 +27,12 @@ const (
 	GroupBatch      = "batch"
 	GroupNetworking = "networking.k8s.io"
 	GroupAutoscale  = "autoscaling"
+	GroupPolicy     = "policy"
+	GroupStorage    = "storage.k8s.io"
+	// Groups of the watch presets.
+	GroupKarpenter    = "karpenter.sh"
+	GroupKarpenterAWS = "karpenter.k8s.aws"
+	GroupESO          = "external-secrets.io"
 )
 
 // Names of the supported kinds.
@@ -48,7 +55,63 @@ const (
 	KindCronJob        = "CronJob"
 	KindHPA            = "HorizontalPodAutoscaler"
 	KindPVC            = "PersistentVolumeClaim"
+	KindNamespace      = "Namespace"
+	KindStorageClass   = "StorageClass"
+	KindPDB            = "PodDisruptionBudget"
+	KindServiceAccount = "ServiceAccount"
+	KindNetworkPolicy  = "NetworkPolicy"
+
+	// Kinds of the karpenter preset.
+	KindNodePool     = "NodePool"
+	KindNodeClaim    = "NodeClaim"
+	KindEC2NodeClass = "EC2NodeClass"
+
+	// Kinds of the externalSecrets preset.
+	KindExternalSecret        = "ExternalSecret"
+	KindClusterExternalSecret = "ClusterExternalSecret"
+	KindSecretStore           = "SecretStore"
+	KindClusterSecretStore    = "ClusterSecretStore"
+	KindPushSecret            = "PushSecret"
+
+	// Kinds Eddy never watches. Secrets and ConfigMaps appear only by name,
+	// from a Kustomization's inventory.
+	KindSecret    = "Secret"
+	KindConfigMap = "ConfigMap"
 )
+
+// Watch presets: opt-in groups of kinds (EDDY_WATCH_PRESETS, the chart's
+// watch.presets). A preset kind is watched only when its preset is enabled
+// and the cluster serves it.
+const (
+	PresetKarpenter       = "karpenter"
+	PresetExternalSecrets = "externalSecrets"
+)
+
+// Presets lists every supported preset.
+func Presets() []string { return []string{PresetKarpenter, PresetExternalSecrets} }
+
+// ParsePresets validates preset names (exact spelling), dropping empty
+// entries and duplicates, in the order of Presets.
+func ParsePresets(names []string) ([]string, error) {
+	want := map[string]bool{}
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		if !slices.Contains(Presets(), n) {
+			return nil, fmt.Errorf("flux: unknown watch preset %q (supported: %s)", n, strings.Join(Presets(), ", "))
+		}
+		want[n] = true
+	}
+	var out []string
+	for _, p := range Presets() {
+		if want[p] {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
 
 // Kind describes one watched Kubernetes kind.
 type Kind struct {
@@ -65,6 +128,9 @@ type Kind struct {
 	// ReplicaSets are watched only to attribute Pods to their Deployment:
 	// surfacing them would add one row per old rollout revision.
 	Surfaced bool
+	// Preset names the watch preset that enables this kind; empty for kinds
+	// that are always watched.
+	Preset string
 }
 
 var kinds = []Kind{
@@ -86,6 +152,21 @@ var kinds = []Kind{
 	{Group: GroupCore, Kind: KindService, Plural: "services", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
 	{Group: GroupNetworking, Kind: KindIngress, Plural: "ingresses", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
 	{Group: GroupCore, Kind: KindPVC, Plural: "persistentvolumeclaims", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+	{Group: GroupCore, Kind: KindNamespace, Plural: "namespaces", Versions: []string{"v1"}, Surfaced: true},
+	{Group: GroupCore, Kind: KindServiceAccount, Plural: "serviceaccounts", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+	{Group: GroupStorage, Kind: KindStorageClass, Plural: "storageclasses", Versions: []string{"v1"}, Surfaced: true},
+	{Group: GroupPolicy, Kind: KindPDB, Plural: "poddisruptionbudgets", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+	{Group: GroupNetworking, Kind: KindNetworkPolicy, Plural: "networkpolicies", Versions: []string{"v1"}, Namespaced: true, Surfaced: true},
+
+	{Group: GroupKarpenter, Kind: KindNodePool, Plural: "nodepools", Versions: []string{"v1", "v1beta1"}, Surfaced: true, Preset: PresetKarpenter},
+	{Group: GroupKarpenter, Kind: KindNodeClaim, Plural: "nodeclaims", Versions: []string{"v1", "v1beta1"}, Surfaced: true, Preset: PresetKarpenter},
+	{Group: GroupKarpenterAWS, Kind: KindEC2NodeClass, Plural: "ec2nodeclasses", Versions: []string{"v1", "v1beta1"}, Surfaced: true, Preset: PresetKarpenter},
+
+	{Group: GroupESO, Kind: KindExternalSecret, Plural: "externalsecrets", Versions: []string{"v1", "v1beta1"}, Namespaced: true, Surfaced: true, Preset: PresetExternalSecrets},
+	{Group: GroupESO, Kind: KindClusterExternalSecret, Plural: "clusterexternalsecrets", Versions: []string{"v1", "v1beta1"}, Surfaced: true, Preset: PresetExternalSecrets},
+	{Group: GroupESO, Kind: KindSecretStore, Plural: "secretstores", Versions: []string{"v1", "v1beta1"}, Namespaced: true, Surfaced: true, Preset: PresetExternalSecrets},
+	{Group: GroupESO, Kind: KindClusterSecretStore, Plural: "clustersecretstores", Versions: []string{"v1", "v1beta1"}, Surfaced: true, Preset: PresetExternalSecrets},
+	{Group: GroupESO, Kind: KindPushSecret, Plural: "pushsecrets", Versions: []string{"v1alpha1"}, Namespaced: true, Surfaced: true, Preset: PresetExternalSecrets},
 }
 
 func (k Kind) clone() Kind {
@@ -139,9 +220,14 @@ func (k Kind) Matches(group, kind string) bool {
 	return k.Group == group && k.Kind == kind
 }
 
-// YAMLAllowed reports whether the yaml operation may return objects of kind.
-// It is true only for kinds in the table, and never for Secret or ConfigMap.
+// YAMLAllowed reports whether the yaml operation may return objects of
+// kind. It is false only for Secrets (a kind named "Secret" in any API
+// group, compared without case): their YAML is never read. Every other kind,
+// watched or known only from a Kustomization inventory, is allowed, and
+// SanitizeYAML always removes data, binaryData and stringData (ConfigMaps
+// keep their metadata only) and env values before anything leaves the
+// cluster. Whether the user may read the object is decided by the API
+// server: the read is impersonated.
 func YAMLAllowed(kind string) bool {
-	_, ok := KindByName(kind)
-	return ok
+	return !strings.EqualFold(kind, KindSecret)
 }

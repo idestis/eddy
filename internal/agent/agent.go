@@ -71,9 +71,15 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 		return err
 	}
 
-	served, err := flux.Discover(kube.Discovery())
+	discovered, err := flux.Discover(kube.Discovery())
 	if err != nil {
 		return err
+	}
+	served := discovered.ForPresets(cfg.Presets)
+	for _, p := range cfg.Presets {
+		if !presetServed(served, p) {
+			logger.Warn("agent: watch preset enabled but none of its kinds are served", "preset", p)
+		}
 	}
 	if _, ok := served[flux.KindKustomization]; !ok {
 		logger.Warn("agent: Flux kinds are not served; watching workloads only")
@@ -84,7 +90,7 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 	}
 	fluxVersion := flux.DetectFluxVersion(ctx, kube, flux.FluxNamespace)
 	logger.Info("agent: starting", "version", version.Version, "cluster", cfg.Cluster, "instance", processInstance,
-		"kubernetes", info.GitVersion, "flux", fluxVersion, "kinds", served, "namespaces", cfg.Namespaces,
+		"kubernetes", info.GitVersion, "flux", fluxVersion, "kinds", served, "presets", cfg.Presets, "namespaces", cfg.Namespaces,
 		"limits", map[string]any{"qps": cfg.KubeQPS, "burst": cfg.KubeBurst, "concurrent": cfg.MaxConcurrent,
 			"logStreams": cfg.MaxLogStreams, "sar": cfg.MaxSARConcurrent, "logPods": cfg.MaxLogPods, "logLineRate": cfg.LogLineRate},
 		"jobs", map[string]any{"history": cfg.JobHistory, "failedMaxAge": cfg.JobFailedMaxAge.String(), "buildupThreshold": cfg.JobBuildupThreshold})
@@ -97,6 +103,7 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 	h := &Handler{
 		Policy:      Policy{AllowedGroupPrefixes: cfg.AllowedGroupPrefixes, AllowedGroups: cfg.AllowedGroups, DenyUserPrefixes: cfg.DenyUserPrefixes},
 		Served:      served,
+		Kinds:       NewDiscoveryResolver(kube.Discovery()),
 		Impersonate: ImpersonatingFactory(impersonateBase, clientCacheSize, clientCacheTTL),
 		Self:        kube,
 		Logger:      logger,
@@ -130,6 +137,8 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 			KubernetesVersion: info.GitVersion,
 			FluxVersion:       fluxVersion,
 			Namespaces:        cfg.Namespaces,
+			Presets:           cfg.Presets,
+			Kinds:             served.SurfacedKinds(),
 		},
 		Source:        c,
 		Handler:       h,
@@ -169,6 +178,16 @@ func run(ctx context.Context, cfg *config.Agent, rc *rest.Config, logger *slog.L
 		return err
 	}
 	return nil
+}
+
+// presetServed reports whether the cluster serves any kind of preset.
+func presetServed(served flux.Served, preset string) bool {
+	for _, k := range flux.All() {
+		if _, ok := served[k.Kind]; ok && k.Preset == preset {
+			return true
+		}
+	}
+	return false
 }
 
 // hubTLS trusts the system roots plus, when set, the CA bundle in caFile.

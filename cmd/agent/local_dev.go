@@ -18,6 +18,7 @@ import (
 	"github.com/idestis/eddy/internal/agent"
 	"github.com/idestis/eddy/internal/config"
 	"github.com/idestis/eddy/internal/devlocal"
+	"github.com/idestis/eddy/internal/flux"
 	"github.com/idestis/eddy/internal/version"
 )
 
@@ -29,7 +30,23 @@ const (
 	envContexts    = "EDDY_AGENT_CONTEXTS"
 	envAllowWrites = "EDDY_AGENT_ALLOW_WRITES"
 	envProtect     = "EDDY_AGENT_PROTECT"
+	// envPresets overrides the watch presets of local mode, which enables
+	// every preset by default; "none" disables them.
+	envPresets = "EDDY_AGENT_PRESETS"
 )
+
+// localPresets returns the watch presets of local mode: every preset unless
+// EDDY_AGENT_PRESETS names some, or "none".
+func localPresets(getenv func(string) string) ([]string, error) {
+	v := strings.TrimSpace(getenv(envPresets))
+	switch v {
+	case "":
+		return flux.Presets(), nil
+	case "none":
+		return nil, nil
+	}
+	return flux.ParsePresets(strings.Split(v, ","))
+}
 
 // localFlags are the --local flags of a dev build.
 type localFlags struct {
@@ -155,6 +172,10 @@ func runLocal(ctx context.Context, lf *localFlags, getenv func(string) string, l
 	if err != nil {
 		return err
 	}
+	presets, err := localPresets(getenv)
+	if err != nil {
+		return fmt.Errorf("local mode: %s: %w", envPresets, err)
+	}
 	var namespaces []string
 	for s := range strings.SplitSeq(getenv("EDDY_WATCH_NAMESPACES"), ",") {
 		if s = strings.TrimSpace(s); s != "" {
@@ -188,6 +209,7 @@ func runLocal(ctx context.Context, lf *localFlags, getenv func(string) string, l
 			HubURL:        plan.hubURL,
 			Token:         plan.token,
 			Namespaces:    namespaces,
+			Presets:       presets,
 			AllowInsecure: true,
 			// The same defaults as config.LoadAgent. They still refuse
 			// system: identities from the hub.

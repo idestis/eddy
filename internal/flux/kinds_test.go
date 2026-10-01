@@ -20,24 +20,34 @@ import (
 func TestKindByName(t *testing.T) {
 	tests := []struct {
 		in, group, plural string
-		ok                bool
+		ok, yaml          bool
 	}{
-		{"Kustomization", GroupKustomize, "kustomizations", true},
-		{"helmrelease", GroupHelm, "helmreleases", true},
-		{"OCIRepository", GroupSource, "ocirepositories", true},
-		{"Pod", GroupCore, "pods", true},
-		{"Deployment", GroupApps, "deployments", true},
-		{"Secret", "", "", false},
-		{"ConfigMap", "", "", false},
-		{"", "", "", false},
+		{"Kustomization", GroupKustomize, "kustomizations", true, true},
+		{"helmrelease", GroupHelm, "helmreleases", true, true},
+		{"OCIRepository", GroupSource, "ocirepositories", true, true},
+		{"Pod", GroupCore, "pods", true, true},
+		{"Deployment", GroupApps, "deployments", true, true},
+		{"Namespace", GroupCore, "namespaces", true, true},
+		{"StorageClass", GroupStorage, "storageclasses", true, true},
+		{"PodDisruptionBudget", GroupPolicy, "poddisruptionbudgets", true, true},
+		{"ServiceAccount", GroupCore, "serviceaccounts", true, true},
+		{"NetworkPolicy", GroupNetworking, "networkpolicies", true, true},
+		{"NodePool", GroupKarpenter, "nodepools", true, true},
+		{"EC2NodeClass", GroupKarpenterAWS, "ec2nodeclasses", true, true},
+		{"ExternalSecret", GroupESO, "externalsecrets", true, true},
+		{"PushSecret", GroupESO, "pushsecrets", true, true},
+		{"Secret", "", "", false, false},
+		{"secret", "", "", false, false},
+		{"ConfigMap", "", "", false, true},
+		{"", "", "", false, true},
 	}
 	for _, tt := range tests {
 		k, ok := KindByName(tt.in)
 		if ok != tt.ok || k.Group != tt.group || k.Plural != tt.plural {
 			t.Errorf("KindByName(%q) = %+v, %v", tt.in, k, ok)
 		}
-		if YAMLAllowed(tt.in) != tt.ok {
-			t.Errorf("YAMLAllowed(%q) = %v", tt.in, !tt.ok)
+		if YAMLAllowed(tt.in) != tt.yaml {
+			t.Errorf("YAMLAllowed(%q) = %v", tt.in, !tt.yaml)
 		}
 	}
 	if gvr, ok := GVRFor("HelmRelease", "v2"); !ok || gvr != (schema.GroupVersionResource{Group: GroupHelm, Version: "v2", Resource: "helmreleases"}) {
@@ -172,7 +182,7 @@ func TestSanitizeYAML(t *testing.T) {
 		t.Error("SanitizeYAML must not modify its input")
 	}
 
-	for _, gvk := range []schema.GroupVersionKind{{Version: "v1", Kind: "Secret"}, {Version: "v1", Kind: "ConfigMap"}, {Group: "example.com", Version: "v1", Kind: "Kustomization"}} {
+	for _, gvk := range []schema.GroupVersionKind{{Version: "v1", Kind: "Secret"}, {Group: "example.com", Version: "v1", Kind: "Secret"}} {
 		x := &unstructured.Unstructured{Object: obj{}}
 		x.SetGroupVersionKind(gvk)
 		if _, err := SanitizeYAML(x); !errors.Is(err, ErrKindNotAllowed) {

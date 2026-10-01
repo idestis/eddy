@@ -76,6 +76,10 @@ spec:
             - name: EDDY_WATCH_NAMESPACES
               value: {{ join "," .Values.watch.namespaces | quote }}
             {{- end }}
+            {{- with .Values.watch.presets }}
+            - name: EDDY_WATCH_PRESETS
+              value: {{ join "," . | quote }}
+            {{- end }}
             - name: EDDY_ALLOWED_GROUP_PREFIXES
               value: {{ join "," .Values.impersonation.allowedGroupPrefixes | quote }}
             {{- if .Values.impersonation.groups }}

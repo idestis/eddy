@@ -44,7 +44,8 @@ func Summarize(k Kind, u *unstructured.Unstructured, owners OwnerLookup) model.R
 		Version:         schema.FromAPIVersionAndKind(u.GetAPIVersion(), u.GetKind()).Version,
 		Status:          model.StatusUnknown,
 		Conditions:      conditions(obj),
-		Labels:          allowedLabels(u.GetLabels()),
+		Labels:          labelsFor(k, u.GetLabels()),
+		Project:         ProjectOf(k.Group).ID,
 		CreatedAt:       u.GetCreationTimestamp().UTC(),
 		ResourceVersion: u.GetResourceVersion(),
 		Owner:           ownerOf(u, owners),
@@ -73,6 +74,34 @@ func Summarize(k Kind, u *unstructured.Unstructured, owners OwnerLookup) model.R
 		summarizeHPA(obj, &r)
 	case k.Kind == KindPVC:
 		summarizePVC(obj, &r)
+	case k.Group == GroupCore && k.Kind == KindNamespace:
+		summarizeNamespace(obj, &r)
+	case k.Kind == KindStorageClass:
+		summarizeStorageClass(obj, &r)
+	case k.Kind == KindPDB:
+		summarizePDB(obj, &r)
+	case k.Kind == KindServiceAccount:
+		summarizeServiceAccount(&r)
+	case k.Kind == KindNetworkPolicy:
+		summarizeNetworkPolicy(obj, &r)
+	case k.Kind == KindNodePool:
+		summarizeNodePool(obj, &r)
+	case k.Kind == KindNodeClaim:
+		summarizeNodeClaim(obj, &r)
+	case k.Kind == KindEC2NodeClass:
+		summarizeEC2NodeClass(obj, &r)
+	case k.Kind == KindExternalSecret:
+		summarizeExternalSecret(obj, &r)
+	case k.Kind == KindClusterExternalSecret:
+		summarizeClusterExternalSecret(obj, &r)
+	case k.Kind == KindSecretStore, k.Kind == KindClusterSecretStore:
+		summarizeSecretStore(obj, &r)
+	case k.Kind == KindPushSecret:
+		summarizePushSecret(obj, &r)
+	case !k.Namespaced || k.Preset != "":
+		// Not reached for the kinds above; a guard so a new cluster-scoped
+		// or preset kind never falls into the workload rules.
+		summarizeConditions(obj, &r)
 	default:
 		summarizeWorkload(k, obj, &r)
 	}
@@ -107,6 +136,34 @@ func condition(cs []model.Condition, typ string) *model.Condition {
 
 func isTrue(c *model.Condition) bool  { return c != nil && c.Status == "True" }
 func isFalse(c *model.Condition) bool { return c != nil && c.Status == "False" }
+
+// labelsFor keeps allowedLabels plus a few labels specific to k: Pod
+// Security levels on Namespaces and Karpenter's scheduling labels on the
+// Karpenter kinds.
+func labelsFor(k Kind, in map[string]string) map[string]string {
+	out := allowedLabels(in)
+	keep := func(key string) {
+		if v, ok := in[key]; ok {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[key] = OneLine(v, 63)
+		}
+	}
+	switch {
+	case k.Group == GroupCore && k.Kind == KindNamespace:
+		for key := range in {
+			if strings.HasPrefix(key, "pod-security.kubernetes.io/") {
+				keep(key)
+			}
+		}
+	case k.Preset == PresetKarpenter:
+		for _, key := range presetLabels {
+			keep(key)
+		}
+	}
+	return out
+}
 
 // allowedLabels keeps app.kubernetes.io/* and the Flux ownership labels.
 func allowedLabels(in map[string]string) map[string]string {

@@ -27,6 +27,13 @@ joinToken: ""
 
 watch:
   namespaces: []      # empty = whole cluster. Sets EDDY_WATCH_NAMESPACES.
+  # Opt-in groups of extra kinds to watch (EDDY_WATCH_PRESETS). Each preset adds its kinds to
+  # the agent's cache (only those the cluster serves) and get/list/watch on them to the
+  # ClusterRole. Supported:
+  #   karpenter        karpenter.sh NodePool, NodeClaim; karpenter.k8s.aws EC2NodeClass
+  #   externalSecrets  external-secrets.io ExternalSecret, ClusterExternalSecret, SecretStore,
+  #                    ClusterSecretStore, PushSecret (never the Secrets they produce)
+  presets: []         # e.g. [karpenter, externalSecrets]
 
 impersonation:
   # Groups the agent may impersonate must start with one of these. `system:` is always refused.

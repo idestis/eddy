@@ -245,7 +245,7 @@ func TestInventoryOnly(t *testing.T) {
 	if _, ok := InventoryPlural("cert-manager.io", "ClusterIssuer"); ok {
 		t.Fatal("unknown plural")
 	}
-	if YAMLAllowed("Secret") || YAMLAllowed("ConfigMap") {
-		t.Fatal("inventory kinds must never be yaml-allowed")
+	if YAMLAllowed("Secret") || !YAMLAllowed("ConfigMap") {
+		t.Fatal("Secrets are never yaml-allowed; ConfigMaps are (sanitized)")
 	}
 }

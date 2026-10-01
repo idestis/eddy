@@ -75,6 +75,13 @@ type Hello struct {
 	// Diagnostics are the agent's self-checks for the hub's connection
 	// checklist (ADR-0005). Absent from older agents.
 	Diagnostics *Diagnostics `json:"diagnostics,omitempty"`
+	// Presets are the enabled watch presets (EDDY_WATCH_PRESETS), whether
+	// or not the cluster serves their kinds. Absent from older agents.
+	Presets []string `json:"presets,omitempty"`
+	// Kinds lists the surfaced kinds the agent watches, as "<group>/<Kind>"
+	// (core kinds as "/Pod"). The hub reports them as watched on the kinds
+	// endpoint. Absent from older agents.
+	Kinds []string `json:"kinds,omitempty"`
 }
 
 // Diagnostics is what an agent found out about itself before connecting.

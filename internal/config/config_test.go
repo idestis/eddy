@@ -106,3 +106,30 @@ func TestAgentLimits(t *testing.T) {
 		}
 	})
 }
+
+func TestAgentPresets(t *testing.T) {
+	for k, v := range map[string]string{"EDDY_CLUSTER": "dev", "EDDY_AGENT_TOKEN": "t", "EDDY_HUB_URL": "wss://hub.example.com/agent/v1/connect"} {
+		t.Setenv(k, v)
+	}
+	for _, tt := range []struct {
+		env  string
+		want string
+		err  bool
+	}{
+		{"", "", false},
+		{"externalSecrets, karpenter", "karpenter,externalSecrets", false},
+		{"karpenter,datadog", "", true},
+	} {
+		t.Setenv("EDDY_WATCH_PRESETS", tt.env)
+		a, err := LoadAgent()
+		if tt.err {
+			if err == nil || !strings.Contains(err.Error(), "EDDY_WATCH_PRESETS") {
+				t.Errorf("%q: error %v", tt.env, err)
+			}
+			continue
+		}
+		if err != nil || strings.Join(a.Presets, ",") != tt.want {
+			t.Errorf("%q: presets %v, %v", tt.env, a.Presets, err)
+		}
+	}
+}

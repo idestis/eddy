@@ -8,7 +8,15 @@
 # Edit the subjects to match your groups. Bind to a namespace-scoped RoleBinding instead of the
 # ClusterRoleBinding below to limit a team to some namespaces.
 #
-# Adding a Flux kind to Eddy means extending both ClusterRoles.
+# Adding a kind to Eddy means extending both ClusterRoles.
+#
+# YAML and events of any object (watched kinds and objects known only from a Kustomization
+# inventory) are read as the user, so they need `get` on that kind (and `list` on events).
+# Eddy never shows Secret YAML, and strips data/binaryData from ConfigMaps; granting `get` on
+# configmaps still lets the user read their data with kubectl, so it is not granted here.
+#
+# The Karpenter and External Secrets rules only matter when the agent chart enables the
+# matching watch.presets; they are harmless where those CRDs are not installed.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -30,7 +38,7 @@ rules:
     resources: [deployments, statefulsets, daemonsets, replicasets]
     verbs: [get, list, watch]
   - apiGroups: [""]
-    resources: [pods, events, namespaces, services, persistentvolumeclaims]
+    resources: [pods, events, namespaces, services, persistentvolumeclaims, serviceaccounts]
     verbs: [get, list, watch]
   - apiGroups: [batch]
     resources: [jobs, cronjobs]
@@ -39,7 +47,24 @@ rules:
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]
   - apiGroups: [networking.k8s.io]
-    resources: [ingresses]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+  # watch.presets: karpenter
+  - apiGroups: [karpenter.sh]
+    resources: [nodepools, nodeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [karpenter.k8s.aws]
+    resources: [ec2nodeclasses]
+    verbs: [get, list, watch]
+  # watch.presets: externalSecrets
+  - apiGroups: [external-secrets.io]
+    resources: [externalsecrets, clusterexternalsecrets, secretstores, clustersecretstores, pushsecrets]
     verbs: [get, list, watch]
   # Logs are only readable in the UI when this is granted (and over MCP when mcp.allowLogs is on).
   - apiGroups: [""]
@@ -67,7 +92,7 @@ rules:
     resources: [deployments, statefulsets, daemonsets, replicasets]
     verbs: [get, list, watch]
   - apiGroups: [""]
-    resources: [pods, events, namespaces, services, persistentvolumeclaims]
+    resources: [pods, events, namespaces, services, persistentvolumeclaims, serviceaccounts]
     verbs: [get, list, watch]
   - apiGroups: [batch]
     resources: [jobs, cronjobs]
@@ -76,7 +101,24 @@ rules:
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]
   - apiGroups: [networking.k8s.io]
-    resources: [ingresses]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+  # watch.presets: karpenter
+  - apiGroups: [karpenter.sh]
+    resources: [nodepools, nodeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [karpenter.k8s.aws]
+    resources: [ec2nodeclasses]
+    verbs: [get, list, watch]
+  # watch.presets: externalSecrets
+  - apiGroups: [external-secrets.io]
+    resources: [externalsecrets, clusterexternalsecrets, secretstores, clustersecretstores, pushsecrets]
     verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [pods/log]

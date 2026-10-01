@@ -13,6 +13,7 @@ import (
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
@@ -56,8 +57,12 @@ const fieldManager = "eddy"
 // for the kubeconfig's own identity and sets readOnly; release binaries never
 // set those unexported fields.
 type Handler struct {
-	Policy      Policy
-	Served      flux.Served
+	Policy Policy
+	Served flux.Served
+	// Kinds resolves kinds outside the watched table (inventory-only
+	// objects) for yaml and events. Nil limits those reads to served table
+	// kinds.
+	Kinds       KindResolver
 	Impersonate ClientFactory
 	// Self is the agent's own client, used only to create SubjectAccessReviews.
 	Self   kubernetes.Interface
@@ -162,6 +167,9 @@ func (h *Handler) dispatch(ctx context.Context, req protocol.Request, stream fun
 		}
 		return h.Jobs.HiddenJobs(args.Namespaces, args.Offset, args.Limit, yamlBudget), nil
 	}
+	if req.Op == protocol.OpYAML || req.Op == protocol.OpEvents {
+		return h.read(ctx, req)
+	}
 	k, gvr, err := h.resolve(req.Target)
 	if err != nil {
 		return nil, err
@@ -187,10 +195,6 @@ func (h *Handler) dispatch(ctx context.Context, req protocol.Request, stream fun
 			patch["metadata"] = requestedAtPatch(h.now())
 		}
 		return nil, mergePatch(ctx, cl, gvr, t, patch)
-	case protocol.OpYAML:
-		return h.yaml(ctx, cl, gvr, t)
-	case protocol.OpEvents:
-		return h.events(ctx, cl, k, t)
 	case protocol.OpLogs:
 		var args protocol.LogsArgs
 		if err := decodeArgs(req.Args, &args); err != nil {
@@ -221,6 +225,74 @@ func (h *Handler) resolve(t model.Ref) (flux.Kind, schema.GroupVersionResource, 
 		return flux.Kind{}, schema.GroupVersionResource{}, &protocol.Error{Code: 404, Message: fmt.Sprintf("agent: %s is not served by this cluster", k.Kind)}
 	}
 	return k, gvr, nil
+}
+
+// readTarget is a resolved yaml or events target.
+type readTarget struct {
+	ref        model.Ref
+	gvr        schema.GroupVersionResource
+	namespaced bool
+}
+
+// resolveRead resolves a yaml or events target: a served kind from the
+// table, or else any kind the cluster serves, through Kinds (objects known
+// only from a Kustomization inventory, and preset kinds whose preset is
+// off). Whether the user may read the object is left to the API server.
+func (h *Handler) resolveRead(t model.Ref) (readTarget, error) {
+	if !flux.ValidKindName(t.Kind) || t.Name == "" {
+		return readTarget{}, badRequest("invalid target %s", t.ID())
+	}
+	if k, ok := flux.KindByName(t.Kind); ok && k.Matches(t.Group, t.Kind) {
+		if gvr, ok := h.Served.GVR(k.Kind); ok {
+			return h.readTarget(t, gvr, k.Namespaced)
+		}
+	}
+	notServed := &protocol.Error{Code: 404, Message: fmt.Sprintf("agent: %s/%s is not served by this cluster", t.Group, t.Kind)}
+	if h.Kinds == nil {
+		return readTarget{}, notServed
+	}
+	gvr, namespaced, err := h.Kinds.Resolve(t.Group, t.Kind)
+	if meta.IsNoMatchError(err) {
+		return readTarget{}, notServed
+	}
+	if err != nil {
+		return readTarget{}, &protocol.Error{Code: 503, Message: err.Error()}
+	}
+	return h.readTarget(t, gvr, namespaced)
+}
+
+func (h *Handler) readTarget(t model.Ref, gvr schema.GroupVersionResource, namespaced bool) (readTarget, error) {
+	if namespaced && t.Namespace == "" {
+		return readTarget{}, badRequest("target %s needs a namespace", t.ID())
+	}
+	if !namespaced {
+		t.Namespace = ""
+	}
+	return readTarget{ref: t, gvr: gvr, namespaced: namespaced}, nil
+}
+
+// read runs OpYAML or OpEvents as the request identity. Secret YAML is
+// refused before anything is read.
+func (h *Handler) read(ctx context.Context, req protocol.Request) (any, error) {
+	if req.Op == protocol.OpYAML && !flux.YAMLAllowed(req.Target.Kind) {
+		return nil, errSecretYAML(req.Target.Kind)
+	}
+	rt, err := h.resolveRead(req.Target)
+	if err != nil {
+		return nil, err
+	}
+	cl, err := h.Impersonate(req.Identity)
+	if err != nil {
+		return nil, err
+	}
+	if req.Op == protocol.OpYAML {
+		return h.yaml(ctx, cl, rt)
+	}
+	return h.events(ctx, cl, rt)
+}
+
+func errSecretYAML(kind string) *protocol.Error {
+	return &protocol.Error{Code: 403, Message: fmt.Sprintf("agent: yaml is never available for %s objects", kind)}
 }
 
 func (h *Handler) now() time.Time {
@@ -294,13 +366,17 @@ func reconcileSource(obj *unstructured.Unstructured) *model.Ref {
 	return src
 }
 
-func (h *Handler) yaml(ctx context.Context, cl Clients, gvr schema.GroupVersionResource, t model.Ref) (any, error) {
-	if !flux.YAMLAllowed(t.Kind) {
-		return nil, &protocol.Error{Code: 403, Message: fmt.Sprintf("agent: yaml is not available for %s", t.Kind)}
+func (h *Handler) yaml(ctx context.Context, cl Clients, rt readTarget) (any, error) {
+	t := rt.ref
+	if rt.gvr.Group == flux.GroupCore && rt.gvr.Resource == "secrets" {
+		return nil, errSecretYAML(t.Kind)
 	}
-	obj, err := cl.Dynamic.Resource(gvr).Namespace(t.Namespace).Get(ctx, t.Name, metav1.GetOptions{})
+	obj, err := cl.Dynamic.Resource(rt.gvr).Namespace(t.Namespace).Get(ctx, t.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("agent: get %s: %w", t.ID(), err)
+	}
+	if !flux.YAMLAllowed(obj.GetKind()) {
+		return nil, errSecretYAML(obj.GetKind())
 	}
 	out, err := flux.SanitizeYAML(obj)
 	if err != nil {
@@ -312,19 +388,33 @@ func (h *Handler) yaml(ctx context.Context, cl Clients, gvr schema.GroupVersionR
 	return protocol.YAMLResult{YAML: string(out)}, nil
 }
 
-func (h *Handler) events(ctx context.Context, cl Clients, k flux.Kind, t model.Ref) (any, error) {
+// events lists the object's events. Events about cluster-scoped objects
+// are recorded in the default namespace. Events whose involved object is in
+// another API group (a Kind name two groups share) are dropped.
+func (h *Handler) events(ctx context.Context, cl Clients, rt readTarget) (any, error) {
+	t := rt.ref
 	sel := fields.Set{
 		"involvedObject.name":      t.Name,
 		"involvedObject.namespace": t.Namespace,
-		"involvedObject.kind":      k.Kind,
+		"involvedObject.kind":      t.Kind,
 	}.AsSelector().String()
-	list, err := cl.Kube.CoreV1().Events(t.Namespace).List(ctx, metav1.ListOptions{FieldSelector: sel})
+	ns := t.Namespace
+	if !rt.namespaced {
+		ns = metav1.NamespaceDefault
+	}
+	list, err := cl.Kube.CoreV1().Events(ns).List(ctx, metav1.ListOptions{FieldSelector: sel})
 	if err != nil {
 		return nil, fmt.Errorf("agent: list events of %s: %w", t.ID(), err)
 	}
 	out := make([]model.Event, 0, len(list.Items))
 	for i := range list.Items {
-		out = append(out, trimEvent(&list.Items[i]))
+		e := &list.Items[i]
+		if av := e.InvolvedObject.APIVersion; av != "" {
+			if gv, err := schema.ParseGroupVersion(av); err == nil && gv.Group != t.Group {
+				continue
+			}
+		}
+		out = append(out, trimEvent(e))
 	}
 	slices.SortStableFunc(out, func(a, b model.Event) int { return b.Last.Compare(a.Last) })
 	if len(out) > maxEvents {

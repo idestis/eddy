@@ -170,3 +170,25 @@ func TestLocalEnvEquivalents(t *testing.T) {
 		t.Fatalf("code %d: %s", code, stderr.String())
 	}
 }
+
+func TestLocalPresets(t *testing.T) {
+	for _, tt := range []struct {
+		env, want string
+		err       bool
+	}{
+		{"", "karpenter,externalSecrets", false},
+		{"none", "", false},
+		{"karpenter", "karpenter", false},
+		{"karpenter,datadog", "", true},
+	} {
+		got, err := localPresets(func(k string) string {
+			if k == envPresets {
+				return tt.env
+			}
+			return ""
+		})
+		if (err != nil) != tt.err || strings.Join(got, ",") != tt.want {
+			t.Errorf("%s=%q: %v %v", envPresets, tt.env, got, err)
+		}
+	}
+}

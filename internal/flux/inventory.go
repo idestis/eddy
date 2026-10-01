@@ -41,8 +41,6 @@ func ParseInventoryID(id string) (model.Ref, error) {
 var inventoryPlurals = map[[2]string]string{
 	{GroupCore, "ConfigMap"}:                                           "configmaps",
 	{GroupCore, "Secret"}:                                              "secrets",
-	{GroupCore, "ServiceAccount"}:                                      "serviceaccounts",
-	{GroupCore, "Namespace"}:                                           "namespaces",
 	{GroupCore, "Endpoints"}:                                           "endpoints",
 	{GroupCore, "ResourceQuota"}:                                       "resourcequotas",
 	{GroupCore, "LimitRange"}:                                          "limitranges",
@@ -54,11 +52,8 @@ var inventoryPlurals = map[[2]string]string{
 	{"rbac.authorization.k8s.io", "ClusterRoleBinding"}:                "clusterrolebindings",
 	{"apiextensions.k8s.io", "CustomResourceDefinition"}:               "customresourcedefinitions",
 	{"apiregistration.k8s.io", "APIService"}:                           "apiservices",
-	{GroupNetworking, "NetworkPolicy"}:                                 "networkpolicies",
 	{GroupNetworking, "IngressClass"}:                                  "ingressclasses",
-	{"policy", "PodDisruptionBudget"}:                                  "poddisruptionbudgets",
 	{"scheduling.k8s.io", "PriorityClass"}:                             "priorityclasses",
-	{"storage.k8s.io", "StorageClass"}:                                 "storageclasses",
 	{"admissionregistration.k8s.io", "MutatingWebhookConfiguration"}:   "mutatingwebhookconfigurations",
 	{"admissionregistration.k8s.io", "ValidatingWebhookConfiguration"}: "validatingwebhookconfigurations",
 	{"coordination.k8s.io", "Lease"}:                                   "leases",
@@ -143,6 +138,7 @@ func InventoryOnly(ks *unstructured.Unstructured, watched Watched) []model.Resou
 			Status:        model.StatusUnknown,
 			InventoryOnly: true,
 			Owner:         &o,
+			Project:       ProjectOf(ref.Group).ID,
 		})
 	}
 	return out

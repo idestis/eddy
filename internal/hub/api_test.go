@@ -286,8 +286,12 @@ func TestReadsAreFiltered(t *testing.T) {
 	if len(list.Items) != 1 || list.Items[0].Name != "apps" {
 		t.Fatalf("filtered list %+v", list.Items)
 	}
-	if st, _ := alice.errorCode("GET", "/api/v1/clusters/dev/resources?kind=Secret", nil); st != 400 {
-		t.Fatalf("unknown kind filter: %d", st)
+	if st, _ := alice.errorCode("GET", "/api/v1/clusters/dev/resources?kind=Se/cret", nil); st != 400 {
+		t.Fatalf("invalid kind filter: %d", st)
+	}
+	alice.do("GET", "/api/v1/clusters/dev/resources?kind=Secret", nil, &list, 200)
+	if len(list.Items) != 0 {
+		t.Fatalf("kind=Secret matches only inventory rows: %+v", list.Items)
 	}
 	bob.do("GET", "/api/v1/clusters/dev/resources", nil, &list, 200)
 	if len(list.Items) != 1 || list.Items[0].Name != "infra" {

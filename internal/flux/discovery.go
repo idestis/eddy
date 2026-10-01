@@ -43,6 +43,33 @@ func (s Served) Watches(group, kind string) bool {
 	return ok
 }
 
+// ForPresets returns a copy of s without the preset kinds whose preset is
+// not in presets, so the agent watches a preset kind only when the preset is
+// enabled and the cluster serves it.
+func (s Served) ForPresets(presets []string) Served {
+	out := Served{}
+	for name, v := range s {
+		k, ok := KindByName(name)
+		if !ok || (k.Preset != "" && !slices.Contains(presets, k.Preset)) {
+			continue
+		}
+		out[name] = v
+	}
+	return out
+}
+
+// SurfacedKinds lists the surfaced kinds of s as "<group>/<Kind>", in
+// table order (the Hello's Kinds).
+func (s Served) SurfacedKinds() []string {
+	var out []string
+	for _, k := range kinds {
+		if _, ok := s[k.Kind]; ok && k.Surfaced {
+			out = append(out, k.Group+"/"+k.Kind)
+		}
+	}
+	return out
+}
+
 // Discover picks, for every kind in the table, the most preferred version in
 // Kind.Versions that the cluster serves and that lists the kind's resource.
 func Discover(dc discovery.DiscoveryInterface) (Served, error) {

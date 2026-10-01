@@ -129,13 +129,16 @@ func containsStatus(s model.Status) bool {
 }
 
 // objectRef reads {kind}/{ns}/{name}; "_" is the namespace of cluster-scoped
-// objects. The group comes from the kind table (fleet canonicalises it).
+// objects. The optional ?group= picks the API group when a Kind name exists
+// in several groups ("core" is the core group); without it the group comes
+// from the kind table or the one inventory-only row that matches (fleet
+// canonicalises it).
 func objectRef(r *http.Request) model.Ref {
 	ns := r.PathValue("ns")
 	if ns == "_" {
 		ns = ""
 	}
-	return model.Ref{Kind: r.PathValue("kind"), Namespace: ns, Name: r.PathValue("name")}
+	return model.Ref{Group: truncate(r.URL.Query().Get("group"), 253), Kind: r.PathValue("kind"), Namespace: ns, Name: r.PathValue("name")}
 }
 
 func (a *api) handleObject(w http.ResponseWriter, r *http.Request) {
@@ -209,4 +212,14 @@ func (a *api) handleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (a *api) handleKinds(w http.ResponseWriter, r *http.Request) {
+	p, _ := identity.From(r.Context())
+	res, err := a.fleet.Kinds(r.Context(), p, r.PathValue("cluster"))
+	if err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }

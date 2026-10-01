@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/idestis/eddy/internal/flux"
 )
 
 // Agent is configured entirely from environment variables (set by the
@@ -23,11 +25,14 @@ type Agent struct {
 	// (EDDY_TOKEN_SECRET); TokenSecretKey is its key (EDDY_TOKEN_SECRET_KEY,
 	// default "token"). The agent reads it for a token it stored earlier
 	// and writes the token it receives at join time.
-	TokenSecret          string
-	TokenSecretKey       string
-	Namespace            string   // POD_NAMESPACE
-	CAFile               string   // EDDY_HUB_CA_FILE, optional
-	Namespaces           []string // EDDY_WATCH_NAMESPACES, comma-separated; empty = all
+	TokenSecret    string
+	TokenSecretKey string
+	Namespace      string   // POD_NAMESPACE
+	CAFile         string   // EDDY_HUB_CA_FILE, optional
+	Namespaces     []string // EDDY_WATCH_NAMESPACES, comma-separated; empty = all
+	// Presets are opt-in groups of kinds to watch (EDDY_WATCH_PRESETS,
+	// comma-separated): "karpenter" and "externalSecrets".
+	Presets              []string
 	AllowedGroupPrefixes []string // EDDY_ALLOWED_GROUP_PREFIXES, default "eddy:"
 	AllowedGroups        []string // EDDY_ALLOWED_GROUPS, optional exact allowlist
 	DenyUserPrefixes     []string // EDDY_DENY_USER_PREFIXES, default "system:,eks:,kubernetes-admin"
@@ -136,6 +141,11 @@ func LoadAgent() (*Agent, error) {
 	}
 	a.AllowInsecure, _ = strconv.ParseBool(os.Getenv("EDDY_ALLOW_INSECURE"))
 	var errs []error
+	presets, err := flux.ParsePresets(list("EDDY_WATCH_PRESETS"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("EDDY_WATCH_PRESETS: %w", err))
+	}
+	a.Presets = presets
 	positiveInt := func(k string, dst *int) {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 			n, err := strconv.Atoi(v)

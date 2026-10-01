@@ -36,7 +36,11 @@ var testServed = flux.Served{
 func listKinds() map[schema.GroupVersionResource]string {
 	m := map[schema.GroupVersionResource]string{}
 	for _, k := range flux.All() {
-		m[k.GVR(testServed[k.Kind])] = k.Kind + "List"
+		v := testServed[k.Kind]
+		if v == "" {
+			v = k.Versions[0]
+		}
+		m[k.GVR(v)] = k.Kind + "List"
 	}
 	return m
 }
@@ -203,8 +207,11 @@ func TestHandleRejections(t *testing.T) {
 	}{
 		{"system user", protocol.Request{Op: protocol.OpYAML, Identity: protocol.Identity{User: "system:admin"}, Target: ksRef}, 403},
 		{"bad group", protocol.Request{Op: protocol.OpYAML, Identity: protocol.Identity{User: "bob", Groups: []string{"admins"}}, Target: ksRef}, 403},
-		{"secret", request(protocol.OpYAML, model.Ref{Kind: "Secret", Namespace: "a", Name: "b"}, nil), 400},
-		{"wrong group", request(protocol.OpYAML, model.Ref{Group: "example.com", Kind: "Kustomization", Namespace: "a", Name: "b"}, nil), 400},
+		{"secret", request(protocol.OpYAML, model.Ref{Kind: "Secret", Namespace: "a", Name: "b"}, nil), 403},
+		{"secret in another group", request(protocol.OpYAML, model.Ref{Group: "example.com", Kind: "secret", Namespace: "a", Name: "b"}, nil), 403},
+		{"wrong group, no resolver", request(protocol.OpYAML, model.Ref{Group: "example.com", Kind: "Kustomization", Namespace: "a", Name: "b"}, nil), 404},
+		{"invalid kind", request(protocol.OpYAML, model.Ref{Kind: "Se/cret", Namespace: "a", Name: "b"}, nil), 400},
+		{"events of an unmapped kind", request(protocol.OpEvents, model.Ref{Group: "example.com", Kind: "Widget", Namespace: "a", Name: "b"}, nil), 404},
 		{"missing namespace", request(protocol.OpYAML, model.Ref{Group: flux.GroupKustomize, Kind: "Kustomization", Name: "b"}, nil), 400},
 		{"reconcile workload", request(protocol.OpReconcile, deploy, nil), 400},
 		{"suspend workload", request(protocol.OpSuspend, deploy, nil), 400},

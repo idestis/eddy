@@ -27,7 +27,10 @@
     "joinToken": {"type": "string", "pattern": "^(eddy_join_[0-9A-Za-z]{50})?$"},
     "watch": {
       "type": "object",
-      "properties": {"namespaces": {"type": "array", "items": {"type": "string"}}}
+      "properties": {
+        "namespaces": {"type": "array", "items": {"type": "string"}},
+        "presets": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["karpenter", "externalSecrets"]}}
+      }
     },
     "impersonation": {
       "type": "object",

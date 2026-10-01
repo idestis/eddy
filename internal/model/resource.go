@@ -109,14 +109,34 @@ type Resource struct {
 	// Owner (the Kustomization) and Status "unknown", and nothing else: the
 	// agent never reads the object itself.
 	InventoryOnly bool `json:"inventoryOnly,omitempty"`
-	// Labels holds a small allowlisted subset of labels (app.kubernetes.io/*, Flux ownership).
+	// Labels holds a small allowlisted subset of labels (app.kubernetes.io/*,
+	// Flux ownership, and a few per kind such as Karpenter's instance and
+	// capacity type on NodeClaims or Pod Security levels on Namespaces).
 	Labels map[string]string `json:"labels,omitempty"`
+	// Project groups the kind for navigation: "kubernetes", "flux",
+	// "karpenter", "external-secrets", or the API group itself for any
+	// other group (flux.ProjectOf). The hub sets it on every row, inventory
+	// rows included.
+	Project string `json:"project,omitempty"`
+	// Details are kind-specific facts in display order, e.g. a StorageClass
+	// provisioner or an ExternalSecret's target Secret name. At most
+	// MaxDetails, each value one line.
+	Details []Detail `json:"details,omitempty"`
 
 	CreatedAt   time.Time `json:"createdAt,omitzero"`
 	LastChanged time.Time `json:"lastChanged,omitzero"`
 	// ResourceVersion is the Kubernetes resourceVersion, used to order deltas.
 	ResourceVersion string `json:"resourceVersion"`
 }
+
+// Detail is one labelled fact in Resource.Details.
+type Detail struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+// MaxDetails caps Resource.Details.
+const MaxDetails = 12
 
 // Finding is something the agent noticed about a cluster that is not the
 // status of one resource, such as finished Jobs piling up in a namespace.
@@ -231,6 +251,9 @@ type ClusterInfo struct {
 	Mode     string `json:"mode,omitempty"`
 	ReadOnly bool   `json:"readOnly,omitempty"`
 	Context  string `json:"context,omitempty"`
+	// Presets are the watch presets the connected agent enables (for
+	// example "karpenter", "externalSecrets").
+	Presets []string `json:"presets,omitempty"`
 	// Counts are filtered to what the viewer may list.
 	Counts map[Status]int `json:"counts,omitempty"`
 	// Findings are filtered the same way: a job-buildup finding is shown to

@@ -46,6 +46,9 @@ type Cache struct {
 
 	// served decides which inventory entries are watched kinds.
 	served flux.Served
+	// namespaces, when set, limits the Namespace objects surfaced to the
+	// watched namespaces (EDDY_WATCH_NAMESPACES).
+	namespaces map[string]bool
 	// invByOwner maps a Kustomization id to the inventory-only rows it
 	// contributed; invOwner is the reverse. A row listed by two
 	// Kustomizations belongs to the first one.
@@ -89,31 +92,58 @@ func NewCache(dyn dynamic.Interface, served flux.Served, namespaces []string, lo
 		findings:  map[string]model.Finding{},
 		podSubs:   map[*podSub]struct{}{},
 	}
-	if len(namespaces) == 0 {
+	// Namespaced kinds are watched in each namespace; cluster-scoped kinds
+	// once, cluster-wide. With a namespace list, Namespaces outside it are
+	// not surfaced.
+	scoped := len(namespaces) > 0
+	if !scoped {
 		namespaces = []string{metav1.NamespaceAll}
+	} else {
+		c.namespaces = map[string]bool{}
+		for _, ns := range namespaces {
+			c.namespaces[ns] = true
+		}
 	}
-	for _, ns := range namespaces {
-		f := dynamicinformer.NewFilteredDynamicSharedInformerFactory(dyn, 0, ns, nil)
-		c.factories = append(c.factories, f)
+	watch := func(f dynamicinformer.DynamicSharedInformerFactory, clusterScoped bool) error {
 		for _, k := range flux.All() {
 			version, ok := served[k.Kind]
-			if !ok {
+			if !ok || k.Namespaced == clusterScoped {
 				continue
 			}
 			inf := f.ForResource(k.GVR(version)).Informer()
 			if err := inf.SetTransform(trimTransform(k)); err != nil {
-				return nil, fmt.Errorf("agent: transform %s: %w", k.Kind, err)
+				return fmt.Errorf("agent: transform %s: %w", k.Kind, err)
 			}
 			if k.Kind == flux.KindPod {
 				if err := inf.AddIndexers(cache.Indexers{podControllerIndex: podControllerKey, podOwnerIndex: podOwnerKeys}); err != nil {
-					return nil, fmt.Errorf("agent: index pods: %w", err)
+					return fmt.Errorf("agent: index pods: %w", err)
 				}
 				c.pods = append(c.pods, inf)
 			}
 			if _, err := inf.AddEventHandler(c.handler(k)); err != nil {
-				return nil, fmt.Errorf("agent: watch %s: %w", k.Kind, err)
+				return fmt.Errorf("agent: watch %s: %w", k.Kind, err)
 			}
 			c.synced = append(c.synced, inf.HasSynced)
+		}
+		return nil
+	}
+	for i, ns := range namespaces {
+		f := dynamicinformer.NewFilteredDynamicSharedInformerFactory(dyn, 0, ns, nil)
+		c.factories = append(c.factories, f)
+		if err := watch(f, false); err != nil {
+			return nil, err
+		}
+		if i == 0 && !scoped {
+			if err := watch(f, true); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if scoped {
+		f := dynamicinformer.NewFilteredDynamicSharedInformerFactory(dyn, 0, metav1.NamespaceAll, nil)
+		c.factories = append(c.factories, f)
+		if err := watch(f, true); err != nil {
+			return nil, err
 		}
 	}
 	return c, nil
@@ -232,6 +262,9 @@ func (c *Cache) handler(k flux.Kind) cache.ResourceEventHandlerFuncs {
 		defer c.mu.Unlock()
 		if k.Kind == flux.KindReplicaSet {
 			c.setReplicaSetOwnerLocked(u.GetNamespace()+"/"+u.GetName(), controllerOf(u))
+			return
+		}
+		if k.Group == flux.GroupCore && k.Kind == flux.KindNamespace && c.namespaces != nil && !c.namespaces[u.GetName()] {
 			return
 		}
 		r := flux.Summarize(k, u, c.lookupLocked)

@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/idestis/eddy/internal/auth"
+	"github.com/idestis/eddy/internal/flux"
 	"github.com/idestis/eddy/internal/protocol"
 	"github.com/idestis/eddy/internal/store"
 )
@@ -695,6 +696,8 @@ func validateHello(h *protocol.Hello, cluster string) error {
 	if len(h.Namespaces) > 1000 {
 		h.Namespaces = h.Namespaces[:1000]
 	}
+	h.Presets = knownPresets(h.Presets)
+	h.Kinds = knownKinds(h.Kinds)
 	if d := h.Diagnostics; d != nil {
 		if len(d.ServedKinds) > 64 {
 			d.ServedKinds = d.ServedKinds[:64]
@@ -706,6 +709,32 @@ func validateHello(h *protocol.Hello, cluster string) error {
 		d.CredentialsError = cleanText(d.CredentialsError, 256)
 	}
 	return nil
+}
+
+// knownPresets keeps the supported preset names of a Hello.
+func knownPresets(in []string) []string {
+	out, _ := flux.ParsePresets(slices.DeleteFunc(slices.Clone(in), func(p string) bool {
+		return !slices.Contains(flux.Presets(), p)
+	}))
+	return out
+}
+
+// knownKinds keeps the "<group>/<Kind>" entries of a Hello that name
+// surfaced kinds of the table, without duplicates.
+func knownKinds(in []string) []string {
+	var out []string
+	for _, s := range in {
+		group, kind, ok := strings.Cut(s, "/")
+		if !ok {
+			continue
+		}
+		k, known := flux.KindByName(kind)
+		if !known || !k.Surfaced || !k.Matches(group, kind) || slices.Contains(out, s) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // cleanText drops control characters and invalid UTF-8 and truncates.

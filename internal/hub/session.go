@@ -311,12 +311,33 @@ func sanitizeResource(r model.Resource) (model.Resource, bool) {
 		return sanitizeInventoryRow(r)
 	}
 	k, ok := flux.KindByName(r.Kind)
-	if !ok || !k.Surfaced || r.Group != k.Group || r.Name == "" || (k.Namespaced && r.Namespace == "") {
+	if !ok || !k.Surfaced || r.Group != k.Group || r.Name == "" || (k.Namespaced && r.Namespace == "") || (!k.Namespaced && r.Namespace != "") {
 		return model.Resource{}, false
 	}
 	r.Kind = k.Kind
 	r.ID = r.Ref.ID()
+	r.Project = flux.ProjectOf(k.Group).ID
+	r.Details = sanitizeDetails(r.Details)
 	return r, true
+}
+
+// sanitizeDetails caps the number and size of Resource.Details.
+func sanitizeDetails(in []model.Detail) []model.Detail {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]model.Detail, 0, min(len(in), model.MaxDetails))
+	for _, d := range in {
+		if len(out) == model.MaxDetails {
+			break
+		}
+		d.Label, d.Value = cleanText(d.Label, 64), cleanText(d.Value, 256)
+		if d.Label == "" || d.Value == "" {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 func sanitizeInventoryRow(r model.Resource) (model.Resource, bool) {
@@ -333,6 +354,7 @@ func sanitizeInventoryRow(r model.Resource) (model.Resource, bool) {
 		Status:          model.StatusUnknown,
 		InventoryOnly:   true,
 		Owner:           &owner,
+		Project:         flux.ProjectOf(r.Group).ID,
 		ResourceVersion: truncate(r.ResourceVersion, 64),
 	}
 	return out, true

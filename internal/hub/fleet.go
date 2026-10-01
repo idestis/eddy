@@ -91,6 +91,7 @@ func (f *fleetService) session(cluster string) (ClusterSpec, clusterSession, err
 // canonicalRef resolves ref.Kind through the kind table and fills in the
 // API group, so callers may pass "kustomization" and no group.
 func canonicalRef(ref model.Ref) (model.Ref, flux.Kind, error) {
+	ref, _ = requestedGroup(ref)
 	k, ok := flux.KindByName(ref.Kind)
 	if !ok {
 		return model.Ref{}, flux.Kind{}, fmt.Errorf("%w: unknown kind %q", fleet.ErrNotFound, truncate(ref.Kind, 64))
@@ -103,6 +104,98 @@ func canonicalRef(ref model.Ref) (model.Ref, flux.Kind, error) {
 	}
 	ref.Kind, ref.Group = k.Kind, k.Group
 	return ref, k, nil
+}
+
+// coreGroupAlias names the core API group ("") where an empty group means
+// "any group": the ?group= query parameter and refs passed to the fleet
+// service.
+const coreGroupAlias = "core"
+
+// requestedGroup resolves the core alias and reports whether ref names a
+// group at all.
+func requestedGroup(ref model.Ref) (model.Ref, bool) {
+	switch ref.Group {
+	case "":
+		return ref, false
+	case coreGroupAlias:
+		ref.Group = ""
+	}
+	return ref, true
+}
+
+// locate resolves ref for Get, yaml and events and checks that p may see
+// the object, answering ErrNotFound (never ErrForbidden) otherwise:
+//   - a kind from the table, in its own group or with no group given: the
+//     row of the view if there is one (nil otherwise). An inventory-only row
+//     follows the inventory visibility rule; anything else needs list on
+//     the kind in the namespace or get on the object.
+//   - any other (group, kind): only an inventory-only row of the view. With
+//     no group, the Kind (ignoring case), namespace and name must match
+//     rows of one API group among those p may see, else 400.
+//
+// The returned ref is canonical and carries the API group.
+func (f *fleetService) locate(ctx context.Context, p identity.Principal, cluster string, ref model.Ref) (model.Ref, clusterSession, *model.Resource, error) {
+	ref, groupSet := requestedGroup(ref)
+	if k, ok := flux.KindByName(ref.Kind); ok && (!groupSet || ref.Group == k.Group) {
+		ref, _, err := canonicalRef(model.Ref{Kind: k.Kind, Namespace: ref.Namespace, Name: ref.Name})
+		if err != nil {
+			return model.Ref{}, nil, nil, err
+		}
+		_, s, err := f.session(cluster)
+		if err != nil {
+			return model.Ref{}, nil, nil, err
+		}
+		r, found := s.lookup(ref.ID())
+		if found && r.InventoryOnly {
+			if _, err := f.visibleInventoryRow(ctx, p, cluster, r); err != nil {
+				return model.Ref{}, nil, nil, err
+			}
+			return ref, s, &r, nil
+		}
+		if err := f.requireVisible(ctx, p, cluster, ref); err != nil {
+			return model.Ref{}, nil, nil, err
+		}
+		if !found {
+			return ref, s, nil, nil
+		}
+		return ref, s, &r, nil
+	}
+	notFound := fmt.Errorf("%w: unknown kind %q", fleet.ErrNotFound, truncate(ref.Kind, 64))
+	if ref.Name == "" || ref.Kind == "" || !flux.ValidKindName(strings.ToUpper(ref.Kind[:1])+ref.Kind[1:]) {
+		return model.Ref{}, nil, nil, notFound
+	}
+	_, s, err := f.session(cluster)
+	if err != nil {
+		return model.Ref{}, nil, nil, err
+	}
+	all, _ := s.view()
+	var cand []model.Resource
+	for _, r := range all {
+		if r.InventoryOnly && strings.EqualFold(r.Kind, ref.Kind) && r.Namespace == ref.Namespace && r.Name == ref.Name &&
+			(!groupSet || r.Group == ref.Group) {
+			cand = append(cand, r)
+		}
+	}
+	if len(cand) == 0 {
+		return model.Ref{}, nil, nil, notFound
+	}
+	vis, err := f.authz.filter(ctx, p, cluster, cand)
+	if err != nil {
+		return model.Ref{}, nil, nil, err
+	}
+	switch {
+	case len(vis) == 0:
+		return model.Ref{}, nil, nil, fmt.Errorf("%w: %s", fleet.ErrNotFound, cand[0].ID)
+	case len(vis) > 1:
+		sortResources(vis)
+		for _, r := range vis[1:] {
+			if r.Group != vis[0].Group {
+				return model.Ref{}, nil, nil, badRequest("%s is served by several API groups (%q, %q): pass ?group=", vis[0].Kind, vis[0].Group, r.Group)
+			}
+		}
+	}
+	r := vis[0]
+	return r.Ref, s, &r, nil
 }
 
 // sendAccess is the authorizer's transport: an OpAccess request.
@@ -178,6 +271,7 @@ func (f *fleetService) Clusters(ctx context.Context, p identity.Principal) ([]mo
 		ci.LastSeen = s.lastSeenAt()
 		ci.AgentVersion, ci.KubernetesVersion, ci.FluxVersion = h.AgentVersion, h.KubernetesVersion, h.FluxVersion
 		ci.Mode, ci.ReadOnly, ci.Context = h.Mode, h.ReadOnly, h.Context
+		ci.Presets = slices.Clone(h.Presets)
 		wg.Go(func() {
 			counts, err := f.counts(ctx, p, s)
 			if err != nil {
@@ -243,11 +337,19 @@ func canonicalKinds(kinds []string) ([]string, error) {
 		if k = strings.TrimSpace(k); k == "" {
 			continue
 		}
-		kd, ok := flux.KindByName(k)
-		if !ok {
+		if kd, ok := flux.KindByName(k); ok {
+			out = append(out, kd.Kind)
+			continue
+		}
+		// Kinds outside the table match inventory-only rows.
+		if name, ok := flux.InventoryKind(k); ok {
+			out = append(out, name)
+			continue
+		}
+		if !flux.ValidKindName(k) {
 			return nil, badRequest("unknown kind %q", truncate(k, 64))
 		}
-		out = append(out, kd.Kind)
+		out = append(out, k)
 	}
 	return out, nil
 }
@@ -295,59 +397,20 @@ func (f *fleetService) list(ctx context.Context, p identity.Principal, cluster s
 	return visible, rv, nil
 }
 
-// Get returns one resource from the cluster's view.
+// Get returns one resource from the cluster's view: a watched summary or
+// an inventory-only row (see locate).
 func (f *fleetService) Get(ctx context.Context, p identity.Principal, cluster string, ref model.Ref) (model.Resource, error) {
 	if err := f.validPrincipal(p); err != nil {
 		return model.Resource{}, err
 	}
-	if _, known := flux.KindByName(ref.Kind); !known {
-		return f.getInventoryRow(ctx, p, cluster, ref)
-	}
-	ref, _, err := canonicalRef(ref)
+	ref, _, row, err := f.locate(ctx, p, cluster, ref)
 	if err != nil {
 		return model.Resource{}, err
 	}
-	_, s, err := f.session(cluster)
-	if err != nil {
-		return model.Resource{}, err
-	}
-	r, ok := s.lookup(ref.ID())
-	if !ok {
+	if row == nil {
 		return model.Resource{}, fmt.Errorf("%w: %s", fleet.ErrNotFound, ref.ID())
 	}
-	if r.InventoryOnly {
-		return f.visibleInventoryRow(ctx, p, cluster, r)
-	}
-	if err := f.requireVisible(ctx, p, cluster, ref); err != nil {
-		return model.Resource{}, err
-	}
-	return r, nil
-}
-
-// getInventoryRow finds the inventory-only row of a kind outside the kind
-// table (exact Kind spelling; any group unless ref.Group is set).
-func (f *fleetService) getInventoryRow(ctx context.Context, p identity.Principal, cluster string, ref model.Ref) (model.Resource, error) {
-	notFound := fmt.Errorf("%w: unknown kind %q", fleet.ErrNotFound, truncate(ref.Kind, 64))
-	if ref.Name == "" || !flux.ValidKindName(ref.Kind) {
-		return model.Resource{}, notFound
-	}
-	_, s, err := f.session(cluster)
-	if err != nil {
-		return model.Resource{}, err
-	}
-	if ref.Group != "" {
-		if r, ok := s.lookup(ref.ID()); ok && r.InventoryOnly {
-			return f.visibleInventoryRow(ctx, p, cluster, r)
-		}
-		return model.Resource{}, notFound
-	}
-	all, _ := s.view()
-	for _, r := range all {
-		if r.InventoryOnly && r.Kind == ref.Kind && r.Namespace == ref.Namespace && r.Name == ref.Name {
-			return f.visibleInventoryRow(ctx, p, cluster, r)
-		}
-	}
-	return model.Resource{}, notFound
+	return *row, nil
 }
 
 // visibleInventoryRow returns r when p may see it (the list rule), and
@@ -361,11 +424,6 @@ func (f *fleetService) visibleInventoryRow(ctx context.Context, p identity.Princ
 		return model.Resource{}, fmt.Errorf("%w: %s", fleet.ErrNotFound, r.ID)
 	}
 	return r, nil
-}
-
-// errInventoryOnly refuses yaml and events for objects Eddy knows only by name.
-func errInventoryOnly(kind string) error {
-	return fmt.Errorf("%w: Eddy does not read %s objects; it knows only their names from a Flux inventory", fleet.ErrForbidden, truncate(kind, 64))
 }
 
 // Children returns the visible resources whose Owner is ref (inventory,
@@ -397,43 +455,31 @@ func (f *fleetService) Children(ctx context.Context, p identity.Principal, clust
 	return kids, nil
 }
 
-// read sends an impersonated read of a visible object.
+// read sends an impersonated read of a visible object: a watched kind or
+// any object named in a Kustomization inventory (locate). The agent reads
+// it as p, so the cluster's RBAC decides.
 func (f *fleetService) read(ctx context.Context, p identity.Principal, cluster string, ref model.Ref, op protocol.Op) (json.RawMessage, error) {
 	if err := f.validPrincipal(p); err != nil {
 		return nil, err
 	}
-	if _, known := flux.KindByName(ref.Kind); !known && flux.ValidKindName(ref.Kind) {
-		// Kinds outside the table are never read; they appear only as
-		// inventory-only rows. The answer does not depend on existence.
-		return nil, errInventoryOnly(ref.Kind)
-	}
-	ref, _, err := canonicalRef(ref)
+	ref, s, _, err := f.locate(ctx, p, cluster, ref)
 	if err != nil {
-		return nil, err
-	}
-	_, s, err := f.session(cluster)
-	if err != nil {
-		return nil, err
-	}
-	if r, ok := s.lookup(ref.ID()); ok && r.InventoryOnly {
-		if _, err := f.visibleInventoryRow(ctx, p, cluster, r); err != nil {
-			return nil, err
-		}
-		return nil, errInventoryOnly(ref.Kind)
-	}
-	if err := f.requireVisible(ctx, p, cluster, ref); err != nil {
 		return nil, err
 	}
 	return s.do(ctx, protocol.Request{Op: op, Identity: protoIdentity(p), Target: ref})
 }
 
-// YAML returns the sanitised, redacted manifest of an allowlisted kind.
+// errSecretYAML refuses Secret YAML whether or not the object exists.
+func errSecretYAML() error {
+	return fmt.Errorf("%w: Eddy never shows the YAML of Secrets", fleet.ErrForbidden)
+}
+
+// YAML returns the sanitised, redacted manifest of ref. Secrets are always
+// refused; every other kind the agent sanitises (ConfigMaps lose data and
+// binaryData, env values are redacted) and the hub redacts again.
 func (f *fleetService) YAML(ctx context.Context, p identity.Principal, cluster string, ref model.Ref) (string, error) {
 	if !flux.YAMLAllowed(ref.Kind) {
-		if flux.ValidKindName(ref.Kind) {
-			return "", errInventoryOnly(ref.Kind)
-		}
-		return "", fmt.Errorf("%w: yaml is not available for kind %q", fleet.ErrNotFound, truncate(ref.Kind, 64))
+		return "", errSecretYAML()
 	}
 	raw, err := f.read(ctx, p, cluster, ref, protocol.OpYAML)
 	if err != nil {

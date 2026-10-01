@@ -137,8 +137,9 @@ func TestInventoryRowsAPI(t *testing.T) {
 		t.Fatalf("bob reads alice's inventory row: %d", st)
 	}
 	for _, sub := range []string{"yaml", "events"} {
-		if st, code := alice.errorCode("GET", "/api/v1/clusters/dev/objects/ConfigMap/team-a/cfg/"+sub, nil); st != 403 || code != "forbidden" {
-			t.Fatalf("%s of an inventory-only row: %d %s", sub, st, code)
+		alice.do("GET", "/api/v1/clusters/dev/objects/ConfigMap/team-a/cfg/"+sub, nil, nil, 200)
+		if st, _ := bob.errorCode("GET", "/api/v1/clusters/dev/objects/ConfigMap/team-a/cfg/"+sub, nil); st != 404 {
+			t.Fatalf("bob reads %s of alice's inventory row: %d", sub, st)
 		}
 	}
 	var clusters struct{ Items []model.ClusterInfo }

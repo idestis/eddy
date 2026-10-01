@@ -1,7 +1,8 @@
 {{- if .Values.rbac.create }}
 # Read-only cache access plus the two things Eddy needs to act as the signed-in user:
 # SubjectAccessReviews and impersonation. No write verbs on any resource, and no access to
-# Secrets or ConfigMaps. Adding a Flux kind means extending the first rule.
+# Secrets or ConfigMaps. Adding a kind means extending the read rules below (preset kinds go in
+# the watch.presets blocks).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -22,7 +23,7 @@ rules:
     resources: [deployments, statefulsets, daemonsets, replicasets]
     verbs: [get, list, watch]
   - apiGroups: [""]
-    resources: [pods, events, namespaces, services, persistentvolumeclaims]
+    resources: [pods, events, namespaces, services, persistentvolumeclaims, serviceaccounts]
     verbs: [get, list, watch]
   - apiGroups: [batch]
     resources: [jobs, cronjobs]
@@ -31,8 +32,29 @@ rules:
     resources: [horizontalpodautoscalers]
     verbs: [get, list, watch]
   - apiGroups: [networking.k8s.io]
-    resources: [ingresses]
+    resources: [ingresses, networkpolicies]
     verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+  {{- if has "karpenter" .Values.watch.presets }}
+  # watch.presets: karpenter
+  - apiGroups: [karpenter.sh]
+    resources: [nodepools, nodeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [karpenter.k8s.aws]
+    resources: [ec2nodeclasses]
+    verbs: [get, list, watch]
+  {{- end }}
+  {{- if has "externalSecrets" .Values.watch.presets }}
+  # watch.presets: externalSecrets. The agent never reads the Secrets these produce.
+  - apiGroups: [external-secrets.io]
+    resources: [externalsecrets, clusterexternalsecrets, secretstores, clustersecretstores, pushsecrets]
+    verbs: [get, list, watch]
+  {{- end }}
   - apiGroups: [authorization.k8s.io]
     resources: [subjectaccessreviews]
     verbs: [create]
