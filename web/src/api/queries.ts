@@ -11,7 +11,7 @@ import {
 import { useCallback, useMemo } from "react";
 import { isApiError, setCsrfToken } from "./client";
 import * as api from "./endpoints";
-import type { ClusterInfo, ConnectionInfo, Ref, Resource, ResourceSnapshot } from "./types";
+import type { ClusterInfo, ConnectionInfo, KindsResponse, Ref, Resource, ResourceSnapshot } from "./types";
 
 export const keys = {
   me: ["me"] as const,
@@ -25,6 +25,8 @@ export const keys = {
   // Under the cluster's resources key, so a `resync` refetches it too.
   hiddenJobs: (cluster: string, namespace: string | undefined) =>
     ["resources", cluster, "hiddenJobs", namespace ?? ""] as const,
+  // Under the cluster's resources key, so a `resync` refetches it too.
+  kinds: (cluster: string) => ["resources", cluster, "kinds"] as const,
   yaml: (cluster: string, id: string) => ["yaml", cluster, id] as const,
   events: (cluster: string, id: string) => ["events", cluster, id] as const,
   threadsAll: ["threads"] as const,
@@ -91,6 +93,28 @@ export const resourcesQuery = (cluster: string) =>
     queryFn: ({ signal }) => api.getResources(cluster, signal),
     // Kept fresh by `change` and `resync` SSE events.
     staleTime: Number.POSITIVE_INFINITY,
+  });
+
+/**
+ * The cluster's kinds for navigation. Resolves to `null` when the hub does not serve the
+ * endpoint (an older hub) or answers something else, so the sidebar falls back to its
+ * static tree.
+ */
+export const kindsQuery = (cluster: string) =>
+  queryOptions({
+    queryKey: keys.kinds(cluster),
+    queryFn: async ({ signal }): Promise<KindsResponse | null> => {
+      try {
+        const res = await api.getKinds(cluster, signal);
+        return Array.isArray(res?.items) ? res : null;
+      } catch (err) {
+        if (isApiError(err, "disconnected") || isApiError(err, "network")) throw err;
+        return null;
+      }
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    retry: 1,
   });
 
 /**

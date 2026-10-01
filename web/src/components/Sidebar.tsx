@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { logout } from "../api/endpoints";
 import { resourcesQuery, useMe } from "../api/queries";
 import { type StreamState, useStreamState } from "../api/stream";
-import type { ClusterInfo, Resource } from "../api/types";
+import type { ClusterInfo } from "../api/types";
 import { useAppState } from "../lib/appState";
-import { matchesKindFilter, NAV_TREE, type NavNode, navPath } from "../lib/kinds";
+import { isRegistered, type NavNode, navCounts, navPath } from "../lib/kinds";
 import { needsAttention, type StatusFilter } from "../lib/resourceRows";
 import { toggleTheme } from "../lib/theme";
+import { useNav } from "../lib/useNav";
 import { getViewPrefs, setViewPrefs } from "../lib/viewPrefs";
 import { ClusterSwitch } from "./ClusterSwitch";
 import { Icon, type IconName } from "./Icon";
@@ -91,7 +92,8 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
   const onList = useLocation({ select: (l) => l.pathname === `/c/${encodeURIComponent(cluster.name)}` });
   const items = data?.items;
   const params = { cluster: cluster.name };
-  const activePath = useMemo(() => (onList ? navPath(search.kind) : []), [onList, search.kind]);
+  const nodes = useNav(cluster.name, cluster.connected);
+  const activePath = useMemo(() => (onList ? navPath(search.kind, nodes) : []), [onList, search.kind, nodes]);
   // Collapsed state the user chose; a group is open by default while it holds the active page.
   // Saved with the view preferences, so it follows the user; the old key seeds it once.
   const [open, setOpen] = useState<Record<string, boolean>>(() => getViewPrefs().nav ?? loadOpen());
@@ -99,17 +101,7 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
     setViewPrefs({ nav: open });
   }, [open]);
 
-  const counts = useMemo(() => {
-    const byId = new Map<string, number>();
-    const walk = (nodes: readonly NavNode[]) => {
-      for (const n of nodes) {
-        byId.set(n.id, (items ?? []).filter((r: Resource) => matchesKindFilter(r.kind, n.id)).length);
-        if (n.children) walk(n.children);
-      }
-    };
-    walk(NAV_TREE);
-    return byId;
-  }, [items]);
+  const counts = useMemo(() => navCounts(nodes, items ?? []), [nodes, items]);
   const attention = useMemo(() => (items ?? []).filter(needsAttention).length, [items]);
 
   const link = (
@@ -120,6 +112,7 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
     n: number | undefined,
     bad = false,
     props?: NavLinkProps,
+    node?: NavNode,
   ) => {
     const active = onList && search.kind === s.kind && search.status === s.status;
     return (
@@ -132,10 +125,19 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
         activeOptions={{ exact: true }}
         aria-current={active ? "page" : undefined}
         className={NAV_LINK}
+        title={node?.hint}
         {...props}
       >
         <Icon name={icon} />
-        <span className="truncate">{label}</span>
+        <span className={`truncate ${node?.inventory ? "text-ink-3" : ""}`}>{label}</span>
+        {node?.inventory && isRegistered(node.kinds[0] ?? "") && (
+          <span
+            className="rounded border border-dashed border-line-strong px-1 text-10 leading-4 text-ink-3"
+            title="Eddy does not watch this kind; these are inventory-only rows"
+          >
+            inventory
+          </span>
+        )}
         <Count n={items ? n : undefined} bad={bad} />
       </Link>
     );
@@ -148,12 +150,12 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
       {link("attention", "Needs attention", "alert", { status: "attention" }, attention, true)}
       <div className="mt-1">
         <NavTree
-          nodes={NAV_TREE}
+          nodes={nodes}
           isOpen={(n) => open[n.id] ?? activePath.includes(n.id)}
           setOpen={(id, on) => setOpen((o) => ({ ...o, [id]: on }))}
-          skip={(n) => n.id === "other" && (counts.get(n.id) ?? 0) === 0}
+          skip={(n) => !n.keep && items !== undefined && (counts.get(n.id) ?? 0) === 0}
           renderLink={(n, props) =>
-            link(n.id, n.label, n.icon, { kind: n.id }, counts.get(n.id) ?? 0, false, props)
+            link(n.id, n.label, n.icon, { kind: n.id }, counts.get(n.id) ?? 0, false, props, n)
           }
         />
       </div>

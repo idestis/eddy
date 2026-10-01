@@ -1,6 +1,7 @@
 // Typed link targets shared by the list, palette, fleet and threads views.
 
 import type { Ref } from "../api/types";
+import { isRegistered } from "./kinds";
 
 export type DetailView = "overview" | "yaml" | "events" | "logs" | "threads";
 
@@ -10,11 +11,22 @@ export const DETAIL_VIEWS: readonly DetailView[] = ["overview", "yaml", "events"
 export const nsParam = (namespace: string): string => namespace || "_";
 export const nsFromParam = (ns: string): string => (ns === "_" ? "" : ns);
 
-export function detailLink(cluster: string, r: Pick<Ref, "kind" | "namespace" | "name">, view?: DetailView) {
+/**
+ * The detail page of an object. A kind outside the registry (inventory-only) carries its API
+ * group in `?group=` (`core` for the core group), because two groups may share a Kind.
+ */
+export function detailLink(
+  cluster: string,
+  r: Pick<Ref, "kind" | "namespace" | "name"> & { group?: string },
+  view?: DetailView,
+) {
+  const search: { view?: DetailView; group?: string } = {};
+  if (view && view !== "overview") search.view = view;
+  if (r.group !== undefined && !isRegistered(r.kind)) search.group = r.group || "core";
   return {
     to: "/c/$cluster/r/$kind/$ns/$name",
     params: { cluster, kind: r.kind, ns: nsParam(r.namespace), name: r.name },
-    search: view && view !== "overview" ? { view } : {},
+    search,
   } as const;
 }
 

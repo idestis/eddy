@@ -24,6 +24,7 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
   - `unavailable` 503: the agent timed out or is busy. It is also returned when PostgreSQL is unreachable, for sign-in, rate-limited writes, Ask AI, and session checks after the 30 s session cache expires. Reads of cluster data keep working.
   - `disabled` 503
   - `internal` 500
+- **`?group=`:** object, YAML and events requests always send the API group (`core` for the core group), because a kind name can exist in several groups. UI detail URLs carry it only for kinds outside the registry.
 - **Resource path:** `{kind}/{ns}/{name}` uses the Flux or workload Kind (for example
   `Kustomization`). Cluster-scoped objects use `_` as the namespace. The API group is
   inferred from the kind table in `internal/flux/kinds.go`.

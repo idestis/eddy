@@ -25,11 +25,12 @@ import { useAppState } from "../../../../lib/appState";
 import { hiddenJobCount, warningFindings } from "../../../../lib/findings";
 import { STATUS_LABEL, thousands } from "../../../../lib/format";
 import { useKeys } from "../../../../lib/keys";
-import { filterLabel, NAV_TREE, navNode } from "../../../../lib/kinds";
+import { filterLabel, type NavNode, navNode } from "../../../../lib/kinds";
 import { type DetailView, detailLink } from "../../../../lib/links";
 import { recallList, rememberList } from "../../../../lib/listMemory";
 import { useClusterMotion, useRequested, withLeaving } from "../../../../lib/liveMotion";
 import { buildRows, filterResources, type StatusFilter, statusCounts } from "../../../../lib/resourceRows";
+import { useNav } from "../../../../lib/useNav";
 import { useResourceActions } from "../../../../lib/useResourceActions";
 import { resolvePref, setViewPrefs, useViewPrefs } from "../../../../lib/viewPrefs";
 import { WORKLOAD_LOG_KINDS } from "../../../../lib/workloadLogs";
@@ -50,8 +51,13 @@ export const Route = createFileRoute("/_app/c/$cluster/")({
   component: ClusterPage,
 });
 
-function listLabel(kind?: string, status?: StatusFilter, namespace?: string): string {
-  const k = filterLabel(kind);
+function listLabel(
+  nodes: readonly NavNode[],
+  kind?: string,
+  status?: StatusFilter,
+  namespace?: string,
+): string {
+  const k = filterLabel(kind, nodes);
   const where = namespace ? ` in ${namespace}` : "";
   if (status === "attention") return kind ? `${k} needing attention${where}` : `Needs attention${where}`;
   if (status) return `${STATUS_LABEL[status]} ${k.toLowerCase()}${where}`;
@@ -103,6 +109,7 @@ function ClusterPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const cluster = useCluster(name);
+  const nav = useNav(name, cluster?.connected);
   const { data: me } = useMe();
   const toast = useToast();
   const { setSelection, ask, pane, setPane } = useAppState();
@@ -202,8 +209,8 @@ function ClusterPage() {
 
   // [ and ] step through the sibling pages of the current nav entry (Deployments → StatefulSets…).
   const cycleSection = (delta: number) => {
-    const at = navNode(search.kind);
-    const siblings = at ? at.siblings : NAV_TREE;
+    const at = navNode(search.kind, nav);
+    const siblings = at ? at.siblings : nav;
     const i = at ? siblings.indexOf(at.node) : -1;
     const next = siblings[(i + delta + siblings.length) % siblings.length];
     if (next) void navigate({ search: (prev) => ({ ...prev, kind: next.id }), replace: true });
@@ -258,7 +265,7 @@ function ClusterPage() {
   if (!cluster) return null;
 
   const showCards = !search.filter && !search.kind && !search.status && !namespace && Boolean(data);
-  const title = listLabel(search.kind, search.status, namespace);
+  const title = listLabel(nav, search.kind, search.status, namespace);
 
   const preview = selected ? (
     <>

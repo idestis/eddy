@@ -5,7 +5,7 @@ import { eventsQuery, useMe, yamlQuery } from "../api/queries";
 import type { ClusterInfo, KubeEvent, Ref, Resource } from "../api/types";
 import { age, ago, dateTime, STATUS_LABEL } from "../lib/format";
 import type { KeyId } from "../lib/keys";
-import { kindInfo } from "../lib/kinds";
+import { isNotable, kindInfo, projectName } from "../lib/kinds";
 import { detailLink } from "../lib/links";
 import { useClusterMotion, useRequested } from "../lib/liveMotion";
 import type { useResourceActions } from "../lib/useResourceActions";
@@ -43,6 +43,7 @@ export function ResourceHeader({ r, large, cluster }: { r: Resource; large?: boo
         <KindChip kind={r.kind} />
         {r.kind}
         {r.namespace ? ` in ${r.namespace}` : " (cluster-scoped)"}
+        {isNotable(r.project) && r.project && <span>· {projectName(r.project)}</span>}
       </div>
       <h2
         className={`mt-2 mb-0.5 font-mono font-semibold break-all leading-tight ${large ? "text-22" : "text-18"}`}
@@ -54,8 +55,8 @@ export function ResourceHeader({ r, large, cluster }: { r: Resource; large?: boo
           <Icon name="info" className="mt-px size-4 shrink-0 text-ink-3" />
           <div>
             <b className="block font-semibold text-ink">Managed by Flux · not watched by Eddy</b>
-            Eddy knows this object from its owner's inventory. It shows kind, namespace and name only: no
-            status, and never any data.
+            Eddy knows this object from its owner's inventory, so it has no status here. YAML and Events are
+            read from the cluster as you, and ConfigMap and Secret data is never shown.
           </div>
         </div>
       ) : (
@@ -221,6 +222,28 @@ function RefLink({ cluster, target }: { cluster: string; target: Ref }) {
   );
 }
 
+const RATIO = /^(\d+(?:\.\d+)?)([A-Za-z]*)\s*\/\s*(\d+(?:\.\d+)?)([A-Za-z]*)$/;
+
+/** A usage-against-limit value ("92 / 100") turns amber from 85% of the limit. */
+export const NEAR_LIMIT = 0.85;
+
+export function nearLimit(value: string): boolean {
+  const m = RATIO.exec(value.trim());
+  const used = Number(m?.[1]);
+  const limit = Number(m?.[3]);
+  return Boolean(m) && m?.[2] === m?.[4] && limit > 0 && used / limit >= NEAR_LIMIT;
+}
+
+function DetailValue({ value }: { value: string }) {
+  return nearLimit(value) ? (
+    <span className="font-semibold text-attn" title="Close to the limit">
+      {value}
+    </span>
+  ) : (
+    value
+  );
+}
+
 /** Kind-aware key facts. */
 export function factRows(cluster: string, r: Resource): Array<[string, ReactNode]> {
   const rows: Array<[string, ReactNode]> = [];
@@ -237,6 +260,11 @@ export function factRows(cluster: string, r: Resource): Array<[string, ReactNode
   if (r.containers?.length) rows.push(["Containers", r.containers.join(", ")]);
   if (r.hosts?.length) rows.push(["Hosts", r.hosts.join("\n")]);
   if (r.ports?.length) rows.push(["Ports", r.ports.join("\n")]);
+  // Kind-specific facts from the agent (a NodePool's usage, an ExternalSecret's target…).
+  for (const d of r.details ?? []) {
+    if (!rows.some(([label]) => label === d.label))
+      rows.push([d.label, <DetailValue key={d.label} value={d.value} />]);
+  }
   if (r.owner) rows.push(["Managed by", <RefLink key="o" cluster={cluster} target={r.owner} />]);
   rows.push(["API version", r.group ? `${r.group}/${r.version}` : r.version]);
   if (r.createdAt) rows.push(["Created", `${dateTime(r.createdAt)} (${age(r.createdAt)})`]);
@@ -302,7 +330,6 @@ export function Conditions({ r }: { r: Resource }) {
 
 export function EventsList({ cluster, r, limit }: { cluster: string; r: Resource; limit?: number }) {
   const { data, isPending, error } = useQuery(eventsQuery(cluster, r));
-  if (r.inventoryOnly) return <p className="text-ink-3">Eddy does not watch events for this kind.</p>;
   if (isPending) return <p className="text-ink-3">Loading events…</p>;
   if (error) return <p className="text-12-5 text-bad">Couldn't load events: {error.message}</p>;
   const items: KubeEvent[] = limit ? data.slice(0, limit) : data;
@@ -328,8 +355,24 @@ export function EventsList({ cluster, r, limit }: { cluster: string; r: Resource
 
 const YAML_KEY = /^(\s*-?\s*)([A-Za-z][\w./-]*)(:)(.*)$/;
 
+/** Secrets are never read: the hub answers 403 for any Secret, so the tab explains it instead. */
+export function SecretNote() {
+  return (
+    <div className="flex items-start gap-2.5 rounded-[14px] border border-dashed border-line-strong bg-surface px-3.5 py-3 text-13 text-ink-2">
+      <Icon name="lock" className="mt-px size-4 shrink-0 text-ink-3" />
+      <div>
+        <b className="block font-semibold text-ink">Secret contents are never shown</b>
+        Eddy does not read Secret objects, not even their metadata. Events for this Secret are still
+        available.
+      </div>
+    </div>
+  );
+}
+
 export function YamlView({ cluster, r }: { cluster: string; r: Resource }) {
-  const { data, isPending, error } = useQuery(yamlQuery(cluster, r));
+  const secret = r.kind === "Secret";
+  const { data, isPending, error } = useQuery({ ...yamlQuery(cluster, r), enabled: !secret });
+  if (secret) return <SecretNote />;
   if (isPending) return <p className="text-ink-3">Loading YAML…</p>;
   if (error) return <p className="text-12-5 text-bad">Couldn't load YAML: {error.message}</p>;
   return (

@@ -16,7 +16,7 @@ export interface ListFilter {
 }
 
 export type Row =
-  | { type: "group"; key: string; kind: string; count: number; failing: number }
+  | { type: "group"; key: string; kind: string; project?: string; count: number; failing: number }
   | { type: "resource"; key: string; resource: Resource };
 
 /** Healthy statuses: ready, or a finished Job or Pod that completed. */
@@ -63,7 +63,7 @@ export function matchesText(r: Resource, text: string | undefined): boolean {
 export function filterResources(items: readonly Resource[], f: ListFilter): Resource[] {
   return items.filter(
     (r) =>
-      matchesKindFilter(r.kind, f.kind) &&
+      matchesKindFilter(r.kind, f.kind, r.group) &&
       (!f.namespace || r.namespace === f.namespace) &&
       matchesStatus(r, f.status) &&
       matchesText(r, f.text),
@@ -74,6 +74,7 @@ function compare(a: Resource, b: Resource): number {
   return (
     kindInfo(a.kind).order - kindInfo(b.kind).order ||
     a.kind.localeCompare(b.kind) ||
+    a.group.localeCompare(b.group) ||
     Number(Boolean(a.inventoryOnly)) - Number(Boolean(b.inventoryOnly)) ||
     STATUS_RANK[a.status] - STATUS_RANK[b.status] ||
     a.namespace.localeCompare(b.namespace) ||
@@ -91,8 +92,9 @@ export function buildRows(items: readonly Resource[], grouped: boolean): Row[] {
   const rows: Row[] = [];
   let header: Extract<Row, { type: "group" }> | undefined;
   for (const r of sorted) {
-    if (header?.kind !== r.kind) {
-      header = { type: "group", key: `group:${r.kind}`, kind: r.kind, count: 0, failing: 0 };
+    const key = `group:${r.group}/${r.kind}`;
+    if (header?.key !== key) {
+      header = { type: "group", key, kind: r.kind, project: r.project, count: 0, failing: 0 };
       rows.push(header);
     }
     header.count++;

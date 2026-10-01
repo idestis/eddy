@@ -26,3 +26,22 @@ describe("detailLink", () => {
     });
   });
 });
+
+describe("detailLink group", () => {
+  it("carries the API group only for kinds outside the registry", () => {
+    expect(
+      detailLink("dev", { group: "datadoghq.com", kind: "DatadogAgent", namespace: "m", name: "d" }).search,
+    ).toEqual({
+      group: "datadoghq.com",
+    });
+    expect(
+      detailLink("dev", { group: "", kind: "Secret", namespace: "a", name: "s" }, "events").search,
+    ).toEqual({
+      view: "events",
+      group: "core",
+    });
+    expect(
+      detailLink("dev", { group: "karpenter.sh", kind: "NodePool", namespace: "", name: "g" }).search,
+    ).toEqual({});
+  });
+});

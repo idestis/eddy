@@ -30,6 +30,10 @@ vi.mock("../api/queries", () => ({
   useCluster: (name?: string) => clusters.find((c) => c.name === name),
   useFleetResources: () => ({ items: fleet, loading: false }),
 }));
+vi.mock("../lib/useNav", async () => {
+  const { NAV_TREE } = await import("../lib/kinds");
+  return { useNav: () => NAV_TREE };
+});
 vi.mock("../lib/useResourceActions", () => ({
   useResourceActions: () => ({
     readOnly: false,

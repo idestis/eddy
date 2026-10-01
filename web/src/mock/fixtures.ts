@@ -2,7 +2,7 @@
 // three connected clusters (prod-eu, staging, dev) plus a disconnected one.
 
 import type { ClusterInfo, Finding, JobGroup, KubeEvent, Ref, Resource, Status } from "../api/types";
-import { kindInfo } from "../lib/kinds";
+import { kindInfo, projectOf } from "../lib/kinds";
 
 let seed = 20260930;
 const rnd = () => {
@@ -29,7 +29,29 @@ const VERSIONS: Record<string, string> = {
   HelmChart: "v1",
   Bucket: "v1",
   HorizontalPodAutoscaler: "v2",
+  NodePool: "v1",
+  NodeClaim: "v1",
+  EC2NodeClass: "v1",
+  PushSecret: "v1alpha1",
+  DatadogAgent: "v2alpha1",
 };
+
+/** Kinds added with the kinds/projects work: they get no scaling events and show details instead. */
+const NEW_KINDS = new Set([
+  "Namespace",
+  "ServiceAccount",
+  "PodDisruptionBudget",
+  "NetworkPolicy",
+  "StorageClass",
+  "NodePool",
+  "NodeClaim",
+  "EC2NodeClass",
+  "ExternalSecret",
+  "ClusterExternalSecret",
+  "SecretStore",
+  "ClusterSecretStore",
+  "PushSecret",
+]);
 
 export interface MockResource extends Resource {
   /** Mock-only: events shown on the Events tab. */
@@ -69,6 +91,7 @@ function make(
     namespace,
     name,
     id: `${group}/${kind}/${namespace}/${name}`,
+    project: projectOf(group),
     version: VERSIONS[kind] ?? "v1",
     status: "ready",
     createdAt: created,
@@ -126,6 +149,7 @@ const SEEDS: ClusterSeed[] = [
       agentVersion: "v1.0.0",
       kubernetesVersion: "v1.33.1",
       fluxVersion: "v2.7.0",
+      presets: ["karpenter", "externalSecrets"],
     },
     branch: "main",
   },
@@ -143,6 +167,7 @@ const SEEDS: ClusterSeed[] = [
       agentVersion: "v1.0.0",
       kubernetesVersion: "v1.33.1",
       fluxVersion: "v2.7.0",
+      presets: ["externalSecrets"],
     },
     branch: "main",
   },
@@ -160,6 +185,7 @@ const SEEDS: ClusterSeed[] = [
       agentVersion: "v1.0.0",
       kubernetesVersion: "v1.34.0",
       fluxVersion: "v2.7.1",
+      presets: [],
     },
     branch: "dev",
   },
@@ -519,15 +545,249 @@ export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockClus
   // namespace and name are known (never any ConfigMap or Secret data).
   const inv = (kind: string, group: string, ns: string, name: string, owner: MockResource) =>
     add(make(kind, ns, name, { group, owner: refOf(owner), status: "unknown", inventoryOnly: true }));
-  inv("Namespace", "", "", "apps", kApps);
-  inv("ServiceAccount", "", "apps", "checkout", kApps);
   inv("ConfigMap", "", "apps", "checkout-config", kApps);
   inv("Secret", "", "apps", "checkout-db", kApps);
-  inv("ServiceAccount", "", "apps", "podinfo", hPod);
-  inv("Namespace", "", "", "cert-manager", kInfra);
   inv("CustomResourceDefinition", "apiextensions.k8s.io", "", "certificates.cert-manager.io", hCert);
   inv("ClusterRole", "rbac.authorization.k8s.io", "", "cert-manager-controller-certificates", hCert);
   inv("ClusterIssuer", "cert-manager.io", "", "letsencrypt-prod", kConfigs);
+  if (prod || dev) {
+    inv("DatadogAgent", "datadoghq.com", "monitoring", "datadog", kInfra);
+    inv("DatadogMonitor", "datadoghq.com", "monitoring", "checkout-latency", kApps);
+  }
+  const preset = (name: string) => Boolean(info.presets?.includes(name));
+  // A preset that is off: the objects still show up as inventory-only rows.
+  if (!preset("karpenter") && (stg || dev)) inv("NodePool", "karpenter.sh", "", "default", kConfigs);
+  if (!preset("externalSecrets")) {
+    inv("ExternalSecret", "external-secrets.io", "apps", "checkout-db", kApps);
+    inv("ClusterSecretStore", "external-secrets.io", "", "aws-secrets-manager", kConfigs);
+  }
+
+  // Kinds Eddy always watches: real rows with a status and facts (details).
+  const detail = (label: string, value: string) => ({ label, value });
+  const namespace = (name: string, owner: MockResource) =>
+    add(
+      make("Namespace", "", name, {
+        owner: refOf(owner),
+        message: "Active",
+        details: [detail("Phase", "Active")],
+        labels: {
+          "kubernetes.io/metadata.name": name,
+          "pod-security.kubernetes.io/enforce": name === "apps" ? "baseline" : "privileged",
+        },
+      }),
+    );
+  namespace("apps", kApps);
+  namespace("cert-manager", kInfra);
+  namespace("ingress-nginx", kInfra);
+  namespace("flux-system", kRoot);
+  const sa = (name: string, owner: MockResource, automount = "true") =>
+    add(
+      make("ServiceAccount", "apps", name, {
+        owner: refOf(owner),
+        message: "Exists",
+        details: [detail("Automount token", automount), detail("Image pull secrets", "1")],
+      }),
+    );
+  sa("checkout", kApps);
+  sa("podinfo", hPod, "false");
+  add(
+    make("PodDisruptionBudget", "apps", "checkout", {
+      owner: refOf(kApps),
+      replicas: `${rep}/${Math.max(1, rep - 1)}`,
+      message: `${Math.max(0, rep - (rep - 1))} disruption allowed`,
+      details: [
+        detail("Min available", String(Math.max(1, rep - 1))),
+        detail("Allowed disruptions", String(Math.max(0, rep - (rep - 1)))),
+      ],
+    }),
+  );
+  add(
+    make("PodDisruptionBudget", "apps", "podinfo", {
+      owner: refOf(hPod),
+      replicas: `${rep}/${rep}`,
+      message: "0 disruptions allowed · blocks voluntary evictions",
+      details: [detail("Min available", String(rep)), detail("Allowed disruptions", "0")],
+    }),
+  );
+  add(
+    make("NetworkPolicy", "apps", "default-deny", {
+      owner: refOf(kApps),
+      message: "Selects all pods · Ingress, Egress",
+      details: [detail("Pod selector", "all pods"), detail("Policy types", "Ingress, Egress")],
+    }),
+  );
+  add(
+    make("NetworkPolicy", "apps", "allow-ingress-nginx", {
+      owner: refOf(kApps),
+      message: "Selects app=checkout · Ingress",
+      details: [
+        detail("Pod selector", "app=checkout"),
+        detail("Policy types", "Ingress"),
+        detail("Ingress rules", "1 (from ingress-nginx)"),
+      ],
+    }),
+  );
+  const storageClass = (name: string, isDefault: boolean) =>
+    add(
+      make("StorageClass", "", name, {
+        owner: refOf(kConfigs),
+        message: isDefault ? "Default class" : "Provisioner ebs.csi.aws.com",
+        details: [
+          detail("Provisioner", name === "gp2" ? "kubernetes.io/aws-ebs" : "ebs.csi.aws.com"),
+          detail("Default class", isDefault ? "yes" : "no"),
+          detail("Reclaim policy", "Delete"),
+          detail("Volume binding mode", "WaitForFirstConsumer"),
+        ],
+      }),
+    );
+  storageClass("gp3", true);
+  storageClass("gp2", false);
+
+  // Karpenter (opt-in preset). The default NodePool is close to its CPU limit.
+  if (preset("karpenter")) {
+    const nodeClass = add(
+      make("EC2NodeClass", "", "default", {
+        owner: refOf(kConfigs),
+        message: "Ready",
+        conditions: readyCondition("ready", "Ready", ""),
+        details: [
+          detail("AMI family", "AL2023"),
+          detail("Role", `KarpenterNodeRole-${c}`),
+          detail("Subnets", "3 selected"),
+          detail("Security groups", "2 selected"),
+        ],
+        spec: { amiFamily: "AL2023", role: `KarpenterNodeRole-${c}`, userData: "[REDACTED]" },
+      }),
+    );
+    const pool = (name: string, nodes: number, cpu: string, mem: string, message: string) =>
+      add(
+        make("NodePool", "", name, {
+          owner: refOf(kConfigs),
+          message,
+          conditions: readyCondition("ready", "Ready", ""),
+          details: [
+            detail("Nodes", String(nodes)),
+            detail("CPU", cpu),
+            detail("Memory", mem),
+            detail("Node class", nodeClass.name),
+          ],
+          spec: {
+            "template.spec.nodeClassRef.name": nodeClass.name,
+            "limits.cpu": cpu.split(" / ")[1] ?? "",
+          },
+        }),
+      );
+    const general = pool("general", 12, "94 / 100", "372Gi / 400Gi", "Ready · CPU at 94% of its limit");
+    const batch = pool("spot-batch", 4, "18 / 200", "72Gi / 800Gi", "Ready");
+    const claim = (pl: MockResource, type: string, capacity: string, zone: string, pending = false) => {
+      const name = `${pl.name}-${sfx(5)}`;
+      const node = `ip-10-0-${ri(10, 200)}-${ri(2, 250)}.${c}.internal`;
+      return add(
+        make("NodeClaim", "", name, {
+          owner: refOf(pl),
+          status: pending ? "reconciling" : "ready",
+          message: pending ? "Launched · waiting for the node to register" : "Ready",
+          details: [
+            detail("Instance type", type),
+            detail("Capacity type", capacity),
+            detail("Zone", zone),
+            detail("Node", pending ? "-" : node),
+            detail("Node pool", pl.name),
+          ],
+          labels: {
+            "karpenter.sh/nodepool": pl.name,
+            "karpenter.sh/capacity-type": capacity,
+            "node.kubernetes.io/instance-type": type,
+            "topology.kubernetes.io/zone": zone,
+          },
+        }),
+      );
+    };
+    claim(general, "m6i.2xlarge", "on-demand", "eu-central-1a");
+    claim(general, "m6i.4xlarge", "on-demand", "eu-central-1b");
+    claim(general, "m6i.2xlarge", "on-demand", "eu-central-1c", true);
+    claim(batch, "c6i.4xlarge", "spot", "eu-central-1a");
+  }
+
+  // External Secrets (opt-in preset). One ExternalSecret fails to sync.
+  if (preset("externalSecrets")) {
+    const clusterStore = add(
+      make("ClusterSecretStore", "", "aws-secrets-manager", {
+        owner: refOf(kConfigs),
+        message: "store validated",
+        conditions: readyCondition("ready", "Valid", "store validated"),
+        details: [detail("Provider", "AWS Secrets Manager"), detail("Region", info.region ?? "eu-central-1")],
+      }),
+    );
+    const store = (name: string, provider: string) =>
+      add(
+        make("SecretStore", "apps", name, {
+          owner: refOf(kApps),
+          message: "store validated",
+          conditions: readyCondition("ready", "Valid", "store validated"),
+          details: [detail("Provider", provider)],
+        }),
+      );
+    const vault = store("vault", "HashiCorp Vault");
+    const es = (name: string, target: string, from: MockResource, minutesAgo: number) =>
+      add(
+        make("ExternalSecret", "apps", name, {
+          owner: refOf(kApps),
+          source: refOf(from),
+          interval: "1h",
+          message: "Secret was synced",
+          conditions: readyCondition("ready", "SecretSynced", "Secret was synced"),
+          details: [
+            detail("Target secret", target),
+            detail("Store", `${from.kind}/${from.name}`),
+            detail("Refresh interval", "1h"),
+            detail("Last refresh", `${minutesAgo}m ago`),
+          ],
+        }),
+      );
+    es("checkout-db", "checkout-db", clusterStore, 12);
+    es("podinfo-token", "podinfo-token", vault, 41);
+    const stripe = es("stripe-api", "stripe-api-key", clusterStore, 7);
+    if (prod) {
+      Object.assign(stripe, {
+        status: "failed",
+        message:
+          "SecretSyncedError: could not get secret data from provider: AccessDeniedException: not authorized to perform secretsmanager:GetSecretValue on prod/stripe/api-key",
+        lastChanged: ago(7),
+      });
+      stripe.conditions = readyCondition("failed", "SecretSyncedError", stripe.message ?? "");
+      stripe.events = [
+        ev("Warning", "UpdateFailed", stripe.message ?? "", 7, 7),
+        ev("Normal", "Updated", "Updated Secret", 2880),
+      ];
+    }
+    add(
+      make("ClusterExternalSecret", "", "registry-credentials", {
+        owner: refOf(kConfigs),
+        source: refOf(clusterStore),
+        interval: "1h",
+        message: "Synced to 4 namespaces",
+        conditions: readyCondition("ready", "Ready", "Synced to 4 namespaces"),
+        details: [
+          detail("Namespace selector", "env=prod"),
+          detail("Namespaces", "4"),
+          detail("Target secret", "ghcr-pull"),
+          detail("Refresh interval", "1h"),
+        ],
+      }),
+    );
+    add(
+      make("PushSecret", "apps", "rotated-token", {
+        owner: refOf(kApps),
+        message: "Secret was pushed",
+        conditions: readyCondition("ready", "Synced", "Secret was pushed"),
+        details: [
+          detail("Store", `ClusterSecretStore/${clusterStore.name}`),
+          detail("Source secret", "rotated-token"),
+        ],
+      }),
+    );
+  }
 
   // Scenario tweaks from the prototype.
   if (prod) {
@@ -637,6 +897,8 @@ export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockClus
             61,
           ),
         ];
+      } else if (NEW_KINDS.has(r.kind)) {
+        r.events = [];
       } else if (kindInfo(r.kind).flux) {
         const reason =
           r.kind === "HelmRelease"
@@ -826,6 +1088,8 @@ export function yamlOf(r: MockResource): string {
     lines.push("  labels:");
     for (const [k, v] of Object.entries(r.labels)) lines.push(`    ${k}: ${v}`);
   }
+  // Inventory-only objects are read as the user; the hub strips data, so only metadata is left.
+  if (r.inventoryOnly) return lines.join("\n");
   lines.push("spec:");
   if (r.interval) lines.push(`  interval: ${r.interval}`);
   if (r.url) lines.push(`  url: ${r.url}`);

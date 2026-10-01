@@ -4,6 +4,7 @@ import type {
   CreatedCluster,
   Finding,
   JobsSnapshot,
+  KindsResponse,
   List,
   ResourceSnapshot,
 } from "../api/types";
@@ -137,5 +138,60 @@ describe("mock hidden finished Jobs", () => {
     expect((await call(hub, "GET", `${base}?includeHidden=1`)).status).toBe(400);
     expect((await call(hub, "GET", `${base}?kind=Pod&includeHidden=1`)).status).toBe(400);
     expect((await call(hub, "GET", `${base}?kind=Job&includeHidden=1&limit=5000`)).status).toBe(400);
+  });
+});
+
+describe("mock kinds and inventory reads", () => {
+  it("serves /kinds per cluster, with presets deciding which kinds are watched", async () => {
+    const hub = new MockHub();
+    const prod = (await call<KindsResponse>(hub, "GET", "/api/v1/clusters/prod-eu/kinds")).data;
+    const find = (k: KindsResponse, kind: string) => k.items.find((i) => i.kind === kind);
+    expect(find(prod, "NodePool")).toMatchObject({
+      watched: true,
+      preset: "karpenter",
+      project: "karpenter",
+    });
+    expect(find(prod, "NodePool")?.count).toBeGreaterThan(0);
+    expect(find(prod, "DatadogAgent")).toMatchObject({ watched: false, project: "datadoghq.com" });
+    expect(prod.projects.map((p) => p.id).slice(0, 4)).toEqual([
+      "kubernetes",
+      "flux",
+      "karpenter",
+      "external-secrets",
+    ]);
+    const dev = (await call<KindsResponse>(hub, "GET", "/api/v1/clusters/dev/kinds")).data;
+    expect(find(dev, "ExternalSecret")).toMatchObject({ watched: false });
+    expect(find(dev, "NodePool")?.watched).toBe(false);
+  });
+
+  it("has a failing ExternalSecret and a NodePool near its CPU limit", async () => {
+    const hub = new MockHub();
+    const { data } = await call<ResourceSnapshot>(hub, "GET", "/api/v1/clusters/prod-eu/resources");
+    const es = data.items.find((r) => r.kind === "ExternalSecret" && r.status === "failed");
+    expect(es?.message).toMatch(/^SecretSyncedError/);
+    expect(es?.details?.find((d) => d.label === "Target secret")?.value).toBe("stripe-api-key");
+    const pool = data.items.find((r) => r.kind === "NodePool" && r.name === "general");
+    expect(pool?.details?.find((d) => d.label === "CPU")?.value).toBe("94 / 100");
+    expect(data.items.every((r) => r.project)).toBe(true);
+  });
+
+  it("reads YAML and events of inventory-only rows by group, and refuses Secret YAML", async () => {
+    const hub = new MockHub();
+    const base = "/api/v1/clusters/prod-eu/objects";
+    const yaml = await call<{ yaml: string }>(
+      hub,
+      "GET",
+      `${base}/DatadogAgent/monitoring/datadog/yaml?group=datadoghq.com`,
+    );
+    expect(yaml.status).toBe(200);
+    expect(yaml.data.yaml).toContain("kind: DatadogAgent");
+    expect(
+      (await call(hub, "GET", `${base}/DatadogAgent/monitoring/datadog/events?group=datadoghq.com`)).status,
+    ).toBe(200);
+    expect(
+      (await call(hub, "GET", `${base}/DatadogAgent/monitoring/datadog/yaml?group=other.io`)).status,
+    ).toBe(404);
+    expect((await call(hub, "GET", `${base}/Secret/apps/checkout-db/yaml?group=core`)).status).toBe(403);
+    expect((await call(hub, "GET", `${base}/Secret/apps/checkout-db/events?group=core`)).status).toBe(200);
   });
 });

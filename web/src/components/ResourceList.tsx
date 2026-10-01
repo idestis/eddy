@@ -13,7 +13,7 @@ import {
 } from "react";
 import type { Resource } from "../api/types";
 import { age, listMessage, revisionOf, revisionTitle } from "../lib/format";
-import { kindInfo } from "../lib/kinds";
+import { kindHeading, kindInfo } from "../lib/kinds";
 import { type ClusterMotion, NO_MOTION, type Requested } from "../lib/liveMotion";
 import type { Row } from "../lib/resourceRows";
 import { Icon } from "./Icon";
@@ -334,7 +334,7 @@ export function ResourceList({
                     role="presentation"
                   >
                     <Icon name={kindInfo(row.kind).icon} className="size-3.5" />
-                    {kindInfo(row.kind).plural}
+                    {kindHeading(row.kind, row.project)}
                     <span className="font-medium tabular-nums">{row.count}</span>
                     {row.failing > 0 && <span className="text-bad">{row.failing} failing</span>}
                   </div>

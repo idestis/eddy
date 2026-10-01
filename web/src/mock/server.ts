@@ -15,6 +15,8 @@ import type {
   ConnectionCheck,
   ConnectionInfo,
   JoinTokenInfo,
+  KindSummary,
+  KindsResponse,
   Me,
   Message,
   OnboardedCluster,
@@ -23,7 +25,7 @@ import type {
   TokenItem,
   TokenScope,
 } from "../api/types";
-import { kindInfo } from "../lib/kinds";
+import { KINDS, kindInfo, projectName, projectOf } from "../lib/kinds";
 import {
   buildCluster,
   buildFleet,
@@ -395,9 +397,11 @@ export class MockHub {
       if (!cl) return error(404, "not_found", `Cluster ${a} not found.`);
       if (!cl.info.connected) return error(503, "disconnected", `${a} is disconnected.`);
       if (b === "resources") return this.resourcesRoute(cl, url.searchParams);
+      if (b === "kinds" && !c) return json(kindsOf(cl));
       if (b === "findings" && !c) return json({ items: cl.info.findings ?? [] });
       if (b === "objects" && c && d && e) {
-        const r = findResource(cl, c, d === "_" ? "" : d, e);
+        const group = url.searchParams.get("group") ?? undefined;
+        const r = findResource(cl, c, d === "_" ? "" : d, e, group);
         if (!r) return error(404, "not_found", `${c}/${e} not found.`);
         const target: ResourceRef = {
           cluster: a,
@@ -407,8 +411,8 @@ export class MockHub {
           name: r.name,
         };
         if (!f && method === "GET") return json(strip(r));
-        if (f === "yaml" && r.inventoryOnly)
-          return error(403, "forbidden", `Eddy does not read ${r.kind} objects; it knows only the name.`);
+        if (f === "yaml" && r.kind === "Secret")
+          return error(403, "forbidden", "Secret contents are never read.");
         if (f === "yaml") return json({ yaml: yamlOf(r) });
         if (f === "events") return json({ items: r.events });
         if (f === "children") {
@@ -1052,6 +1056,65 @@ export class MockHub {
   }
 }
 
+const CLUSTER_SCOPED = new Set([
+  "Namespace",
+  "StorageClass",
+  "NodePool",
+  "NodeClaim",
+  "EC2NodeClass",
+  "ClusterExternalSecret",
+  "ClusterSecretStore",
+]);
+
+const PROJECT_ORDER = ["kubernetes", "flux", "karpenter", "external-secrets"];
+
+/** GET …/kinds: the watched kinds (count 0 included) plus every kind with inventory-only rows. */
+export function kindsOf(cl: MockCluster): KindsResponse {
+  const presets = cl.info.presets ?? [];
+  const byRef = new Map<string, KindSummary>();
+  for (const info of KINDS) {
+    if (info.preset && !presets.includes(info.preset)) continue;
+    byRef.set(`${info.group}/${info.kind}`, {
+      group: info.group,
+      kind: info.kind,
+      plural: info.plural.toLowerCase(),
+      namespaced: !CLUSTER_SCOPED.has(info.kind),
+      project: info.project,
+      watched: true,
+      preset: info.preset ? info.preset : undefined,
+      count: 0,
+    });
+  }
+  for (const r of cl.resources.values()) {
+    const key = `${r.group}/${r.kind}`;
+    let item = byRef.get(key);
+    if (!item) {
+      item = {
+        group: r.group,
+        kind: r.kind,
+        namespaced: r.namespace !== "",
+        project: r.project ?? projectOf(r.group),
+        watched: false,
+        count: 0,
+      };
+      byRef.set(key, item);
+    }
+    item.count++;
+  }
+  const rank = (p: string) => {
+    const i = PROJECT_ORDER.indexOf(p);
+    return i < 0 ? PROJECT_ORDER.length : i;
+  };
+  const items = [...byRef.values()].sort(
+    (a, b) =>
+      rank(a.project) - rank(b.project) ||
+      (rank(a.project) === PROJECT_ORDER.length ? a.project.localeCompare(b.project) : 0) ||
+      a.kind.localeCompare(b.kind),
+  );
+  const projects = [...new Set(items.map((i) => i.project))].map((id) => ({ id, name: projectName(id) }));
+  return { items, projects, presets };
+}
+
 function event(type: "Normal" | "Warning", reason: string, message: string) {
   return { type, reason, message, count: 1, source: "flux", first: iso(), last: iso() };
 }
@@ -1061,9 +1124,11 @@ function findResource(
   kind: string,
   namespace: string,
   name: string,
+  group?: string,
 ): MockResource | undefined {
   for (const r of cl.resources.values()) {
-    if (r.kind === kind && r.namespace === namespace && r.name === name) return r;
+    if (r.kind !== kind || r.namespace !== namespace || r.name !== name) continue;
+    if (group === undefined || (r.group || "core") === group) return r;
   }
   return undefined;
 }

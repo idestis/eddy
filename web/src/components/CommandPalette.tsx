@@ -8,10 +8,11 @@ import { clusterStyle } from "../lib/clusterColor";
 import { STATUS_RANK } from "../lib/format";
 import { highlightParts, type Match, type Ranges, rank } from "../lib/fuzzy";
 import type { KeyId } from "../lib/keys";
-import { flatNav, isFlux, kindInfo } from "../lib/kinds";
+import { flatNav, isFlux, isNotable, kindInfo, projectName } from "../lib/kinds";
 import { detailLink } from "../lib/links";
 import { useOrderedClusters, usePrefs } from "../lib/prefs";
 import { toggleTheme } from "../lib/theme";
+import { useNav } from "../lib/useNav";
 import { useResourceActions } from "../lib/useResourceActions";
 import { ClusterTile } from "./ClusterSwitch";
 import { Icon, type IconName } from "./Icon";
@@ -88,6 +89,7 @@ export function CommandPalette({
   const selCluster = useCluster(selection?.cluster);
   const actions = useResourceActions(selCluster);
   const selected = selection?.resource;
+  const navTree = useNav(routeCluster ?? selection?.cluster, true);
   const scoped = scope === "cluster" && routeCluster ? routeCluster : undefined;
   const resources = useMemo(
     () => (scoped ? fleet.filter((fr) => fr.cluster === scoped) : fleet),
@@ -232,7 +234,7 @@ export function CommandPalette({
         icon: "alert",
         run: () => void navigate({ to: "/c/$cluster", params, search: { status: "attention" } }),
       });
-      for (const n of flatNav()) {
+      for (const n of flatNav(navTree)) {
         out.push({
           id: `nav:${n.id}`,
           label: `Go to ${n.label}`,
@@ -305,6 +307,7 @@ export function CommandPalette({
     me,
     actions,
     navigate,
+    navTree,
     ask,
     setHelp,
   ]);
@@ -621,6 +624,7 @@ function ResourceItem({
         </span>
         <span className="truncate text-12 text-ink-3">
           <Highlight text={r.kind} ranges={match?.secondary[1]} />
+          {isNotable(r.project) && r.project && ` (${projectName(r.project)})`}
           {r.namespace && (
             <>
               {" in "}

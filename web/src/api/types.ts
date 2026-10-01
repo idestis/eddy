@@ -59,6 +59,10 @@ export interface Resource extends Ref {
    * It carries kind, namespace and name only, with status "unknown".
    */
   inventoryOnly?: boolean;
+  /** The owning project: "kubernetes", "flux", "karpenter", "external-secrets" or the API group itself. */
+  project?: string;
+  /** Kind-specific facts in display order (at most 12), e.g. a NodePool's CPU usage against its limit. */
+  details?: Array<{ label: string; value: string }>;
   /** Proposed: Ingress hosts. */
   hosts?: string[];
   /** Proposed: Service ports, e.g. "80/TCP → 8080". */
@@ -68,6 +72,26 @@ export interface Resource extends Ref {
   createdAt?: string;
   lastChanged?: string;
   resourceVersion: string;
+}
+
+/** One row of GET …/kinds: a kind the agent watches, or one that appears only as inventory rows. */
+export interface KindSummary {
+  /** The API group; "" for core. */
+  group: string;
+  kind: string;
+  plural?: string;
+  namespaced: boolean;
+  project: string;
+  /** False: the kind appears only as inventory-only rows. */
+  watched: boolean;
+  preset?: string;
+  count: number;
+}
+
+export interface KindsResponse {
+  items: KindSummary[];
+  projects: Array<{ id: string; name: string }>;
+  presets: string[];
 }
 
 export interface KubeEvent {
@@ -97,6 +121,8 @@ export interface ClusterInfo {
   mode?: "local";
   /** The agent refuses reconcile, suspend and resume. */
   readOnly?: boolean;
+  /** Watch presets the agent has on ("karpenter", "externalSecrets"). */
+  presets?: string[];
   /** The kubeconfig context a local-mode agent serves. */
   context?: string;
   counts?: Partial<Record<Status, number>>;

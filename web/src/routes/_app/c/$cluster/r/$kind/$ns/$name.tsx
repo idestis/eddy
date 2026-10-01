@@ -35,6 +35,8 @@ export const Route = createFileRoute("/_app/c/$cluster/r/$kind/$ns/$name")({
   validateSearch: z.object({
     view: z.enum(DETAIL_VIEWS).optional().catch(undefined),
     compose: z.boolean().optional().catch(undefined),
+    // The API group, for a kind outside the registry that two groups may share ("core" is the core group).
+    group: z.string().optional().catch(undefined),
   }),
   component: DetailPage,
 });
@@ -57,7 +59,7 @@ const TAB_KEY: Record<DetailView, KeyId> = {
 
 function DetailPage() {
   const params = Route.useParams();
-  const { view = "overview", compose = false } = Route.useSearch();
+  const { view = "overview", compose = false, group } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const cluster = useCluster(params.cluster);
   const { data: me } = useMe();
@@ -73,7 +75,11 @@ function DetailPage() {
   });
   const items = data?.items ?? [];
   const found = items.find(
-    (x) => x.kind === params.kind && x.namespace === namespace && x.name === params.name,
+    (x) =>
+      x.kind === params.kind &&
+      x.namespace === namespace &&
+      x.name === params.name &&
+      (group === undefined || (x.group || "core") === group),
   );
   const r = found;
   // Remember that this page showed the object, so its disappearance reads as a deletion
@@ -111,12 +117,8 @@ function DetailPage() {
   const isPod = params.kind === "Pod";
   const isWorkload = WORKLOAD_LOG_KINDS.has(params.kind) && Boolean(me?.features.workloadLogs);
   const hasLogs = (isPod && Boolean(me?.features.logs)) || isWorkload;
-  const tabs = DETAIL_VIEWS.filter(
-    (v) =>
-      (v !== "logs" || hasLogs) &&
-      // Inventory-only objects have a name and nothing else to show.
-      !(r?.inventoryOnly && (v === "yaml" || v === "events" || v === "logs")),
-  );
+  // Inventory-only objects have YAML and Events (read as the user) but no logs.
+  const tabs = DETAIL_VIEWS.filter((v) => v !== "logs" || hasLogs);
   // The panel slides in from the side of the tab that was picked.
   const lastView = useRef(view);
   const panelDir = useRef<"next" | "prev" | undefined>(undefined);
@@ -233,17 +235,23 @@ function DetailPage() {
             <>
               <ResourceFacts cluster={params.cluster} r={r} grid />
               <div className="grid grid-cols-1 gap-x-6 @4xl:grid-cols-2">
-                <section>
-                  <SectionTitle>Conditions</SectionTitle>
-                  <Conditions r={r} />
-                </section>
+                {!r.inventoryOnly && (
+                  <section>
+                    <SectionTitle>Conditions</SectionTitle>
+                    <Conditions r={r} />
+                  </section>
+                )}
                 <section>
                   <SectionTitle>Recent events</SectionTitle>
                   <EventsList cluster={params.cluster} r={r} limit={5} />
                 </section>
               </div>
-              <SectionTitle>Manages</SectionTitle>
-              <ChildrenTree cluster={params.cluster} root={r} items={items} />
+              {!r.inventoryOnly && (
+                <>
+                  <SectionTitle>Manages</SectionTitle>
+                  <ChildrenTree cluster={params.cluster} root={r} items={items} />
+                </>
+              )}
             </>
           )}
           {view === "yaml" && <YamlView cluster={params.cluster} r={r} />}

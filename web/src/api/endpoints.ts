@@ -15,6 +15,7 @@ import type {
   Finding,
   IssuedJoinToken,
   JobsSnapshot,
+  KindsResponse,
   KubeEvent,
   List,
   Me,
@@ -81,11 +82,21 @@ export const getJobsWithHidden = (
   });
 export const getFindings = (cluster: string) =>
   request<List<Finding>>(`${V1}/clusters/${seg(cluster)}/findings`);
-export const getObject = (cluster: string, r: Ref) => request<Resource>(objectPath(cluster, r));
+export const getKinds = (cluster: string, signal?: AbortSignal) =>
+  request<KindsResponse>(`${V1}/clusters/${seg(cluster)}/kinds`, { signal });
+
+/**
+ * The `group` query of an object read. It is always sent: the same kind name can live in
+ * several API groups, and the hub answers 400 when it is ambiguous. `core` is the core group.
+ */
+export const groupQuery = (r: Pick<Ref, "group">): { group: string } => ({ group: r.group || "core" });
+
+export const getObject = (cluster: string, r: Ref) =>
+  request<Resource>(objectPath(cluster, r), { query: groupQuery(r) });
 export const getYaml = (cluster: string, r: Ref) =>
-  request<{ yaml: string }>(`${objectPath(cluster, r)}/yaml`);
+  request<{ yaml: string }>(`${objectPath(cluster, r)}/yaml`, { query: groupQuery(r) });
 export const getEvents = (cluster: string, r: Ref) =>
-  request<List<KubeEvent>>(`${objectPath(cluster, r)}/events`);
+  request<List<KubeEvent>>(`${objectPath(cluster, r)}/events`, { query: groupQuery(r) });
 
 // Cluster onboarding (ADR-0005)
 
