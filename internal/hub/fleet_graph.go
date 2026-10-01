@@ -24,9 +24,9 @@ const (
 	// collapsed: their dependsOn and source edges are the graph.
 	graphCollapseOver = 20
 	// graphMaxExpand caps the group ids of one expand parameter.
-	graphMaxExpand = 20
-	graphDefaultHops  = 2
-	graphMaxHops      = 6
+	graphMaxExpand   = 20
+	graphDefaultHops = 2
+	graphMaxHops     = 6
 )
 
 // Edge types of the graph.
