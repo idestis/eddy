@@ -117,7 +117,7 @@ export function Modal({ label, onClose, children, className = "", placement = "t
     // biome-ignore lint/a11y/noStaticElementInteractions: the scrim only closes on outside click; keyboard users press Escape
     <div
       data-scrim={placement}
-      className={`fixed inset-0 z-40 flex ${SCRIM[placement]}`}
+      className={`anim-fade-in fixed inset-0 z-40 flex ${SCRIM[placement]}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -125,7 +125,7 @@ export function Modal({ label, onClose, children, className = "", placement = "t
     >
       <div
         ref={setRef}
-        className={`flex max-h-[74vh] w-[min(640px,100%)] flex-col overflow-hidden rounded-dialog border border-line bg-surface shadow-dialog outline-none ${className}`}
+        className={`anim-pop-in flex max-h-[74vh] w-[min(640px,100%)] flex-col overflow-hidden rounded-dialog border border-line bg-surface shadow-dialog outline-none ${className}`}
         style={placement === "anchor" ? anchored : undefined}
         role="dialog"
         aria-modal="true"

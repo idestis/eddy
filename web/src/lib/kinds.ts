@@ -45,7 +45,7 @@ export const KINDS: readonly KindInfo[] = [
   k("GitRepository", FLUX_SOURCE, "GIT", "GitRepositories", "git", "flux", { flux: true }),
   k("OCIRepository", FLUX_SOURCE, "OCI", "OCIRepositories", "box", "flux", { flux: true }),
   k("HelmRepository", FLUX_SOURCE, "HELM", "HelmRepositories", "helm", "flux", { flux: true }),
-  k("HelmChart", FLUX_SOURCE, "CHRT", "HelmCharts", "box", "flux", { flux: true, hasSource: true }),
+  k("HelmChart", FLUX_SOURCE, "CHRT", "HelmCharts", "helm", "flux", { flux: true, hasSource: true }),
   k("Bucket", FLUX_SOURCE, "BKT", "Buckets", "bucket", "flux", { flux: true }),
   k("Deployment", "apps", "DEP", "Deployments", "grid", "workloads", { workload: true }),
   k("StatefulSet", "apps", "STS", "StatefulSets", "db", "workloads", { workload: true }),

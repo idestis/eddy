@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
+import { getMotion, resetLiveMotion } from "../lib/liveMotion";
 import { resource } from "../test/fixtures";
 import { keys } from "./queries";
 import { attachStreamHandlers, backoffDelay } from "./stream";
@@ -29,6 +30,25 @@ describe("stream handlers", () => {
       deletes: [],
     });
     expect(qc.getQueryData<ResourceSnapshot>(keys.resources("prod"))?.items[0]?.status).toBe("failed");
+  });
+
+  it("records live motion for a delta: status flash, new row, leaving row", () => {
+    resetLiveMotion();
+    const { qc, source } = setup();
+    const a = resource("a", { status: "reconciling" });
+    const b = resource("b");
+    qc.setQueryData<ResourceSnapshot>(keys.resources("prod"), { items: [a, b], resourceVersion: "1" });
+    const c = resource("c");
+    source.emit("change", {
+      cluster: "prod",
+      upserts: [{ ...a, status: "completed", resourceVersion: "2" }, c],
+      deletes: [b.id],
+    });
+    const m = getMotion("prod");
+    expect(m.changed.get(a.id)).toMatchObject({ kind: "status", from: "reconciling", to: "completed" });
+    expect(m.entered.has(c.id)).toBe(true);
+    expect(m.leaving.get(b.id)?.resource.name).toBe("b");
+    resetLiveMotion();
   });
 
   it("does not create a cache entry for clusters that were never loaded", () => {

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { ClusterInfo, Status } from "../api/types";
 import { STATUS_LABEL } from "../lib/format";
 import { hint, isSequence, type KeyId } from "../lib/keys";
+import type { Requested } from "../lib/liveMotion";
 import { Icon } from "./Icon";
 
 /**
@@ -146,6 +147,39 @@ export function StatusIcon({
   );
 }
 
+const REQUESTED_LABEL: Record<Requested["action"], string> = {
+  reconcile: "Reconcile requested",
+  suspend: "Suspend requested",
+  resume: "Resume requested",
+};
+
+/** A small "requested" marker for a row or header waiting for an action's result. */
+export function RequestedBadge({ req, className = "" }: { req: Requested; className?: string }) {
+  return (
+    <span
+      className={`anim-fade-in inline-flex shrink-0 items-center gap-1.5 rounded-md border border-c/30 bg-c-soft px-1.5 py-px text-11 font-semibold whitespace-nowrap text-c ${className}`}
+      title="Sent. Waiting for the cluster to report a new status."
+    >
+      <span className="requested-dot size-1.5 rounded-full bg-c" />
+      {REQUESTED_LABEL[req.action]}
+    </span>
+  );
+}
+
+/** A small spinner for buttons whose request is in flight. */
+export function Spinner({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={`size-4 shrink-0 animate-spin motion-reduce:animate-[spin_3s_linear_infinite] ${className}`}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeOpacity=".3" strokeWidth="2" />
+      <path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** The "Not ready" glyph: an amber ring, the union of failed and reconciling. */
 export function AttentionIcon({ className = "" }: { className?: string }) {
   return (
@@ -218,20 +252,28 @@ export function Keys({
   keys,
   sequence,
   className = "",
+  keyId,
 }: {
   keys: string[];
   sequence?: boolean;
   className?: string;
+  /** The binding shown, so a screen can be checked for one key hinted for two actions. */
+  keyId?: KeyId;
 }) {
   if (sequence && keys.length > 1) {
     return (
-      <kbd className={className} aria-label={keys.join(" then ")} title={`Press ${keys.join(", then ")}`}>
+      <kbd
+        className={className}
+        aria-label={keys.join(" then ")}
+        title={`Press ${keys.join(", then ")}`}
+        data-key-id={keyId}
+      >
         {keys.join(" ")}
       </kbd>
     );
   }
   return (
-    <span className={`inline-flex gap-[3px] ${className}`}>
+    <span className={`inline-flex gap-[3px] ${className}`} data-key-id={keyId}>
       {keys.map((k, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: keycaps are positional
         <kbd key={i}>{k}</kbd>
@@ -242,5 +284,5 @@ export function Keys({
 
 /** The hint for a registered binding (lib/keys.ts), next to buttons and commands. */
 export function KeyHint({ id, className }: { id: KeyId; className?: string }) {
-  return <Keys keys={hint(id)} sequence={isSequence(id)} className={className} />;
+  return <Keys keys={hint(id)} sequence={isSequence(id)} className={className} keyId={id} />;
 }

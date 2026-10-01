@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { logout } from "../api/endpoints";
 import { resourcesQuery, useMe } from "../api/queries";
 import { type StreamState, useStreamState } from "../api/stream";
@@ -9,8 +9,10 @@ import { useAppState } from "../lib/appState";
 import { matchesKindFilter, NAV_TREE, type NavNode, navPath } from "../lib/kinds";
 import { needsAttention, type StatusFilter } from "../lib/resourceRows";
 import { toggleTheme } from "../lib/theme";
+import { getViewPrefs, setViewPrefs } from "../lib/viewPrefs";
 import { ClusterSwitch } from "./ClusterSwitch";
 import { Icon, type IconName } from "./Icon";
+import { type NavLinkProps, NavTree } from "./NavTree";
 
 export function EddyMark({ className = "size-[22px]" }: { className?: string }) {
   return (
@@ -60,7 +62,7 @@ export function LiveIndicator() {
 }
 
 const NAV_LINK =
-  "flex h-[34px] min-w-0 shrink-0 items-center gap-2.5 rounded-control px-2.5 text-13-5 text-ink-2 no-underline hover:bg-surface-sunken hover:text-ink aria-[current=page]:bg-c-soft aria-[current=page]:font-semibold aria-[current=page]:text-ink aria-[current=page]:[&_svg]:text-c";
+  "nav-link flex h-[34px] min-w-0 shrink-0 items-center gap-2.5 rounded-control px-2.5 text-13-5 text-ink-2 no-underline hover:bg-surface-sunken hover:text-ink aria-[current=page]:bg-c-soft aria-[current=page]:font-semibold aria-[current=page]:text-ink aria-[current=page]:[&_svg]:text-c";
 
 function Count({ n, bad }: { n: number | undefined; bad?: boolean }) {
   if (n === undefined) return null;
@@ -91,13 +93,10 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
   const params = { cluster: cluster.name };
   const activePath = useMemo(() => (onList ? navPath(search.kind) : []), [onList, search.kind]);
   // Collapsed state the user chose; a group is open by default while it holds the active page.
-  const [open, setOpen] = useState<Record<string, boolean>>(loadOpen);
+  // Saved with the view preferences, so it follows the user; the old key seeds it once.
+  const [open, setOpen] = useState<Record<string, boolean>>(() => getViewPrefs().nav ?? loadOpen());
   useEffect(() => {
-    try {
-      localStorage.setItem(OPEN_KEY, JSON.stringify(open));
-    } catch {
-      // Storage blocked: the tree still works, it just forgets.
-    }
+    setViewPrefs({ nav: open });
   }, [open]);
 
   const counts = useMemo(() => {
@@ -120,6 +119,7 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
     s: { kind?: string; status?: StatusFilter },
     n: number | undefined,
     bad = false,
+    props?: NavLinkProps,
   ) => {
     const active = onList && search.kind === s.kind && search.status === s.status;
     return (
@@ -132,6 +132,7 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
         activeOptions={{ exact: true }}
         aria-current={active ? "page" : undefined}
         className={NAV_LINK}
+        {...props}
       >
         <Icon name={icon} />
         <span className="truncate">{label}</span>
@@ -140,42 +141,22 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
     );
   };
 
-  const node = (n: NavNode, depth: number): ReactNode => {
-    const count = counts.get(n.id) ?? 0;
-    if (n.id === "other" && count === 0) return null;
-    const kids = n.children;
-    const expanded = kids ? (open[n.id] ?? activePath.includes(n.id)) : false;
-    return (
-      <li key={n.id} className="flex flex-col">
-        <div className="flex items-center [&>a]:flex-1" style={{ paddingLeft: depth * 14 }}>
-          {link(n.id, n.label, n.icon, { kind: n.id }, count)}
-          {kids && (
-            <button
-              type="button"
-              className="ib size-7!"
-              aria-expanded={expanded}
-              aria-label={`${expanded ? "Collapse" : "Expand"} ${n.label}`}
-              onClick={() => setOpen((o) => ({ ...o, [n.id]: !expanded }))}
-            >
-              <Icon name="chev" className={`size-3.5 transition-transform ${expanded ? "rotate-90" : ""}`} />
-            </button>
-          )}
-        </div>
-        {kids && expanded && (
-          <ul className="flex flex-col gap-px border-l border-line" style={{ marginLeft: depth * 14 + 17 }}>
-            {kids.map((c) => node(c, 0))}
-          </ul>
-        )}
-      </li>
-    );
-  };
-
   return (
     <nav className="mt-4 flex flex-col gap-px" aria-label={`Browse ${cluster.name}`}>
       <h3 className="mx-2.5 mb-1.5 text-12 font-medium text-ink-3">Browse</h3>
       {link("all", "All resources", "list", {}, items?.length)}
       {link("attention", "Needs attention", "alert", { status: "attention" }, attention, true)}
-      <ul className="mt-1 flex flex-col gap-px">{NAV_TREE.map((n) => node(n, 0))}</ul>
+      <div className="mt-1">
+        <NavTree
+          nodes={NAV_TREE}
+          isOpen={(n) => open[n.id] ?? activePath.includes(n.id)}
+          setOpen={(id, on) => setOpen((o) => ({ ...o, [id]: on }))}
+          skip={(n) => n.id === "other" && (counts.get(n.id) ?? 0) === 0}
+          renderLink={(n, props) =>
+            link(n.id, n.label, n.icon, { kind: n.id }, counts.get(n.id) ?? 0, false, props)
+          }
+        />
+      </div>
     </nav>
   );
 }

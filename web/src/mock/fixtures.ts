@@ -863,16 +863,45 @@ const LOG_TEMPLATES: Record<string, () => string> = {
     const code = pick([200, 200, 200, 200, 201, 204, 304, 404, 499, 502]);
     return `${code >= 500 ? "error" : code >= 400 ? "warn" : "info"} 10.0.${ri(0, 255)}.${ri(2, 254)} "${pick(["GET", "GET", "POST"])} ${pick(["/", "/api/cart", "/api/checkout", "/healthz", "/static/app.js"])} HTTP/2.0" ${code} ${ri(120, 48000)}B ${ri(1, 240)}ms`;
   },
-  podinfo: () =>
-    rnd() < 0.08
-      ? "warn slow request path=/api/delay/2 duration=2.01s"
-      : `info ${pick(["request path=/healthz status=200 duration=0.4ms", "request path=/readyz status=200 duration=0.3ms", "request path=/api/info status=200 duration=1.2ms", "cache hit key=info ttl=30s"])}`,
+  // podinfo logs zap JSON and checkout logfmt, so the Logs tab has structured lines to show.
+  podinfo: () => {
+    const r = rnd();
+    const ts = Date.now() / 1000;
+    if (r < 0.05)
+      return JSON.stringify({
+        level: "error",
+        ts,
+        caller: "api/cache.go:112",
+        msg: "cache write failed",
+        error: "dial tcp 10.0.3.14:6379: connect: connection refused",
+        stacktrace:
+          "github.com/stefanprodan/podinfo/pkg/api.(*Server).cacheWrite\n\t/workspace/pkg/api/cache.go:112\ngithub.com/stefanprodan/podinfo/pkg/api.(*Server).infoHandler\n\t/workspace/pkg/api/info.go:48",
+      });
+    if (r < 0.12)
+      return JSON.stringify({
+        level: "warn",
+        ts,
+        caller: "api/delay.go:31",
+        msg: "slow request",
+        path: "/api/delay/2",
+        duration: "2.01s",
+      });
+    return JSON.stringify({
+      level: r < 0.22 ? "debug" : "info",
+      ts,
+      caller: "api/server.go:268",
+      msg: pick(["request completed", "request completed", "cache hit"]),
+      path: pick(["/healthz", "/readyz", "/api/info"]),
+      status: 200,
+      duration: `${(rnd() * 2).toFixed(1)}ms`,
+    });
+  },
   checkout: () => {
     const r = rnd();
     if (r < 0.06)
-      return `error payment provider error: upstream timeout after 3s, order=ord_${sfx(6)} retrying`;
-    if (r < 0.16) return `warn payment provider slow p95=${ri(700, 1200)}ms`;
-    return `info ${pick([`order placed id=ord_${sfx(6)} items=${ri(1, 5)}`, `cart updated session=${sfx(8)} items=${ri(1, 6)}`, "health check ok redis=up db=up"])}`;
+      return `level=error msg="payment provider error" error="upstream timeout after 3s" order=ord_${sfx(6)} retrying=true`;
+    if (r < 0.16) return `level=warn msg="payment provider slow" p95=${ri(700, 1200)}ms`;
+    return `level=info msg=${pick([`"order placed" id=ord_${sfx(6)} items=${ri(1, 5)}`, `"cart updated" session=${sfx(8)} items=${ri(1, 6)}`, `"health check ok" redis=up db=up`])}`;
   },
   redis: () =>
     `info ${pick(["Background saving started", "DB saved on disk", "Synchronization with replica succeeded", `${ri(1, 99)} changes in 300 seconds. Saving...`])}`,

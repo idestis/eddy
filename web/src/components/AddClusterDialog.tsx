@@ -7,15 +7,8 @@ import { isApiError } from "../api/client";
 import { createCluster } from "../api/endpoints";
 import { connectionQuery, keys } from "../api/queries";
 import type { ClusterInfo, ClusterInput, CreatedCluster } from "../api/types";
-import {
-  CLUSTER_PALETTE,
-  coreReady,
-  isConnected,
-  LABEL_MAX,
-  labelError,
-  NAME_MAX,
-  nameError,
-} from "../lib/onboarding";
+import { coreReady, isConnected, LABEL_MAX, labelError, NAME_MAX, nameError } from "../lib/onboarding";
+import { ClusterColorPicker } from "./ClusterColorPicker";
 import { ClusterTile } from "./ClusterSwitch";
 import { ConnectionChecklist, RejectedAttempts } from "./ConnectionStatus";
 import { EnvironmentPicker } from "./EnvironmentPicker";
@@ -144,36 +137,7 @@ export function ClusterForm({ pending, error, onSubmit, onCancel }: ClusterFormP
           />
         </div>
         <EnvironmentPicker value={environment} onChange={setEnvironment} error={errors.environment} />
-        <fieldset className="m-0 flex flex-col gap-2 border-0 p-0">
-          <legend className="mb-2 p-0 text-13 text-ink-2">Colour</legend>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              className="flex size-8 items-center justify-center rounded-full border border-dashed border-line-strong bg-surface-sunken text-ink-3 ring-ink ring-offset-2 ring-offset-surface aria-pressed:ring-2"
-              aria-label="Automatic colour"
-              aria-pressed={color === undefined}
-              title="Automatic: picked for you"
-              onClick={() => setColor(undefined)}
-            >
-              <Icon name="sync" className="size-3.5" />
-            </button>
-            {CLUSTER_PALETTE.map((p) => (
-              <button
-                key={p.token}
-                type="button"
-                className={`size-8 rounded-full ${p.swatch} ring-ink ring-offset-2 ring-offset-surface aria-pressed:ring-2`}
-                aria-label={p.name}
-                aria-pressed={color === p.hex}
-                title={p.name}
-                onClick={() => setColor(p.hex)}
-              />
-            ))}
-            <span className="ml-auto flex items-center gap-2 text-12-5 text-ink-3">
-              Preview
-              <ClusterTile cluster={preview} />
-            </span>
-          </div>
-        </fieldset>
+        <ClusterColorPicker value={color} onChange={setColor} name={name} preview={preview} />
         <label className="flex items-start gap-3 rounded-xl border border-line-strong px-3.5 py-3 has-checked:border-c has-checked:bg-c-soft">
           <input
             type="checkbox"

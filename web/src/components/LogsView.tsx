@@ -1,63 +1,67 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { logsUrl } from "../api/endpoints";
+import { useMe } from "../api/queries";
 import type { Resource } from "../api/types";
 import { useAppState } from "../lib/appState";
 import { useKeys } from "../lib/keys";
+import { buildAttachment } from "../lib/logAttachments";
+import { type LogFormat, setViewPrefs, useViewPrefs } from "../lib/viewPrefs";
+import { filterLines, type LogLevel, type LogLine, levelCounts, toLine } from "../lib/workloadLogs";
 import { Icon } from "./Icon";
+import { type AskMode, FormatToggle, LevelChips, LogLines } from "./LogLines";
+import { Select } from "./Select";
 import { KeyHint } from "./Status";
+import { useToast } from "./Toasts";
+import { HEAD_BTN } from "./WorkloadLogsView";
 
 const MAX_LINES = 5_000;
 const TAIL = 500;
-
-type Level = "error" | "warn" | "info" | "meta";
-
-interface Line {
-  id: number;
-  text: string;
-  level: Level;
-}
-
-function levelOf(text: string): Level {
-  if (/\b(error|err|fatal|panic|failed)\b/i.test(text)) return "error";
-  if (/\bwarn(ing)?\b/i.test(text)) return "warn";
-  return "info";
-}
 
 type StreamStatus = "connecting" | "streaming" | "ended" | "error";
 
 /** Streams GET …/pods/{ns}/{name}/logs over SSE. Follow keeps the view pinned to the newest line. */
 export function LogsView({ cluster, pod }: { cluster: string; pod: Resource }) {
-  const [lines, setLines] = useState<Line[]>([]);
-  const [follow, setFollow] = useState(true);
+  const saved = useViewPrefs();
+  const { data: me } = useMe();
+  const toast = useToast();
+  const [lines, setLines] = useState<LogLine[]>([]);
+  const [follow, setFollow] = useState(saved.logFollow ?? true);
+  const [unseen, setUnseen] = useState(0);
   const [status, setStatus] = useState<StreamStatus>("connecting");
   const [attempt, setAttempt] = useState(0);
-  const body = useRef<HTMLDivElement>(null);
-  const { ask } = useAppState();
+  const [levels, setLevels] = useState<ReadonlySet<LogLevel> | undefined>();
+  const { askWithLogs } = useAppState();
   const containers = pod.containers ?? [];
   const [container, setContainer] = useState<string | undefined>(containers[0]);
   // Keep the choice valid when the pod summary changes (for example after a restart).
   const current = container && containers.includes(container) ? container : containers[0];
+  const format: LogFormat = saved.logFormat ?? "structured";
+  const followRef = useRef(follow);
+  followRef.current = follow;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` restarts the stream on retry
   useEffect(() => {
     let next = 0;
     setLines([]);
+    setUnseen(0);
     setStatus("connecting");
     const q = new URLSearchParams({ tail: String(TAIL), follow: "true" });
     if (current) q.set("container", current);
     const url = `${logsUrl(cluster, pod.namespace, pod.name)}?${q}`;
     const source = new EventSource(url);
-    const append = (texts: string[], level?: Level) =>
+    const append = (added: LogLine[]) => {
       setLines((prev) => {
-        const added = texts.map((text) => ({ id: next++, text, level: level ?? levelOf(text) }));
         const all = prev.concat(added);
         return all.length > MAX_LINES ? all.slice(all.length - MAX_LINES) : all;
       });
+      if (!followRef.current) setUnseen((n) => n + added.length);
+    };
     source.addEventListener("open", () => setStatus("streaming"));
     source.addEventListener("log", (ev) => {
       try {
         const data = JSON.parse((ev as MessageEvent<string>).data) as { lines?: string[] };
-        if (data.lines?.length) append(data.lines);
+        if (data.lines?.length)
+          append(data.lines.map((line) => toLine({ pod: pod.name, container: current, line }, next++)));
       } catch {
         // Ignore a malformed frame; the next one will do.
       }
@@ -65,7 +69,7 @@ export function LogsView({ cluster, pod }: { cluster: string; pod: Resource }) {
     source.addEventListener("end", () => {
       source.close();
       setStatus("ended");
-      append(["— end of stream —"], "meta");
+      append([toLine({ pod: "", line: "End of stream", marker: "ended" }, next++)]);
     });
     source.addEventListener("error", () => {
       source.close();
@@ -74,25 +78,39 @@ export function LogsView({ cluster, pod }: { cluster: string; pod: Resource }) {
     return () => source.close();
   }, [cluster, pod.namespace, pod.name, current, attempt]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-pin to the bottom whenever lines arrive
-  useEffect(() => {
-    if (follow && body.current) body.current.scrollTop = body.current.scrollHeight;
-  }, [lines, follow]);
+  const shown = useMemo(() => filterLines(lines, { levels }), [lines, levels]);
+  const counts = useMemo(() => levelCounts(lines), [lines]);
+  const aiLogs = Boolean(me?.features.ai && me.features.aiLogs);
 
-  const scrollBy = (dy: number) => body.current?.scrollBy({ top: dy });
-  useKeys({
-    follow: () => setFollow((f) => !f),
-    down: () => scrollBy(60),
-    up: () => {
-      setFollow(false);
-      scrollBy(-60);
-    },
-    top: () => {
-      setFollow(false);
-      body.current?.scrollTo({ top: 0 });
-    },
-    bottom: () => setFollow(true),
-  });
+  const resume = () => {
+    setUnseen(0);
+    setFollow(true);
+  };
+  const toggleFollow = () => {
+    const on = !follow;
+    if (on) resume();
+    else setFollow(false);
+    setViewPrefs({ logFollow: on });
+  };
+
+  const ask = (picked: readonly LogLine[], mode: AskMode | "all") => {
+    const { attachment, total } = buildAttachment(picked, `${pod.namespace}/${pod.name}/${current ?? ""}`);
+    if (!attachment.lines.length) {
+      toast("There are no log lines to attach yet.");
+      return;
+    }
+    askWithLogs({
+      attachment,
+      total,
+      question:
+        mode === "all"
+          ? "Summarize these logs. Any errors or warnings I should care about?"
+          : "What's wrong in these log lines?",
+      link: { cluster, ref: pod },
+    });
+  };
+
+  useKeys({ follow: toggleFollow });
 
   const statusText = {
     connecting: "connecting…",
@@ -101,15 +119,12 @@ export function LogsView({ cluster, pod }: { cluster: string; pod: Resource }) {
     error: "disconnected",
   }[status];
 
-  const headBtn =
-    "flex h-[34px] items-center gap-[7px] rounded-[9px] border border-white/14 px-[11px] text-13 aria-pressed:bg-white/10 [&_kbd]:border-white/20 [&_kbd]:bg-transparent [&_kbd]:text-code-dim";
-
   return (
     <section
-      className="flex h-[max(360px,calc(100vh-400px))] flex-1 flex-col overflow-hidden rounded-[14px] bg-code-bg text-code-ink"
+      className="relative flex h-[max(360px,calc(100vh-400px))] flex-1 flex-col overflow-hidden rounded-[14px] bg-code-bg text-code-ink"
       aria-label={`Logs of ${pod.name}`}
     >
-      <div className="flex flex-wrap items-center gap-3 border-b border-code-line px-3.5 py-2.5">
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-code-line px-3.5 py-2.5">
         <div className="flex min-w-0 flex-1 flex-col">
           <b className="truncate font-mono text-13-5 font-semibold">{pod.name}</b>
           <span className="text-12 text-code-dim">
@@ -118,68 +133,64 @@ export function LogsView({ cluster, pod }: { cluster: string; pod: Resource }) {
           </span>
         </div>
         {containers.length > 1 && (
-          <label className="flex items-center gap-2 text-12 text-code-dim">
+          <div className="flex items-center gap-2 text-12 text-code-dim">
             Container
-            <select
-              value={current}
-              onChange={(e) => setContainer(e.target.value)}
-              className="h-[34px] rounded-[9px] border border-white/14 bg-code-bg px-2.5 font-mono text-12-5 text-code-ink outline-none focus:border-c"
-              aria-label="Container"
-            >
-              {containers.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </label>
+            <Select
+              tone="code"
+              label="Container"
+              value={current ?? ""}
+              onChange={setContainer}
+              options={containers.map((c, i) => ({ value: c, label: c, meta: i === 0 ? "main" : undefined }))}
+            />
+          </div>
         )}
         {status === "error" && (
-          <button type="button" className={headBtn} onClick={() => setAttempt((a) => a + 1)}>
+          <button type="button" className={HEAD_BTN} onClick={() => setAttempt((a) => a + 1)}>
             <Icon name="sync" />
             Retry
           </button>
         )}
-        <button
-          type="button"
-          className={headBtn}
-          onClick={() => ask("Summarize these logs. Any errors or warnings I should care about?")}
-        >
-          <Icon name="spark" />
-          Explain logs
-        </button>
-        <button type="button" className={headBtn} aria-pressed={follow} onClick={() => setFollow(!follow)}>
+        <FormatToggle value={format} onChange={(f) => setViewPrefs({ logFormat: f })} />
+        {aiLogs && (
+          <button
+            type="button"
+            className={HEAD_BTN}
+            disabled={shown.length === 0}
+            title="Ask AI about the lines shown (the newest 500)"
+            onClick={() => ask(shown, "all")}
+          >
+            <Icon name="spark" />
+            Ask AI
+          </button>
+        )}
+        <button type="button" className={HEAD_BTN} aria-pressed={follow} onClick={toggleFollow}>
           <span
-            className={`size-2 rounded-full ${follow ? "bg-code-ok shadow-[0_0_0_3px_rgb(74_222_128/0.2)]" : "bg-code-dim"}`}
+            className={`size-2 rounded-full transition-colors duration-(--duration-base) ${follow ? "bg-code-ok shadow-[0_0_0_3px_rgb(74_222_128/0.2)]" : "bg-code-dim"}`}
           />
           Follow <KeyHint id="follow" />
         </button>
       </div>
-      <div
-        ref={body}
-        className="min-h-0 flex-1 overflow-auto pt-2 pb-6 font-mono text-12-5 leading-[1.6]"
-        role="log"
-        aria-live="off"
-        tabIndex={-1}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          if (follow && el.scrollHeight - el.scrollTop - el.clientHeight > 24) setFollow(false);
-        }}
-      >
-        {lines.length === 0 && status !== "error" && (
-          <div className={`${LINE} lg-meta`}>Waiting for log lines…</div>
-        )}
-        {status === "error" && lines.length === 0 && (
-          <div className={`${LINE} lg-meta`}>The log stream is not available.</div>
-        )}
-        {lines.map((l) => (
-          <div key={l.id} className={`${LINE} lg-${l.level}`}>
-            {l.text}
-          </div>
-        ))}
+      <div className="flex flex-wrap items-center gap-2 border-b border-code-line px-3.5 py-2">
+        <LevelChips counts={counts} picked={levels} onChange={setLevels} />
       </div>
+      <LogLines
+        lines={shown}
+        format={format}
+        query=""
+        showContainer={false}
+        follow={follow}
+        setFollow={setFollow}
+        unseen={unseen}
+        onResume={resume}
+        onAsk={aiLogs ? (sel, mode) => ask(sel, mode) : undefined}
+        emptyText={
+          status === "error"
+            ? "The log stream is not available."
+            : lines.length
+              ? "No lines match the filters."
+              : "Waiting for log lines…"
+        }
+      />
     </section>
   );
 }
-
-const LINE = "px-4 py-px break-words whitespace-pre-wrap hover:bg-white/4";

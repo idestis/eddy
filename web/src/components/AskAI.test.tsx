@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClusterInfo, Message, Thread } from "../api/types";
 import { AppStateProvider, useAppState } from "../lib/appState";
@@ -12,6 +12,13 @@ const api = vi.hoisted(() => ({ askAI: vi.fn(), getThread: vi.fn(), listThreads:
 vi.mock("../api/endpoints", async (orig) => ({
   ...(await orig<typeof import("../api/endpoints")>()),
   ...api,
+}));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, title, onClick }: { children: ReactNode; title?: string; onClick?: () => void }) => (
+    <a href="/" title={title} onClick={onClick}>
+      {children}
+    </a>
+  ),
 }));
 vi.mock("../api/queries", async (orig) => ({
   ...(await orig<typeof import("../api/queries")>()),
@@ -62,8 +69,19 @@ beforeEach(() => {
   api.listThreads.mockReset().mockResolvedValue({ items: [] });
 });
 
+const logs = {
+  attachment: {
+    kind: "logs" as const,
+    source: "flux-system/apps-7d9f/manager",
+    lines: ["[apps-7d9f/manager] error: boom"],
+  },
+  total: 1,
+  question: "What's wrong in these log lines?",
+  link: { cluster: "staging", ref: { kind: "Pod", namespace: "flux-system", name: "apps-7d9f" } },
+};
+
 function Probe() {
-  const { pane, startNewChat, ask } = useAppState();
+  const { pane, startNewChat, ask, askWithLogs } = useAppState();
   // biome-ignore lint/correctness/useExhaustiveDependencies: open Ask AI once, like the tab or `a`
   useEffect(() => ask(), []);
   return (
@@ -71,6 +89,9 @@ function Probe() {
       <output aria-label="pane">{pane}</output>
       <button type="button" onClick={startNewChat}>
         palette new chat
+      </button>
+      <button type="button" onClick={() => askWithLogs(logs)}>
+        ask about lines
       </button>
     </>
   );
@@ -103,6 +124,42 @@ describe("turnsFromMessages", () => {
 });
 
 describe("Ask AI panel", () => {
+  it("opens a new chat with log lines attached and the question selected, and sends them", async () => {
+    const user = setup();
+    await user.type(box(), "first{Enter}");
+    await screen.findByText("All good.");
+    await user.click(screen.getByRole("button", { name: "ask about lines" }));
+    // A new chat, not the current thread.
+    await waitFor(() => expect(screen.queryByText("All good.")).toBeNull());
+    expect(screen.getByText("1 line · flux-system/apps-7d9f/manager")).toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement).toBe(box()));
+    expect(box()).toHaveValue("What's wrong in these log lines?");
+    const el = box() as HTMLTextAreaElement;
+    expect(el.selectionEnd - el.selectionStart).toBe(el.value.length);
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    expect(screen.getByText("[apps-7d9f/manager] error: boom")).toBeInTheDocument();
+    await user.click(box());
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(api.askAI).toHaveBeenCalledTimes(2));
+    expect(api.askAI.mock.calls[1]?.[0]).toMatchObject({
+      question: "What's wrong in these log lines?",
+      attachments: [logs.attachment],
+    });
+    expect(api.askAI.mock.calls[1]?.[0].threadId).toBeUndefined();
+    // The sent message keeps the lines, marked attached; the composer is empty again.
+    expect(screen.getByText("attached")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove the attached lines" })).toBeNull();
+  });
+
+  it("removes an attachment before sending", async () => {
+    const user = setup();
+    await user.click(screen.getByRole("button", { name: "ask about lines" }));
+    await user.click(await screen.findByRole("button", { name: "Remove the attached lines" }));
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(api.askAI).toHaveBeenCalledOnce());
+    expect(api.askAI.mock.calls[0]?.[0].attachments).toBeUndefined();
+  });
+
   it("starts a new chat without sending the old thread id", async () => {
     const user = setup();
     expect(screen.getByRole("button", { name: /New chat/ })).toBeDisabled();

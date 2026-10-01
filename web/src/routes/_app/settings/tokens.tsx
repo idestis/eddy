@@ -9,6 +9,7 @@ import { DataTable } from "../../../components/DataTable";
 import { Icon } from "../../../components/Icon";
 import { PageHead } from "../../../components/PageHead";
 import { Screen } from "../../../components/Screen";
+import { Select } from "../../../components/Select";
 import { useToast } from "../../../components/Toasts";
 import { ago, dateTime } from "../../../lib/format";
 import { claudeCommand } from "../../../lib/mcp";
@@ -131,7 +132,7 @@ function TokensPage() {
   const tokens = useQuery(tokensQuery);
   const [name, setName] = useState("");
   const [scope, setScope] = useState<TokenScope>("read");
-  const [ttl, setTtl] = useState("720h");
+  const [ttl, setTtl] = useState<string>("720h");
   const [created, setCreated] = useState<CreatedToken | null>(null);
 
   const create = useMutation({
@@ -193,16 +194,16 @@ function TokensPage() {
                 required
               />
             </label>
-            <label className="field">
-              Expires after
-              <select value={ttl} onChange={(e) => setTtl(e.target.value)}>
-                {TTLS.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="field">
+              <span>Expires after</span>
+              <Select
+                label="Expires after"
+                value={ttl}
+                onChange={setTtl}
+                className="w-full"
+                options={TTLS.map((t) => ({ value: t.value, label: t.label }))}
+              />
+            </div>
           </div>
           <fieldset className="m-0 flex flex-col gap-1.5 border-0 p-0">
             <legend className="mb-1.5 p-0 text-13 text-ink-2">Scopes</legend>

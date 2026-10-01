@@ -1,5 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  type CSSProperties,
   memo,
   type Ref,
   type RefObject,
@@ -13,9 +14,10 @@ import {
 import type { Resource } from "../api/types";
 import { age, listMessage, revisionOf, revisionTitle } from "../lib/format";
 import { kindInfo } from "../lib/kinds";
+import { type ClusterMotion, NO_MOTION, type Requested } from "../lib/liveMotion";
 import type { Row } from "../lib/resourceRows";
 import { Icon } from "./Icon";
-import { StatusPill } from "./Status";
+import { RequestedBadge, StatusPill } from "./Status";
 
 const ROW_HEIGHT = 40;
 const GROUP_HEIGHT = 34;
@@ -94,6 +96,12 @@ interface ResourceListProps {
   onOpen: (r: Resource) => void;
   label: string;
   ref?: Ref<ResourceListHandle>;
+  /** Live changes to show: status flashes, rows entering and leaving. */
+  motion?: ClusterMotion;
+  /** Rows waiting for the result of an action the user requested. */
+  requested?: ReadonlyMap<string, Requested>;
+  /** The cluster is disconnected: the rows are its last known state. */
+  stale?: boolean;
 }
 
 export interface ResourceListHandle {
@@ -108,15 +116,28 @@ const ResourceRow = memo(function ResourceRow({
   selected,
   onSelect,
   onOpen,
+  motion,
+  requested,
 }: {
   r: Resource;
   columns: Columns;
   selected: boolean;
   onSelect: (r: Resource) => void;
   onOpen: (r: Resource) => void;
+  motion: ClusterMotion;
+  requested: Requested | undefined;
 }) {
   const info = kindInfo(r.kind);
   const message = r.inventoryOnly ? INVENTORY_ONLY_HINT : listMessage(r);
+  const now = Date.now();
+  const change = motion.changed.get(r.id);
+  const flash = change?.kind === "status" ? change.to : undefined;
+  const entered = motion.entered.get(r.id);
+  const leaving = motion.leaving.has(r.id);
+  // A row that scrolls back into view mid-animation resumes it (negative delay).
+  const live: Record<string, string> = {};
+  if (change) live["--flash-delay"] = `${change.at - now}ms`;
+  if (entered !== undefined) live["--enter-delay"] = `${entered - now}ms`;
   const cell = (id: ColumnId) => {
     switch (id) {
       case "name":
@@ -143,7 +164,10 @@ const ResourceRow = memo(function ResourceRow({
             Inventory
           </span>
         ) : (
-          <StatusPill key={id} status={r.status} />
+          // Keyed by status: a new status swaps in instead of jumping.
+          <span key={`${id}:${r.status}`} className={`inline-flex min-w-0 ${flash ? "swap-in" : ""}`}>
+            <StatusPill status={r.status} />
+          </span>
         );
       case "replicas":
         // A finished Job has no replicas; its completions ("1/1") are shown muted, as history.
@@ -166,12 +190,15 @@ const ResourceRow = memo(function ResourceRow({
         );
       case "message":
         return (
-          <span
-            key={id}
-            className={`${CELL} text-12-5 ${r.status === "failed" && !r.inventoryOnly ? "text-bad" : "text-ink-2"}`}
-            title={r.message}
-          >
-            {message}
+          <span key={id} className="flex min-w-0 items-center gap-2">
+            {requested && <RequestedBadge req={requested} />}
+            <span
+              key={message}
+              className={`${CELL} text-12-5 ${r.status === "failed" && !r.inventoryOnly ? "text-bad" : "text-ink-2"} ${change ? "swap-fade" : ""}`}
+              title={r.message}
+            >
+              {message}
+            </span>
           </span>
         );
       case "version":
@@ -195,9 +222,13 @@ const ResourceRow = memo(function ResourceRow({
       role="option"
       tabIndex={-1}
       aria-selected={selected}
+      aria-disabled={leaving || undefined}
       title={r.inventoryOnly ? INVENTORY_ONLY_HINT : undefined}
-      className={`grid h-full cursor-default items-center gap-3.5 rounded-[10px] px-3 hover:bg-surface-sunken aria-selected:bg-c-soft aria-selected:shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--c)_30%,transparent)] ${r.inventoryOnly ? "opacity-55" : ""}`}
-      style={{ gridTemplateColumns: columns.template }}
+      data-flash={flash}
+      data-enter={entered !== undefined ? "" : undefined}
+      data-leaving={leaving ? "" : undefined}
+      className={`live-row grid h-full cursor-default items-center gap-3.5 rounded-[10px] px-3 hover:bg-surface-sunken aria-selected:bg-c-soft aria-selected:shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--c)_30%,transparent)] ${r.inventoryOnly ? "opacity-55" : ""}`}
+      style={{ gridTemplateColumns: columns.template, ...live } as CSSProperties}
       onClick={() => (selected ? onOpen(r) : onSelect(r))}
       onDoubleClick={() => onOpen(r)}
     >
@@ -227,7 +258,18 @@ function useWidth(ref: RefObject<HTMLElement | null>): number {
  * stays smooth with thousands of rows. The container is a listbox that keeps
  * focus; the selected row is announced with aria-activedescendant.
  */
-export function ResourceList({ rows, grouped, selectedId, onSelect, onOpen, label, ref }: ResourceListProps) {
+export function ResourceList({
+  rows,
+  grouped,
+  selectedId,
+  onSelect,
+  onOpen,
+  label,
+  ref,
+  motion = NO_MOTION,
+  requested,
+  stale = false,
+}: ResourceListProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box);
@@ -242,6 +284,10 @@ export function ResourceList({ rows, grouped, selectedId, onSelect, onOpen, labe
     overscan: 12,
   });
 
+  // Rows glide to new places only around live inserts, removals and re-sorts, never
+  // when a filter or a scroll moves them.
+  const settling = motion.settleUntil > Date.now();
+
   const selectedIndex = selectedId ? rows.findIndex((r) => r.key === selectedId) : -1;
   useEffect(() => {
     if (selectedIndex >= 0) virtualizer.scrollToIndex(selectedIndex, { align: "auto" });
@@ -250,7 +296,8 @@ export function ResourceList({ rows, grouped, selectedId, onSelect, onOpen, labe
   return (
     <div
       ref={box}
-      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface"
+      className="stale-able flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-line bg-surface"
+      data-stale={stale}
     >
       <div
         className="grid shrink-0 items-center gap-3.5 border-b border-line bg-surface-side py-[9px] pr-4 pl-4 text-12 text-ink-3"
@@ -278,7 +325,7 @@ export function ResourceList({ rows, grouped, selectedId, onSelect, onOpen, labe
             return (
               <div
                 key={v.key}
-                className="absolute top-0 left-0 w-full px-1"
+                className={`absolute top-0 left-0 w-full px-1 ${settling ? "glide" : ""}`}
                 style={{ height: v.size, transform: `translateY(${v.start}px)` }}
               >
                 {row.type === "group" ? (
@@ -298,6 +345,8 @@ export function ResourceList({ rows, grouped, selectedId, onSelect, onOpen, labe
                     selected={row.key === selectedId}
                     onSelect={onSelect}
                     onOpen={onOpen}
+                    motion={motion}
+                    requested={requested?.get(row.resource.id)}
                   />
                 )}
               </div>

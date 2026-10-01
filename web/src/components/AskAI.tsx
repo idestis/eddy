@@ -1,19 +1,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { isApiError } from "../api/client";
 import { askAI, getThread } from "../api/endpoints";
 import { threadsQuery, useMe } from "../api/queries";
-import type { AskStep, ClusterInfo, Message, Resource, Thread } from "../api/types";
+import type { AskAttachment, AskStep, ClusterInfo, Message, Resource, Thread } from "../api/types";
 import { ASK_PANEL_ATTR, useAppState } from "../lib/appState";
 import { ago, bytes } from "../lib/format";
 import { kindInfo } from "../lib/kinds";
+import { detailLink } from "../lib/links";
+import { attachmentLabel, type PendingAttachment } from "../lib/logAttachments";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
 import { StatusIcon } from "./Status";
 
 export type Turn =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; attachment?: PendingAttachment }
   | { kind: "ai"; message: Message; steps: AskStep[] }
   | { kind: "error"; text: string };
 
@@ -25,7 +28,10 @@ interface Conversation {
 
 interface AskAIStore {
   get: (key: string) => Conversation | undefined;
-  send: (key: string, req: { cluster: string; resourceId?: string; question: string }) => Promise<void>;
+  send: (
+    key: string,
+    req: { cluster: string; resourceId?: string; question: string; attachment?: PendingAttachment },
+  ) => Promise<void>;
   reset: (key: string) => void;
   /** Replaces a conversation with a stored ask thread, so the next question continues it. */
   load: (key: string, threadId: string, turns: Turn[]) => void;
@@ -59,9 +65,15 @@ export function AskAIProvider({ children }: { children: ReactNode }) {
     async (key, req) => {
       const current = ref.current.get(key);
       if (current?.busy) return;
-      patch(key, (c) => ({ ...c, busy: true, turns: [...c.turns, { kind: "user", text: req.question }] }));
+      const { attachment, ...rest } = req;
+      patch(key, (c) => ({
+        ...c,
+        busy: true,
+        turns: [...c.turns, { kind: "user", text: req.question, attachment }],
+      }));
       try {
-        const res = await askAI({ ...req, threadId: current?.threadId });
+        const attachments: AskAttachment[] | undefined = attachment ? [attachment.attachment] : undefined;
+        const res = await askAI({ ...rest, attachments, threadId: current?.threadId });
         patch(key, (c) => ({
           threadId: res.threadId,
           busy: false,
@@ -109,10 +121,11 @@ export function suggestions(cluster: ClusterInfo, r: Resource | undefined): stri
       ? [`What's failing on ${cluster.name} and why?`, "Which chart versions are deployed here?"]
       : [`Is anything unhealthy on ${cluster.name}?`, "Summarize this cluster in 3 bullets"];
   }
+  // Logs reach the AI only as attachments from the Logs tab, so no suggestion promises them.
   if (r.kind === "Pod")
     return r.status === "ready" || r.status === "completed"
-      ? ["Summarize the recent logs", "Which image is this?"]
-      : ["Why is this pod not running?", "Summarize the recent logs"];
+      ? ["Which image is this?", "What owns this pod?"]
+      : ["Why is this pod not running?", "What do its events say?"];
   if (r.status === "failed")
     return [`Why is ${r.name} failing?`, "How do I fix it?", "What was the last working version?"];
   if (r.status === "suspended")
@@ -242,7 +255,7 @@ function AskHistory({
 function AIMessage({ turn, provider }: { turn: Extract<Turn, { kind: "ai" }>; provider?: string }) {
   const model = turn.message.author.client;
   return (
-    <div className="max-w-full">
+    <div className="min-w-0 max-w-full">
       <div className="mb-1.5 flex items-center gap-1.5 text-11-5 text-ink-3">
         <span className="badge badge-ai">
           <Icon name="spark" />
@@ -275,8 +288,18 @@ interface AskAIPanelProps {
 export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
   const { data: me } = useMe();
   const store = useAskAI();
-  const { askFocus, takeAskFocus, takeNewChat, pendingQuestion, clearPendingQuestion, setPane } =
-    useAppState();
+  const {
+    askFocus,
+    takeAskFocus,
+    takeNewChat,
+    pendingQuestion,
+    clearPendingQuestion,
+    setPane,
+    pendingAttachment,
+    clearPendingAttachment,
+  } = useAppState();
+  const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
+  const [selectDraft, setSelectDraft] = useState(0);
   const qc = useQueryClient();
   const [wholeCluster, setWholeCluster] = useState(false);
   const [draft, setDraft] = useState("");
@@ -295,14 +318,21 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
       const q = question.trim();
       if (!q || !enabled) return;
       setDraft("");
-      void store.send(key, { cluster: cluster.name, resourceId: target?.id, question: q });
+      setAttachment(null);
+      void store.send(key, {
+        cluster: cluster.name,
+        resourceId: target?.id,
+        question: q,
+        attachment: attachment ?? undefined,
+      });
     },
-    [enabled, store, key, cluster.name, target?.id],
+    [enabled, store, key, cluster.name, target?.id, attachment],
   );
 
   const newChat = useCallback(() => {
     store.reset(key);
     setDraft("");
+    setAttachment(null);
     input.current?.focus();
   }, [store, key]);
 
@@ -335,6 +365,24 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
   useEffect(() => {
     if (takeAskFocus()) input.current?.focus();
   }, [askFocus, takeAskFocus]);
+
+  // Log lines from a Logs tab: a new chat, the lines in the composer, the suggested
+  // question selected so typing replaces it.
+  useEffect(() => {
+    if (!pendingAttachment) return;
+    clearPendingAttachment();
+    store.reset(key);
+    setAttachment(pendingAttachment);
+    setDraft(pendingAttachment.question);
+    setSelectDraft((n) => n + 1);
+  }, [pendingAttachment, clearPendingAttachment, store, key]);
+
+  // After the suggested question is in the box: focus it, all selected.
+  useEffect(() => {
+    if (!selectDraft) return;
+    input.current?.focus();
+    input.current?.select();
+  }, [selectDraft]);
 
   useEffect(() => {
     if (!pendingQuestion) return;
@@ -375,10 +423,19 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
         <div className="flex min-w-0 items-center gap-2">
           About
           <span className="inline-flex min-h-[30px] min-w-0 max-w-full items-center gap-[7px] rounded-full border border-line-strong bg-surface py-1 pr-1.5 pl-[9px] font-mono text-12 text-ink">
-            <span className="size-[7px] shrink-0 rounded-full bg-c" />
-            <span className="truncate">
-              {target ? `${kindInfo(target.kind).abbr} ${target.name}` : `all of ${cluster.name}`}
-            </span>
+            <Link
+              {...(target
+                ? detailLink(cluster.name, target)
+                : { to: "/c/$cluster" as const, params: { cluster: cluster.name } })}
+              className="-my-1 -ml-[9px] inline-flex min-w-0 items-center gap-[7px] rounded-full py-1 pl-[9px] pr-1 text-ink no-underline hover:bg-surface-sunken"
+              title={target ? `Open ${target.name}` : `Open ${cluster.name}`}
+              onClick={() => setPane("details")}
+            >
+              <span className="size-[7px] shrink-0 rounded-full bg-c" />
+              <span className="truncate">
+                {target ? `${kindInfo(target.kind).abbr} ${target.name}` : `all of ${cluster.name}`}
+              </span>
+            </Link>
             {resource && (
               <button
                 type="button"
@@ -426,9 +483,12 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
               <div
                 // biome-ignore lint/suspicious/noArrayIndexKey: the transcript only grows
                 key={i}
-                className="max-w-[88%] self-end rounded-[14px_14px_4px_14px] bg-ink px-[13px] py-[9px] text-13-5 break-words whitespace-pre-wrap text-surface"
+                className="flex max-w-[88%] flex-col items-end gap-1.5 self-end"
               >
-                {t.text}
+                {t.attachment && <AttachmentChip pending={t.attachment} sent />}
+                <div className="rounded-[14px_14px_4px_14px] bg-ink px-[13px] py-[9px] text-13-5 break-words whitespace-pre-wrap text-surface">
+                  {t.text}
+                </div>
               </div>
             ) : t.kind === "ai" ? (
               <AIMessage key={t.message.id} turn={t} provider={me?.features.aiProvider} />
@@ -467,6 +527,15 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
             New chat
           </button>
         </div>
+        {attachment && (
+          <AttachmentChip
+            pending={attachment}
+            onRemove={() => {
+              setAttachment(null);
+              input.current?.focus();
+            }}
+          />
+        )}
         <div className="flex items-end gap-2 rounded-[14px] border border-line-strong bg-surface py-1.5 pr-1.5 pl-3 focus-within:border-c focus-within:ring-3 focus-within:ring-c/15 has-disabled:opacity-60">
           <AutoGrowTextarea
             ref={input}
@@ -515,6 +584,70 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
           </span>
         </div>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Log lines attached to a question: in the composer (removable) or on a sent message.
+ * The source opens its Logs tab; the lines expand into a preview.
+ */
+export function AttachmentChip({
+  pending,
+  onRemove,
+  sent,
+}: {
+  pending: PendingAttachment;
+  onRemove?: () => void;
+  sent?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const { setPane } = useAppState();
+  const link = pending.link;
+  const label = attachmentLabel(pending);
+  return (
+    <div
+      className={`anim-fade-in flex min-w-0 flex-col rounded-xl border text-12 ${sent ? "self-end border-line bg-surface-sunken" : "border-c/35 bg-c-soft"}`}
+    >
+      <div className="flex min-w-0 items-center gap-1.5 py-1 pr-1 pl-2">
+        <Icon name="file" className="size-3.5 shrink-0 text-c" />
+        {sent && <span className="shrink-0 font-semibold text-ink-2">attached</span>}
+        {link ? (
+          <Link
+            {...detailLink(link.cluster, link.ref, "logs")}
+            className="min-w-0 truncate font-mono text-ink no-underline hover:underline"
+            title={`Open the logs of ${link.ref.name}`}
+            onClick={() => setPane("details")}
+          >
+            {label}
+          </Link>
+        ) : (
+          <span className="min-w-0 truncate font-mono">{label}</span>
+        )}
+        <button
+          type="button"
+          className="ml-auto inline-flex h-6 shrink-0 items-center rounded-md px-1.5 text-11-5 text-ink-3 hover:bg-surface hover:text-ink"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "Hide" : "Preview"}
+        </button>
+        {onRemove && (
+          <button
+            type="button"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-ink-3 hover:bg-surface hover:text-ink"
+            aria-label="Remove the attached lines"
+            onClick={onRemove}
+          >
+            <Icon name="x" className="size-3.5" />
+          </button>
+        )}
+      </div>
+      {open && (
+        <pre className="anim-fade-in m-0 max-h-48 overflow-auto border-t border-line bg-code-bg px-2.5 py-2 font-mono text-11-5 leading-[1.5] whitespace-pre text-code-ink">
+          {pending.attachment.lines.join("\n")}
+        </pre>
+      )}
     </div>
   );
 }

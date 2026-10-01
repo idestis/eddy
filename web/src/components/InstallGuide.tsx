@@ -4,6 +4,7 @@ import { dateTime } from "../lib/format";
 import { expiresIn } from "../lib/onboarding";
 import { CopyButton } from "./CopyButton";
 import { Icon } from "./Icon";
+import { TabIndicator, useTabIndicator } from "./TabIndicator";
 
 type GuideTab = "helm" | "values" | "manifests" | "clusterResource";
 
@@ -28,6 +29,7 @@ export function InstallGuide({ guide, joinToken }: { guide: Guide; joinToken?: J
   const id = useId();
   const current = TABS.find((t) => t.id === tab) ?? TABS[0];
   const text = guide[tab];
+  const tabList = useTabIndicator(tab);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
@@ -63,11 +65,13 @@ export function InstallGuide({ guide, joinToken }: { guide: Guide; joinToken?: J
       ))}
       <div>
         <div
+          ref={tabList.list}
           role="tablist"
           aria-label="Install with"
-          className="flex gap-1 overflow-x-auto border-b border-line no-scrollbar"
+          className="relative flex gap-1 overflow-x-auto border-b border-line no-scrollbar"
           onKeyDown={onKeyDown}
         >
+          <TabIndicator ref={tabList.indicator} variant="underline" />
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -77,7 +81,7 @@ export function InstallGuide({ guide, joinToken }: { guide: Guide; joinToken?: J
               aria-selected={t.id === tab}
               aria-controls={`${id}-panel`}
               tabIndex={t.id === tab ? 0 : -1}
-              className="-mb-px border-b-2 border-transparent px-3 py-2 text-13 font-medium whitespace-nowrap text-ink-3 hover:text-ink aria-selected:border-c aria-selected:text-ink"
+              className="px-3 py-2 text-13 font-medium whitespace-nowrap text-ink-3 transition-colors duration-(--duration-base) hover:text-ink aria-selected:text-ink"
               onClick={() => setTab(t.id)}
             >
               {t.label}

@@ -19,6 +19,7 @@ import {
 import { Screen } from "../../../../components/Screen";
 import { SEG, SEG_BTN, SidePanel } from "../../../../components/SidePanel";
 import { AttentionIcon, StatusIcon } from "../../../../components/Status";
+import { TabIndicator, useTabIndicator } from "../../../../components/TabIndicator";
 import { useToast } from "../../../../components/Toasts";
 import { useAppState } from "../../../../lib/appState";
 import { hiddenJobCount, warningFindings } from "../../../../lib/findings";
@@ -27,8 +28,11 @@ import { useKeys } from "../../../../lib/keys";
 import { filterLabel, NAV_TREE, navNode } from "../../../../lib/kinds";
 import { type DetailView, detailLink } from "../../../../lib/links";
 import { recallList, rememberList } from "../../../../lib/listMemory";
+import { useClusterMotion, useRequested, withLeaving } from "../../../../lib/liveMotion";
 import { buildRows, filterResources, type StatusFilter, statusCounts } from "../../../../lib/resourceRows";
 import { useResourceActions } from "../../../../lib/useResourceActions";
+import { resolvePref, setViewPrefs, useViewPrefs } from "../../../../lib/viewPrefs";
+import { WORKLOAD_LOG_KINDS } from "../../../../lib/workloadLogs";
 
 const searchSchema = z.object({
   filter: z.string().optional().catch(undefined),
@@ -144,12 +148,22 @@ function ClusterPage() {
 
   // Typing stays instant; the 5k-row filter runs at a lower priority.
   const text = useDeferredValue(search.filter ?? "");
-  const grouped = search.view !== "flat";
+  // The URL wins when it names a view (shared links); otherwise the saved choice.
+  const savedView = useViewPrefs().listView;
+  const grouped = resolvePref(search.view, savedView, "grouped") !== "flat";
+  const viewSeg = useTabIndicator<HTMLFieldSetElement>(grouped);
+  // Rows deleted by a live delta stay for their exit animation; counts never include them.
+  const motion = useClusterMotion(name);
+  const requested = useRequested(name);
+  const shown = useMemo(() => withLeaving(items, motion.leaving), [items, motion.leaving]);
   const filtered = useMemo(
-    () => filterResources(items, { text, kind: search.kind, status: search.status, namespace }),
-    [items, text, search.kind, search.status, namespace],
+    () => filterResources(shown, { text, kind: search.kind, status: search.status, namespace }),
+    [shown, text, search.kind, search.status, namespace],
   );
   const rows = useMemo(() => buildRows(filtered, grouped), [filtered, grouped]);
+  const filteredCount = motion.leaving.size
+    ? filtered.filter((r) => !motion.leaving.has(r.id)).length
+    : filtered.length;
   // Counts follow the kind filter, so "Failed 3" on Workloads means three failing workloads.
   const inKind = useMemo(
     () => filterResources(items, { kind: search.kind, namespace }),
@@ -157,8 +171,8 @@ function ClusterPage() {
   );
   const counts = useMemo(() => statusCounts(inKind), [inKind]);
   const resourceRows = useMemo(
-    () => rows.flatMap((r) => (r.type === "resource" ? [r.resource] : [])),
-    [rows],
+    () => rows.flatMap((r) => (r.type === "resource" && !motion.leaving.has(r.key) ? [r.resource] : [])),
+    [rows, motion.leaving],
   );
 
   const [selectedId, setSelectedId] = useState<string | undefined>(() => recallList(name).selectedId);
@@ -220,12 +234,12 @@ function ClusterPage() {
     reconcileSource: () => actions.reconcile(selected, true),
     suspend: () => actions.toggleSuspend(selected),
     logs: () =>
-      selected?.kind === "Pod"
+      selected?.kind === "Pod" ||
+      (selected && WORKLOAD_LOG_KINDS.has(selected.kind) && me?.features.workloadLogs)
         ? open(selected, "logs")
-        : toast("Logs are available on pods. Select a pod first."),
-    thread: () => {
-      if (selected)
-        void navigate({ ...detailLink(name, selected), search: { view: "threads", compose: true } });
+        : toast("Logs are available on pods and workloads. Select one first."),
+    tabThreads: () => {
+      if (selected) void navigate(detailLink(name, selected, "threads"));
     },
     owner: () => {
       const owner = selected?.owner;
@@ -248,7 +262,7 @@ function ClusterPage() {
 
   const preview = selected ? (
     <>
-      <ResourceHeader r={selected} />
+      <ResourceHeader r={selected} cluster={name} />
       <ResourceActions
         cluster={cluster}
         r={selected}
@@ -360,12 +374,13 @@ function ClusterPage() {
           </span>
         )}
         <span className="ml-auto text-12-5 whitespace-nowrap text-ink-3" aria-live="polite">
-          {filtered.length === items.length
+          {filteredCount === items.length
             ? `${items.length} resources`
-            : `${filtered.length} of ${items.length}`}
+            : `${filteredCount} of ${items.length}`}
         </span>
-        <fieldset className={`${SEG} m-0 shrink-0`}>
+        <fieldset ref={viewSeg.list} className={`${SEG} m-0 shrink-0`}>
           <legend className="sr-only">View</legend>
+          <TabIndicator ref={viewSeg.indicator} variant="pill" />
           {(
             [
               ["grouped", "Grouped by kind", "layers"],
@@ -378,7 +393,10 @@ function ClusterPage() {
               aria-pressed={(v === "grouped") === grouped}
               className={`${SEG_BTN} flex-none`}
               title={label}
-              onClick={() => setSearch({ view: v === "grouped" ? undefined : "flat" })}
+              onClick={() => {
+                setViewPrefs({ listView: v });
+                setSearch({ view: undefined });
+              }}
             >
               <Icon name={icon} className="size-3.5" />
               <span className="max-[1600px]:sr-only">{v === "grouped" ? "Grouped" : "Flat"}</span>
@@ -386,7 +404,7 @@ function ClusterPage() {
           ))}
         </fieldset>
       </div>
-      {!cluster.connected ? (
+      {!cluster.connected && !data ? (
         <Empty title={`${name} is disconnected`}>Resources appear when its agent reconnects.</Empty>
       ) : isPending ? (
         <Empty>Loading resources…</Empty>
@@ -409,6 +427,9 @@ function ClusterPage() {
           onSelect={(r) => setSelectedId(r.id)}
           onOpen={(r) => open(r)}
           label={`${title} on ${name}`}
+          motion={motion}
+          requested={requested}
+          stale={!cluster.connected}
         />
       )}
     </Screen>

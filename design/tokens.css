@@ -99,6 +99,28 @@
   --radius-card: 16px;
   --radius-dialog: 18px;
   --radius-window: 20px;
+
+  /*
+   * motion: three durations and two easings for every transition. `standard` settles
+   * softly (tabs, fades, rows); `emphasized` overshoots a touch (toasts, popovers).
+   * Under prefers-reduced-motion the durations drop to 0 below, so changes are instant.
+   */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 260ms;
+  /* The row highlight after a live status change. */
+  --duration-flash: 1200ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 1.2, 0.4, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+    --duration-flash: 0ms;
+  }
 }
 
 :root {

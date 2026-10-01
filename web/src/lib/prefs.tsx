@@ -26,6 +26,7 @@ import {
   recordVisit,
   togglePin,
 } from "./frecency";
+import { getViewPrefs, mergeRemoteView, subscribeViewPrefs } from "./viewPrefs";
 
 export const PREFS_STORAGE_KEY = "eddy.prefs.clusters";
 export const SAVE_DELAY_MS = 5_000;
@@ -76,7 +77,7 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     timer.current = undefined;
     if (!dirty.current || !loaded.current) return;
     dirty.current = false;
-    const body = { ...stored.current, clusters: fitPrefs(latest.current) };
+    const body = { ...stored.current, clusters: fitPrefs(latest.current), view: getViewPrefs() };
     putPrefs(body).then(
       () => {
         stored.current = body;
@@ -118,8 +119,13 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
       setClusters(merged);
       saveLocal(merged);
     }
-    if (JSON.stringify(merged) !== JSON.stringify(parseClusterPrefs(remote.clusters))) schedule();
+    const viewNewer = mergeRemoteView(remote.view);
+    if (viewNewer || JSON.stringify(merged) !== JSON.stringify(parseClusterPrefs(remote.clusters)))
+      schedule();
   }, [remote, schedule]);
+
+  // View preferences (lib/viewPrefs.ts) are saved with the rest.
+  useEffect(() => subscribeViewPrefs(schedule), [schedule]);
 
   useEffect(() => {
     const onHide = () => flush();

@@ -32,7 +32,7 @@ describe("ClusterForm", () => {
     expect(teal).toHaveAttribute("aria-pressed", "false");
     await userEvent.click(teal);
     expect(teal).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Automatic colour" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /^Auto/ })).toHaveAttribute("aria-pressed", "false");
     await userEvent.click(screen.getByRole("switch"));
     await userEvent.click(screen.getByRole("button", { name: /Add and get install command/ }));
     expect(onSubmit).toHaveBeenCalledWith({

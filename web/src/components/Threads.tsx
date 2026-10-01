@@ -11,7 +11,7 @@ import { detailLink } from "../lib/links";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
-import { Keys } from "./Status";
+import { KeyHint, Keys, Spinner } from "./Status";
 import { useToast } from "./Toasts";
 
 const CLIENT_NAMES: Record<string, string> = {
@@ -84,8 +84,14 @@ function ThreadItem({ thread, showTarget }: { thread: Thread; showTarget?: boole
     onError: (err) => toast(`Couldn't reply: ${err.message}`, "bad"),
   });
   const status = useMutation({
-    mutationFn: () => setThreadStatus(thread.id, thread.status === "open" ? "resolved" : "open"),
-    onSuccess: () => void invalidate(),
+    mutationFn: (to: Thread["status"]) => setThreadStatus(thread.id, to),
+    onSuccess: (_res, to) => {
+      void invalidate();
+      // Resolving hides the thread from the open list, so say so and offer the way back.
+      toast(to === "resolved" ? `Resolved “${thread.title}”` : `Reopened “${thread.title}”`, "ok", {
+        action: { label: "Undo", run: () => status.mutate(to === "resolved" ? "open" : "resolved") },
+      });
+    },
     onError: (err) =>
       toast(
         isApiError(err, "forbidden")
@@ -153,11 +159,18 @@ function ThreadItem({ thread, showTarget }: { thread: Thread; showTarget?: boole
             <button
               type="button"
               className="btn btn-sm btn-ghost ml-auto"
-              onClick={() => status.mutate()}
+              onClick={() => status.mutate(thread.status === "open" ? "resolved" : "open")}
               disabled={status.isPending}
+              aria-busy={status.isPending || undefined}
             >
-              <Icon name={thread.status === "open" ? "check" : "chat"} />
-              {thread.status === "open" ? "Resolve" : "Reopen"}
+              {status.isPending ? <Spinner /> : <Icon name={thread.status === "open" ? "check" : "chat"} />}
+              {status.isPending
+                ? thread.status === "open"
+                  ? "Resolving…"
+                  : "Reopening…"
+                : thread.status === "open"
+                  ? "Resolve"
+                  : "Reopen"}
             </button>
           </div>
           {detail.isPending && <p className="text-ink-3">Loading…</p>}
@@ -219,13 +232,27 @@ export function ThreadList({ threads, showTarget }: { threads: Thread[]; showTar
   );
 }
 
-function NewThread({ target, onDone }: { target: ResourceRef; onDone: () => void }) {
+function NewThread({
+  target,
+  onDone,
+  autoFocus = true,
+  inline = false,
+}: {
+  target: ResourceRef;
+  onDone: () => void;
+  /** Focus the title (after a click on New thread or `c`); an inline empty-state composer waits. */
+  autoFocus?: boolean;
+  /** Shown in place of an empty list: no Cancel, it stays. */
+  inline?: boolean;
+}) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const qc = useQueryClient();
   const toast = useToast();
   const titleRef = useRef<HTMLInputElement>(null);
-  useEffect(() => titleRef.current?.focus(), []);
+  useEffect(() => {
+    if (autoFocus) titleRef.current?.focus();
+  }, [autoFocus]);
   const create = useMutation({
     mutationFn: () => createThread({ ref: target, title: title.trim(), body: body.trim() }),
     onSuccess: () => {
@@ -256,9 +283,11 @@ function NewThread({ target, onDone }: { target: ResourceRef; onDone: () => void
         />
       </label>
       <div className="flex flex-wrap justify-end gap-2">
-        <button type="button" className="btn btn-sm" onClick={onDone}>
-          Cancel
-        </button>
+        {!inline && (
+          <button type="button" className="btn btn-sm" onClick={onDone}>
+            Cancel
+          </button>
+        )}
         <button
           type="submit"
           className="btn btn-sm btn-primary"
@@ -290,24 +319,30 @@ export function ResourceThreads({
       type: "discussion",
     }),
   );
+  const empty = data?.items.length === 0;
   return (
     <div className="flex max-w-[900px] flex-col gap-2.5">
-      {compose ? (
+      {empty ? (
+        // No threads yet: the composer is right here, so starting one is not a separate step.
+        <>
+          <p className="text-ink-3">
+            No threads yet. Start one to leave context for the next person on call.
+          </p>
+          <NewThread target={target} inline autoFocus={compose} onDone={() => onCompose(false)} />
+        </>
+      ) : compose ? (
         <NewThread target={target} onDone={() => onCompose(false)} />
       ) : (
         <div className="flex gap-2">
           <button type="button" className="btn btn-sm" onClick={() => onCompose(true)}>
             <Icon name="chat" />
-            New thread <kbd>t</kbd>
+            New thread <KeyHint id="compose" />
           </button>
         </div>
       )}
       {isPending && <p className="text-ink-3">Loading threads…</p>}
       {error && <p className="text-12-5 text-bad">Couldn't load threads: {error.message}</p>}
-      {data && data.items.length === 0 && !compose && (
-        <p className="text-ink-3">No threads yet. Start one to leave context for the next person on call.</p>
-      )}
-      {data && <ThreadList threads={data.items} />}
+      {data && !empty && <ThreadList threads={data.items} />}
     </div>
   );
 }

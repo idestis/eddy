@@ -3,6 +3,7 @@
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { detectChanges, recordDelta, settleRequested } from "../lib/liveMotion";
 import { applyChange } from "./delta";
 import { streamUrl } from "./endpoints";
 import { keys } from "./queries";
@@ -36,7 +37,14 @@ export function attachStreamHandlers(source: EventSource, qc: QueryClient): void
   source.addEventListener("change", (ev) => {
     const change = parse<ChangeEvent>(ev);
     if (!change) return;
-    qc.setQueryData<ResourceSnapshot>(keys.resources(change.cluster), (prev) => applyChange(prev, change));
+    const key = keys.resources(change.cluster);
+    const prev = qc.getQueryData<ResourceSnapshot>(key);
+    const next = applyChange(prev, change);
+    if (!next || next === prev) return;
+    qc.setQueryData<ResourceSnapshot>(key, next);
+    // After the cache: the list renders the new rows and their motion in one pass.
+    recordDelta(change.cluster, detectChanges(prev?.items, next.items, change, Date.now()));
+    settleRequested(change.cluster, change.upserts);
   });
   source.addEventListener("resync", (ev) => {
     const data = parse<{ cluster: string }>(ev);

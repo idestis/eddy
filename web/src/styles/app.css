@@ -28,7 +28,6 @@
 
   --animate-live: live-pulse 2.4s ease-in-out infinite;
   --animate-blink: live-blink 1.6s steps(2, jump-none) infinite;
-  --animate-toast: toast-in 0.22s ease-out;
 
   @keyframes live-pulse {
     0%,
@@ -42,12 +41,6 @@
   @keyframes live-blink {
     50% {
       opacity: 0.35;
-    }
-  }
-  @keyframes toast-in {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
     }
   }
 }
@@ -120,6 +113,16 @@
   :focus-visible {
     outline: 2px solid var(--c);
     outline-offset: 2px;
+    border-radius: 8px;
+  }
+  /*
+   * Tabs and segmented buttons sit next to their cluster-coloured indicator, and their
+   * rows often scroll (which clips an outer outline into a thick box). Their ring is
+   * neutral and drawn inside the control instead.
+   */
+  :is([role="tab"], .seg-btn):focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-ink) 55%, transparent);
+    outline-offset: -2px;
     border-radius: 8px;
   }
   kbd {
@@ -261,6 +264,29 @@
     min-height: 80px;
   }
 
+  /* The native colour input of the cluster colour picker, as a rounded swatch. */
+  .color-input {
+    appearance: none;
+    width: 40px;
+    height: 40px;
+    padding: 3px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-surface-sunken);
+    cursor: pointer;
+    &::-webkit-color-swatch-wrapper {
+      padding: 0;
+    }
+    &::-webkit-color-swatch {
+      border: 0;
+      border-radius: 7px;
+    }
+    &::-moz-color-swatch {
+      border: 0;
+      border-radius: 7px;
+    }
+  }
+
   .badge {
     display: inline-flex;
     align-items: center;
@@ -343,6 +369,8 @@
     }
     & code {
       font-size: var(--text-12);
+      /* Long inline code (paths, image refs) wraps instead of widening the answer. */
+      overflow-wrap: anywhere;
       padding: 1px 5px;
       border-radius: 5px;
       background: var(--color-surface-sunken);
@@ -353,13 +381,28 @@
       border-radius: var(--radius-control);
       background: var(--color-code-bg);
       color: var(--color-code-ink);
-      overflow: auto;
+      overflow-x: auto;
+      max-width: 100%;
+      white-space: pre;
+    }
+    & .md-pre {
+      margin: 0 0 8px;
+      max-width: 100%;
+      min-width: 0;
+      & pre {
+        margin: 0;
+        padding-right: 76px;
+      }
+    }
+    & > .md-pre:last-child {
+      margin-bottom: 0;
     }
     & pre code {
       background: none;
       border: 0;
       padding: 0;
       color: inherit;
+      overflow-wrap: normal;
     }
     & a {
       color: var(--c);
@@ -407,6 +450,52 @@
     box-shadow: 0 1px 0 var(--c);
   }
 
+  /*
+   * Sidebar tree connectors (components/NavTree.tsx). A nested list starts at its
+   * group's icon centre (18px in: the link's 10px padding plus half the 16px icon); each
+   * child draws the vertical line down its own height and a ├─ elbow to its row's centre,
+   * and the last child draws └─ and stops there.
+   */
+  .tree-branch {
+    margin-left: 18px;
+    & > li {
+      position: relative;
+      padding-left: 10px;
+      &::before,
+      &::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        pointer-events: none;
+      }
+      &::before {
+        top: -1px;
+        bottom: 0;
+        border-left: 1px solid var(--color-line-strong);
+      }
+      &::after {
+        top: 17px;
+        width: 8px;
+        border-top: 1px solid var(--color-line-strong);
+      }
+      &.tree-last::before {
+        bottom: auto;
+        height: 18px;
+        width: 8px;
+        border-bottom: 1px solid var(--color-line-strong);
+        border-bottom-left-radius: 5px;
+      }
+      &.tree-last::after {
+        display: none;
+      }
+    }
+  }
+  /* The selected row is the tinted pill; focus is a subtle ring inside it, not a box. */
+  .nav-link:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--color-ink) 45%, transparent);
+  }
+
   /* ARIA tree (components/ChildrenTree.tsx): focus shows on the row, not the <li>. */
   [role="treeitem"]:focus-visible {
     outline: none;
@@ -429,6 +518,247 @@
   .lg-meta {
     color: var(--color-code-dim);
     font-style: italic;
+  }
+}
+
+/*
+ * Motion (tokens in design/tokens.css). Everything here is a transition or a keyframe
+ * animation on a class, so it is static CSS under the CSP. Under prefers-reduced-motion
+ * the duration tokens are 0ms, so every change lands instantly; JavaScript that keeps
+ * leaving rows or toasts around for an exit also skips the wait (lib/motion.ts).
+ */
+@layer components {
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.98);
+    }
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+  }
+  @keyframes toast-out {
+    to {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+  }
+  @keyframes row-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+  }
+  @keyframes row-leave {
+    to {
+      opacity: 0;
+      transform: scaleY(0.6);
+    }
+  }
+  @keyframes status-in {
+    from {
+      opacity: 0;
+      transform: scale(0.85);
+    }
+  }
+  @keyframes flash {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes panel-next {
+    from {
+      opacity: 0;
+      transform: translateX(14px);
+    }
+  }
+  @keyframes panel-prev {
+    from {
+      opacity: 0;
+      transform: translateX(-14px);
+    }
+  }
+  /* Detail tab panels slide in from the side of the tab that was picked. */
+  .tab-panel[data-dir="next"] {
+    animation: panel-next var(--duration-slow) var(--ease-standard) both;
+  }
+  .tab-panel[data-dir="prev"] {
+    animation: panel-prev var(--duration-slow) var(--ease-standard) both;
+  }
+
+  .anim-fade-in {
+    animation: fade-in var(--duration-base) var(--ease-standard) both;
+  }
+  .anim-pop-in {
+    animation: pop-in var(--duration-base) var(--ease-standard) both;
+  }
+  .anim-sheet-in {
+    animation: sheet-in var(--duration-slow) var(--ease-standard) both;
+  }
+  .anim-toast-in {
+    animation: toast-in var(--duration-slow) var(--ease-emphasized) both;
+  }
+  .anim-toast-out {
+    animation: toast-out var(--duration-base) var(--ease-standard) both;
+  }
+
+  /* On narrow screens Ask AI is a full-screen sheet that slides in. */
+  @media (max-width: 859px) {
+    .sheet-narrow {
+      animation: sheet-in var(--duration-slow) var(--ease-standard) both;
+    }
+  }
+
+  /* The sliding tab indicator (components/TabIndicator.tsx). It only animates once placed. */
+  .tab-ind {
+    position: absolute;
+    left: 0;
+    pointer-events: none;
+    &[data-ready="true"] {
+      transition:
+        transform var(--duration-slow) var(--ease-standard),
+        width var(--duration-slow) var(--ease-standard),
+        opacity var(--duration-fast) linear;
+    }
+  }
+
+  /*
+   * Live rows (components/ResourceList.tsx). A row whose status just changed flashes in
+   * the new status colour through an overlay, so selection and hover backgrounds stay put.
+   */
+  .live-row {
+    position: relative;
+    &::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      opacity: 0;
+      background: color-mix(in oklab, var(--flash, transparent) 16%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--flash, transparent) 38%, transparent);
+    }
+    &[data-flash]::after {
+      /* Negative when a row scrolls back into view mid-flash, so it resumes, not restarts. */
+      animation: flash var(--duration-flash) var(--ease-standard) var(--flash-delay, 0ms) both;
+    }
+    &[data-flash="ready"],
+    &[data-flash="completed"] {
+      --flash: var(--color-ok);
+    }
+    &[data-flash="failed"] {
+      --flash: var(--color-bad);
+    }
+    &[data-flash="reconciling"] {
+      --flash: var(--color-run);
+    }
+    &[data-flash="suspended"],
+    &[data-flash="unknown"] {
+      --flash: var(--color-off);
+    }
+    &[data-enter] {
+      animation: row-enter var(--duration-slow) var(--ease-standard) var(--enter-delay, 0ms) both;
+    }
+    &[data-leaving] {
+      animation: row-leave var(--duration-base) var(--ease-standard) both;
+      pointer-events: none;
+    }
+  }
+  /* A status or message that just changed swaps in instead of jumping. */
+  .swap-in {
+    animation: status-in var(--duration-base) var(--ease-standard) both;
+  }
+  .swap-fade {
+    animation: fade-in var(--duration-slow) var(--ease-standard) both;
+  }
+  /* While rows are added, removed or re-sorted, the rows around them glide to their place. */
+  .glide {
+    transition: transform var(--duration-base) var(--ease-standard);
+  }
+  /* The last known state of a disconnected cluster. */
+  .stale-able {
+    transition:
+      opacity var(--duration-slow) var(--ease-standard),
+      filter var(--duration-slow) var(--ease-standard);
+    &[data-stale="true"] {
+      opacity: 0.55;
+      filter: grayscale(0.85);
+    }
+  }
+  /* A pending action: the dot breathes until the next status arrives. */
+  .requested-dot {
+    animation: live-blink 1.6s steps(2, jump-none) infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .requested-dot {
+      animation: none;
+    }
+  }
+
+  /* Pod prefixes in workload logs: a stable hue per pod, readable on the dark log surface. */
+  .lg-pod {
+    color: oklch(0.8 0.12 var(--pod-h, 250));
+  }
+  .lg-pod-dot {
+    background: oklch(0.75 0.14 var(--pod-h, 250));
+  }
+  .lg-debug {
+    color: var(--color-code-dim);
+  }
+  /* Level badges of structured lines and the level filter chips. */
+  .lg-lvl {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: var(--text-10-5);
+    font-weight: 650;
+    font-style: normal;
+    letter-spacing: 0.03em;
+    line-height: 16px;
+    vertical-align: 1px;
+    color: var(--color-code-dim);
+    background: rgb(255 255 255 / 0.06);
+  }
+  .lg-lvl-error {
+    color: var(--color-code-error);
+    background: color-mix(in oklab, var(--color-code-error) 16%, transparent);
+  }
+  .lg-lvl-warn {
+    color: var(--color-code-warn);
+    background: color-mix(in oklab, var(--color-code-warn) 16%, transparent);
+  }
+  .lg-lvl-debug {
+    opacity: 0.75;
+  }
+  .lg-marker {
+    color: var(--color-code-dim);
+    font-style: italic;
+  }
+  .lg-marker-forbidden,
+  .lg-marker-error {
+    color: var(--color-code-error);
+  }
+  .lg-marker-dropped {
+    color: var(--color-code-warn);
   }
 }
 

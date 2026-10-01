@@ -3,6 +3,7 @@
 
 import { request, seg } from "./client";
 import type {
+  AskAttachment,
   AskResponse,
   AuditEvent,
   ClusterInfo,
@@ -41,6 +42,10 @@ export const streamUrl = `${V1}/stream`;
 
 export const logsUrl = (cluster: string, namespace: string, pod: string): string =>
   `${V1}/clusters/${seg(cluster)}/pods/${seg(namespace)}/${seg(pod)}/logs`;
+
+/** SSE logs of every pod of a Deployment, StatefulSet, DaemonSet or Job. */
+export const workloadLogsUrl = (cluster: string, r: Pick<Ref, "kind" | "namespace" | "name">): string =>
+  `${V1}/clusters/${seg(cluster)}/workloads/${seg(r.kind)}/${seg(r.namespace)}/${seg(r.name)}/logs`;
 
 // Session
 
@@ -135,8 +140,13 @@ export const setThreadStatus = (id: string, status: ThreadStatus) =>
 
 // Ask AI
 
-export const askAI = (body: { cluster: string; resourceId?: string; threadId?: string; question: string }) =>
-  request<AskResponse>(`${V1}/ai/ask`, { method: "POST", body });
+export const askAI = (body: {
+  cluster: string;
+  resourceId?: string;
+  threadId?: string;
+  question: string;
+  attachments?: AskAttachment[];
+}) => request<AskResponse>(`${V1}/ai/ask`, { method: "POST", body });
 
 // Tokens
 

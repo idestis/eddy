@@ -15,6 +15,14 @@ describe("Markdown", () => {
     expect(c.querySelector("pre code")?.textContent).toBe("flux get ks");
   });
 
+  it("gives code blocks a Copy button and keeps long lines scrollable", () => {
+    const c = html(
+      "```\nkubectl logs deploy/podinfo -n apps --all-containers --since=1h --timestamps --prefix\n```",
+    );
+    expect(c.querySelector(".md-pre pre")).not.toBeNull();
+    expect(c.querySelector(".md-pre button[aria-label='Copy code']")).not.toBeNull();
+  });
+
   it("never renders images", () => {
     const c = html("look ![tracking pixel](https://evil.example/p.png) here");
     expect(c.querySelector("img")).toBeNull();

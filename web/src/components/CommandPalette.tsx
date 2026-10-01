@@ -17,6 +17,7 @@ import { ClusterTile } from "./ClusterSwitch";
 import { Icon, type IconName } from "./Icon";
 import { Modal } from "./Modal";
 import { KeyHint, StatusIcon } from "./Status";
+import { TabIndicator, useTabIndicator } from "./TabIndicator";
 
 interface PaletteCommand {
   id: string;
@@ -77,6 +78,7 @@ export function CommandPalette({
 }) {
   const [query, setQuery] = useState(initialQuery);
   const [scope, setScope] = useState<PaletteScope>(routeCluster ? "cluster" : "all");
+  const scopeSeg = useTabIndicator<HTMLFieldSetElement>(scope);
   const { closePalette, selection, setHelp, ask, startNewChat } = useAppState();
   const { clusters: clusterPrefs, togglePin } = usePrefs();
   const navigate = useNavigate();
@@ -189,7 +191,7 @@ export function CommandPalette({
         label: `New thread about ${selected.name}`,
         keywords: "comment thread discuss note",
         icon: "chat",
-        keys: "thread",
+        keys: "compose",
         run: () =>
           void navigate({
             ...detailLink(selection.cluster, selected),
@@ -470,16 +472,18 @@ export function CommandPalette({
           />
           {routeCluster && (
             <fieldset
-              className="flex shrink-0 rounded-tile border border-line bg-surface-sunken p-0.5"
+              ref={scopeSeg.list}
+              className="relative flex shrink-0 rounded-tile border border-line bg-surface-sunken p-0.5"
               aria-label="Search scope"
             >
+              <TabIndicator ref={scopeSeg.indicator} variant="raised" />
               {(["cluster", "all"] as const).map((s) => (
                 <button
                   type="button"
                   key={s}
                   aria-pressed={scope === s}
                   onClick={() => setScope(s)}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-12-5 font-medium whitespace-nowrap text-ink-2 aria-pressed:bg-surface aria-pressed:text-ink aria-pressed:shadow-control"
+                  className="seg-btn relative inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-12-5 font-medium whitespace-nowrap text-ink-2 transition-colors duration-(--duration-base) aria-pressed:text-ink"
                 >
                   {s === "cluster" ? (
                     <>

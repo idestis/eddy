@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { type Inline, parseMarkdown } from "../lib/markdown";
+import { CopyButton } from "./CopyButton";
 
 function InlineNodes({ nodes }: { nodes: Inline[] }) {
   return nodes.map((n, i) => {
@@ -41,10 +42,18 @@ export function Markdown({ source, className = "md" }: { source: string; classNa
       {blocks.map((b, i) => {
         const key = `${i}-${b.t}`;
         if (b.t === "pre") {
+          // Long lines scroll sideways instead of being cut off; Copy sits top-right.
           return (
-            <pre key={key}>
-              <code>{b.text}</code>
-            </pre>
+            <div key={key} className="md-pre group relative">
+              <pre>
+                <code>{b.text}</code>
+              </pre>
+              <CopyButton
+                text={b.text}
+                label="Copy code"
+                className="absolute top-1.5 right-1.5 inline-flex h-7 items-center gap-1.5 rounded-lg border border-white/14 bg-code-bg/90 px-2 text-11-5 font-medium text-code-ink opacity-80 hover:opacity-100 focus-visible:opacity-100 [&_svg]:size-3.5"
+              />
+            </div>
           );
         }
         if (b.t === "p") {

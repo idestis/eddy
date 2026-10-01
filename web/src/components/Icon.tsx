@@ -1,4 +1,6 @@
-// Stroke icons from the design prototype (16×16 grid).
+// Stroke icons from the design prototype (16×16 grid), plus the Flux and Helm brand marks.
+
+import { BRAND } from "./brandIcons";
 
 const PATHS = {
   chev: "M6 3.5L10.5 8 6 12.5",
@@ -26,7 +28,6 @@ const PATHS = {
   arrowUp: "M8 13V3.5M4 7.5l4-4 4 4",
   grid: "M3.5 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM10 2.5h2.5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1zM3.5 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zM10 9h2.5a1 1 0 0 1 1 1v2.5a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z",
   layers: "M8 2l6 3.3L8 8.6 2 5.3zM2 8.2l6 3.3 6-3.3M2 11l6 3.3 6-3.3",
-  helm: "M8 5.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8zM8 1.8v3.8M8 10.4v3.8M1.8 8h3.8M10.4 8h3.8M3.6 3.6l2.7 2.7M9.7 9.7l2.7 2.7M12.4 3.6L9.7 6.3M6.3 9.7l-2.7 2.7",
   git: "M4.5 2.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6zM4.5 10.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6zM11.5 4.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6zM4.5 5.8v4.4M11.5 7.8c0 2.2-2.5 2.6-5.3 3.4",
   box: "M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8zM2.5 4.8L8 7.9l5.5-3.1M8 7.9v6.3",
   bucket:
@@ -51,12 +52,11 @@ const PATHS = {
   route: "M2.5 8h4.5l2-4.5h4.5M7 8l2 4.5h4.5M12 1.8l1.7 1.7L12 5.2M12 10.8l1.7 1.7L12 14.2",
   disk: "M3.5 2.5h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM2.5 9.5h11M11 11.6v.1",
   file: "M4 1.8h5l3 3v9.4H4zM9 1.8v3h3",
-  flux: "M8 2.2a5.8 5.8 0 1 0 5.8 5.8 3.8 3.8 0 0 0-3.8-3.8 2.5 2.5 0 0 0-2.5 2.5 1.3 1.3 0 0 0 1.3 1.3",
   sun: "M8 5a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.9.9M11.7 11.7l.9.9M12.6 3.4l-.9.9M4.3 11.7l-.9.9",
   send: "M2.5 8h9M8 4l4 4-4 4",
 } as const;
 
-export type IconName = keyof typeof PATHS;
+export type IconName = keyof typeof PATHS | keyof typeof BRAND;
 
 export function Icon({
   name,
@@ -67,6 +67,21 @@ export function Icon({
   className?: string;
   label?: string;
 }) {
+  if (name in BRAND) {
+    const brand = BRAND[name as keyof typeof BRAND];
+    return (
+      <svg
+        className={className}
+        viewBox={brand.viewBox}
+        fill="currentColor"
+        role={label ? "img" : undefined}
+        aria-label={label}
+        aria-hidden={label ? undefined : true}
+      >
+        <path d={brand.d} />
+      </svg>
+    );
+  }
   return (
     <svg
       className={className}
@@ -80,7 +95,7 @@ export function Icon({
       aria-label={label}
       aria-hidden={label ? undefined : true}
     >
-      <path d={PATHS[name]} />
+      <path d={PATHS[name as keyof typeof PATHS]} />
     </svg>
   );
 }

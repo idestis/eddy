@@ -3,6 +3,8 @@
 
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
 import type { Resource } from "../api/types";
+import type { PendingAttachment } from "./logAttachments";
+import { getViewPrefs, setViewPrefs } from "./viewPrefs";
 
 export type Pane = "details" | "ai";
 
@@ -39,6 +41,11 @@ interface AppState {
   startNewChat: () => void;
   /** True once per startNewChat call: the panel calls it, then clears its conversation. */
   takeNewChat: () => boolean;
+  /** Log lines waiting for the Ask AI composer (from a logs toolbar or selection). */
+  pendingAttachment: PendingAttachment | null;
+  /** Opens Ask AI on a new chat with log lines attached and a suggested question. */
+  askWithLogs: (p: PendingAttachment) => void;
+  clearPendingAttachment: () => void;
 }
 
 const AppStateContext = createContext<AppState | null>(null);
@@ -54,12 +61,13 @@ export const ASK_PANEL_ATTR = "data-ask-panel";
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [pane, setPaneState] = useState<Pane>("details");
+  const [pane, setPaneState] = useState<Pane>(() => getViewPrefs().pane ?? "details");
   const [palette, setPalette] = useState<string | null>(null);
   const [help, setHelp] = useState(false);
   const [clusterMenu, setClusterMenu] = useState<HTMLElement | null>(null);
   const [askFocus, setAskFocus] = useState(0);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
   const chatRequested = useRef(0);
   const chatConsumed = useRef(0);
   const consumed = useRef(0);
@@ -77,6 +85,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       returnFocus.current = active;
     }
     setPaneState("ai");
+    setViewPrefs({ pane: "ai" });
     if (question) setPendingQuestion(question);
     requested.current += 1;
     setAskFocus(requested.current);
@@ -94,6 +103,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       });
     }
     setPaneState(p);
+    setViewPrefs({ pane: p });
   }, []);
 
   const takeAskFocus = useCallback(() => {
@@ -114,6 +124,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearPendingQuestion = useCallback(() => setPendingQuestion(null), []);
+
+  const askWithLogs = useCallback(
+    (p: PendingAttachment) => {
+      setPendingAttachment(p);
+      startNewChat();
+    },
+    [startNewChat],
+  );
+  const clearPendingAttachment = useCallback(() => setPendingAttachment(null), []);
 
   const value = useMemo<AppState>(
     () => ({
@@ -136,8 +155,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       clearPendingQuestion,
       startNewChat,
       takeNewChat,
+      pendingAttachment,
+      askWithLogs,
+      clearPendingAttachment,
     }),
     [
+      pendingAttachment,
+      askWithLogs,
+      clearPendingAttachment,
       selection,
       pane,
       setPane,

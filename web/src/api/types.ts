@@ -153,6 +153,8 @@ export interface Features {
   onboarding: boolean;
   /** Logs of workloads other than Pods (Deployments, Jobs…). */
   workloadLogs: boolean;
+  /** Ask AI accepts log lines as attachments (`ai.allowLogs`). */
+  aiLogs?: boolean;
 }
 
 export interface Me {
@@ -243,6 +245,14 @@ export interface AskStep {
   tool: string;
   args: Record<string, unknown>;
   bytes: number;
+}
+
+/** Log lines sent with a question (POST /ai/ask `attachments`). */
+export interface AskAttachment {
+  kind: "logs";
+  /** "<ns>/<pod>/<container>" or "<ns>/<workload> · N pods". */
+  source: string;
+  lines: string[];
 }
 
 export interface AskResponse {
@@ -410,4 +420,31 @@ export interface ConnectionInfo {
   permissions: { update: boolean; edit: boolean; delete: boolean };
   /** The guide with a "<join token>" placeholder. */
   guide: InstallGuide;
+}
+
+/** A marker entry in a workload log stream: not a log line; `line` explains it. */
+export type LogMarker = "forbidden" | "ended" | "error" | "dropped";
+
+/** One entry of a workload log `log` event (docs/api.md, "Workload logs"). */
+export interface WorkloadLogEntry {
+  pod: string;
+  container?: string;
+  line: string;
+  /** The kubelet timestamp (RFC 3339), when the line had one. */
+  ts?: string;
+  marker?: LogMarker;
+}
+
+export interface WorkloadPod {
+  name: string;
+  containers: string[];
+  status: string;
+  createdAt?: string;
+}
+
+/** The `pods` event: the streamed pods, newest first. total > limit means only the newest are streamed. */
+export interface WorkloadPodsEvent {
+  pods: WorkloadPod[];
+  total: number;
+  limit: number;
 }

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { resourcesQuery, threadsQuery, useCluster, useMe } from "../../../../../../../api/queries";
 import type { ResourceRef } from "../../../../../../../api/types";
@@ -18,14 +18,18 @@ import {
   YamlView,
 } from "../../../../../../../components/ResourceParts";
 import { Screen } from "../../../../../../../components/Screen";
+import { KeyHint } from "../../../../../../../components/Status";
+import { TabIndicator, useTabIndicator } from "../../../../../../../components/TabIndicator";
 import { ResourceThreads } from "../../../../../../../components/Threads";
 import { useToast } from "../../../../../../../components/Toasts";
+import { WorkloadLogsView } from "../../../../../../../components/WorkloadLogsView";
 import { useAppState } from "../../../../../../../lib/appState";
-import { useKeys } from "../../../../../../../lib/keys";
+import { type KeyId, useKeys } from "../../../../../../../lib/keys";
 import { kindInfo } from "../../../../../../../lib/kinds";
 import { DETAIL_VIEWS, type DetailView, detailLink, nsFromParam } from "../../../../../../../lib/links";
 import { recallList } from "../../../../../../../lib/listMemory";
 import { useResourceActions } from "../../../../../../../lib/useResourceActions";
+import { WORKLOAD_LOG_KINDS } from "../../../../../../../lib/workloadLogs";
 
 export const Route = createFileRoute("/_app/c/$cluster/r/$kind/$ns/$name")({
   validateSearch: z.object({
@@ -43,12 +47,12 @@ const TAB_LABEL: Record<DetailView, string> = {
   threads: "Threads",
 };
 
-const TAB_KEY: Partial<Record<DetailView, string>> = {
-  overview: "o",
-  yaml: "y",
-  events: "e",
-  logs: "L",
-  threads: "t",
+const TAB_KEY: Record<DetailView, KeyId> = {
+  overview: "tabOverview",
+  yaml: "tabYaml",
+  events: "tabEvents",
+  logs: "logs",
+  threads: "tabThreads",
 };
 
 function DetailPage() {
@@ -61,13 +65,25 @@ function DetailPage() {
   const { setSelection } = useAppState();
   const actions = useResourceActions(cluster);
   const namespace = nsFromParam(params.ns);
+  const tabList = useTabIndicator(view);
 
   const { data, isPending } = useQuery({
     ...resourcesQuery(params.cluster),
     enabled: cluster?.connected ?? false,
   });
   const items = data?.items ?? [];
-  const r = items.find((x) => x.kind === params.kind && x.namespace === namespace && x.name === params.name);
+  const found = items.find(
+    (x) => x.kind === params.kind && x.namespace === namespace && x.name === params.name,
+  );
+  const r = found;
+  // Remember that this page showed the object, so its disappearance reads as a deletion
+  // (the list deletes it live) rather than as a bad link.
+  const pageKey = `${params.cluster}/${params.kind}/${namespace}/${params.name}`;
+  const [seen, setSeen] = useState<string | undefined>();
+  useEffect(() => {
+    if (found) setSeen(pageKey);
+  }, [found, pageKey]);
+  const deleted = !found && seen === pageKey && Boolean(data);
   const target: ResourceRef | undefined = r && {
     cluster: params.cluster,
     group: r.group,
@@ -93,12 +109,21 @@ function DetailPage() {
   useEffect(() => () => setSelection(null), [setSelection]);
 
   const isPod = params.kind === "Pod";
+  const isWorkload = WORKLOAD_LOG_KINDS.has(params.kind) && Boolean(me?.features.workloadLogs);
+  const hasLogs = (isPod && Boolean(me?.features.logs)) || isWorkload;
   const tabs = DETAIL_VIEWS.filter(
     (v) =>
-      (v !== "logs" || (isPod && me?.features.logs)) &&
+      (v !== "logs" || hasLogs) &&
       // Inventory-only objects have a name and nothing else to show.
       !(r?.inventoryOnly && (v === "yaml" || v === "events" || v === "logs")),
   );
+  // The panel slides in from the side of the tab that was picked.
+  const lastView = useRef(view);
+  const panelDir = useRef<"next" | "prev" | undefined>(undefined);
+  if (lastView.current !== view) {
+    panelDir.current = tabs.indexOf(view) >= tabs.indexOf(lastView.current) ? "next" : "prev";
+    lastView.current = view;
+  }
   const setView = (v: DetailView, extra: { compose?: boolean } = {}) =>
     void navigate({ search: { view: v === "overview" ? undefined : v, ...extra }, replace: true });
 
@@ -112,8 +137,11 @@ function DetailPage() {
     reconcile: () => actions.reconcile(r),
     reconcileSource: () => actions.reconcile(r, true),
     suspend: () => actions.toggleSuspend(r),
-    logs: () => (isPod ? setView("logs") : toast("Logs are available on pods. Open one from the tree.")),
-    thread: () => setView("threads", { compose: true }),
+    logs: () =>
+      hasLogs ? setView("logs") : toast("Logs are available on pods and workloads. Open one from the tree."),
+    tabThreads: () => setView("threads"),
+    // `c` composes only where the composer is: on the Threads tab.
+    compose: view === "threads" && Boolean(r) && (() => setView("threads", { compose: true })),
     owner: () =>
       r?.owner ? void navigate(detailLink(params.cluster, r.owner)) : toast("Nothing owns this object."),
     tabOverview: () => setView("overview"),
@@ -141,10 +169,21 @@ function DetailPage() {
   ];
 
   let body: ReactNode;
-  if (!cluster.connected) {
+  if (!cluster.connected && !r) {
     body = <Empty title={`${cluster.name} is disconnected`}>Details appear when its agent reconnects.</Empty>;
-  } else if (isPending) {
+  } else if (isPending && !r) {
     body = <Empty>Loading…</Empty>;
+  } else if (deleted) {
+    body = (
+      <div className="anim-fade-in">
+        <Empty title={`${params.kind}/${params.name} was deleted`}>
+          It was removed from {params.cluster} while you were looking at it.{" "}
+          <button type="button" className="linkbtn" onClick={back}>
+            Back to the list
+          </button>
+        </Empty>
+      </div>
+    );
   } else if (!r || !target) {
     body = (
       <Empty title={`${params.kind}/${params.name} was not found`}>
@@ -156,14 +195,16 @@ function DetailPage() {
     );
   } else {
     body = (
-      <div className="@container flex flex-col">
-        <ResourceHeader r={r} large />
+      <div className="@container stale-able flex flex-col" data-stale={!cluster.connected}>
+        <ResourceHeader r={r} large cluster={params.cluster} />
         <ResourceActions cluster={cluster} r={r} actions={actions} onLogs={() => setView("logs")} />
         <div
-          className="no-scrollbar mb-3.5 flex gap-0.5 overflow-x-auto border-b border-line"
+          ref={tabList.list}
+          className="no-scrollbar relative mb-3.5 flex gap-0.5 overflow-x-auto border-b border-line"
           role="tablist"
           aria-label="Details"
         >
+          <TabIndicator ref={tabList.indicator} variant="underline" />
           {tabs.map((t) => (
             <button
               type="button"
@@ -171,17 +212,23 @@ function DetailPage() {
               key={t}
               aria-selected={view === t}
               onClick={() => setView(t)}
-              className="-mb-px flex items-center gap-1.5 border-b-2 border-transparent px-2.5 py-[9px] text-13 whitespace-nowrap text-ink-3 aria-selected:border-c aria-selected:font-semibold aria-selected:text-ink"
+              className="flex items-center gap-1.5 px-2.5 py-[9px] text-13 whitespace-nowrap text-ink-3 transition-colors duration-(--duration-base) hover:text-ink-2 aria-selected:text-ink"
             >
               {TAB_LABEL[t]}
               {t === "threads" && openThreads > 0 && (
                 <span className="text-12 font-semibold text-run tabular-nums">{openThreads}</span>
               )}
-              {TAB_KEY[t] && <kbd>{TAB_KEY[t]}</kbd>}
+              <KeyHint id={TAB_KEY[t]} />
             </button>
           ))}
         </div>
-        <div role="tabpanel" aria-label={TAB_LABEL[view]}>
+        <div
+          key={view}
+          role="tabpanel"
+          aria-label={TAB_LABEL[view]}
+          className="tab-panel"
+          data-dir={panelDir.current}
+        >
           {view === "overview" && (
             <>
               <ResourceFacts cluster={params.cluster} r={r} grid />
@@ -202,6 +249,9 @@ function DetailPage() {
           {view === "yaml" && <YamlView cluster={params.cluster} r={r} />}
           {view === "events" && <EventsList cluster={params.cluster} r={r} />}
           {view === "logs" && isPod && <LogsView cluster={params.cluster} pod={r} />}
+          {view === "logs" && !isPod && isWorkload && (
+            <WorkloadLogsView cluster={params.cluster} workload={r} />
+          )}
           {view === "threads" && (
             <ResourceThreads
               target={target}

@@ -4,6 +4,7 @@ import { useAppState } from "../lib/appState";
 import { ago } from "../lib/format";
 import { displayKeys } from "../lib/keys";
 import { useTitle } from "../lib/title";
+import { setViewPrefs, useViewPrefs } from "../lib/viewPrefs";
 import { useRouteCluster } from "./AppShell";
 import { ClusterSwitch } from "./ClusterSwitch";
 import { Icon } from "./Icon";
@@ -40,15 +41,16 @@ function loadWidth(): number {
   }
 }
 
-/** The right-hand panel's width, remembered per browser. */
+/** The right-hand panel's width, saved with the view preferences (lib/viewPrefs.ts). */
 function useAsideWidth() {
-  const [width, setWidth] = useState(loadWidth);
+  const saved = useViewPrefs().asideWidth;
+  const [width, setWidth] = useState(() =>
+    saved && saved >= ASIDE_MIN && saved <= ASIDE_MAX ? saved : loadWidth(),
+  );
+  // Save once a drag settles, not on every pointer move.
   useEffect(() => {
-    try {
-      localStorage.setItem(ASIDE_KEY, String(width));
-    } catch {
-      // Storage blocked: the width lasts for this page only.
-    }
+    const t = setTimeout(() => setViewPrefs({ asideWidth: width }), 400);
+    return () => clearTimeout(t);
   }, [width]);
   const clamp = (n: number) => Math.round(Math.max(ASIDE_MIN, Math.min(ASIDE_MAX, n)));
   return [width, (n: number) => setWidth(clamp(n))] as const;
@@ -190,8 +192,8 @@ export function Screen({
             <Icon name="alert" />
             {cluster.name} is disconnected
             <span className="font-normal text-ink-2">
-              Its agent was last seen {ago(cluster.lastSeen)}. Data and actions are unavailable until it
-              reconnects.
+              Stale · last seen {ago(cluster.lastSeen)}. You see the last known state; actions are off until
+              its agent reconnects.
             </span>
           </div>
         )}
@@ -208,7 +210,7 @@ export function Screen({
           className={`relative flex min-h-0 min-w-0 shrink-0 flex-col border-l border-line bg-surface-side max-[1180px]:w-[380px]! ${
             // Narrow screens have no side column: Ask AI opens as a full-screen sheet instead.
             pane === "ai"
-              ? "max-[859px]:fixed max-[859px]:inset-0 max-[859px]:z-40 max-[859px]:w-full!"
+              ? "sheet-narrow max-[859px]:fixed max-[859px]:inset-0 max-[859px]:z-40 max-[859px]:w-full!"
               : "max-[859px]:hidden"
           }`}
           style={{ width: asideWidth }}

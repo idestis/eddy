@@ -6,6 +6,7 @@ import { Empty } from "../../components/Empty";
 import { PageHead } from "../../components/PageHead";
 import { Screen } from "../../components/Screen";
 import { SEG, SEG_BTN } from "../../components/SidePanel";
+import { TabIndicator, useTabIndicator } from "../../components/TabIndicator";
 import { ThreadList } from "../../components/Threads";
 
 export const Route = createFileRoute("/_app/threads")({
@@ -18,14 +19,16 @@ function ThreadsPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const query = useInfiniteQuery(threadsInfiniteQuery({ status, type: "discussion", limit: 50 }));
   const threads = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const seg = useTabIndicator<HTMLFieldSetElement>(status);
 
   return (
     <Screen crumbs={["Threads"]} title="threads" width="narrow">
       <PageHead title="Threads">
         Discussions on resources and clusters across the fleet, including notes left from Claude Code.
       </PageHead>
-      <fieldset className={`${SEG} self-start`}>
+      <fieldset ref={seg.list} className={`${SEG} self-start`}>
         <legend className="sr-only">Status</legend>
+        <TabIndicator ref={seg.indicator} variant="pill" />
         {(["open", "resolved"] as const).map((s) => (
           <button
             type="button"

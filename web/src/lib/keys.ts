@@ -63,8 +63,9 @@ export const BINDINGS = {
   reconcile: { keys: ["r"], label: "Reconcile", group: "Act on selection" },
   reconcileSource: { keys: ["Shift+R"], label: "Reconcile with source", group: "Act on selection" },
   suspend: { keys: ["s"], label: "Suspend or resume", group: "Act on selection" },
-  logs: { keys: ["Shift+L"], label: "Logs (pods)", group: "Act on selection" },
-  thread: { keys: ["t"], label: "New thread or comment", group: "Act on selection" },
+  logs: { keys: ["Shift+L"], label: "Logs (pods and workloads)", group: "Act on selection" },
+  tabThreads: { keys: ["t"], label: "Threads tab", group: "Act on selection" },
+  compose: { keys: ["c"], label: "New thread (on the Threads tab)", group: "Act on selection" },
   tabOverview: { keys: ["o"], label: "Overview tab", group: "Act on selection" },
   tabEvents: { keys: ["e"], label: "Events tab", group: "Act on selection" },
   tabYaml: { keys: ["y"], label: "YAML tab", group: "Act on selection" },
@@ -286,4 +287,33 @@ export function useKeys(handlers: Partial<Record<KeyId, KeyHandler | false | und
       }
     };
   }, [ids]);
+}
+
+/** Every key string of the registry, normalised ("[Shift]+?" → "?"), with the bindings using it. */
+export function keyOwners(bindings: Record<string, Binding> = BINDINGS): Map<string, string[]> {
+  const owners = new Map<string, string[]>();
+  for (const [id, b] of Object.entries(bindings)) {
+    for (const k of b.keys) {
+      const norm = k.replace(/\[Shift\]\+/g, "");
+      owners.set(norm, [...(owners.get(norm) ?? []), id]);
+    }
+  }
+  return owners;
+}
+
+/**
+ * Key hints rendered for more than one action on one screen (KeyHint marks each with
+ * data-key-id). Returns "t: tabThreads, compose"-style descriptions; empty when clean.
+ */
+export function hintCollisions(root: ParentNode): string[] {
+  const byText = new Map<string, Set<string>>();
+  for (const el of root.querySelectorAll<HTMLElement>("[data-key-id]")) {
+    const text = (el.textContent ?? "").trim();
+    const ids = byText.get(text) ?? new Set<string>();
+    ids.add(el.dataset.keyId ?? "");
+    byText.set(text, ids);
+  }
+  return [...byText]
+    .filter(([, ids]) => ids.size > 1)
+    .map(([text, ids]) => `${text}: ${[...ids].join(", ")}`);
 }

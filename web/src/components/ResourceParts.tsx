@@ -7,9 +7,11 @@ import { age, ago, dateTime, STATUS_LABEL } from "../lib/format";
 import type { KeyId } from "../lib/keys";
 import { kindInfo } from "../lib/kinds";
 import { detailLink } from "../lib/links";
+import { useClusterMotion, useRequested } from "../lib/liveMotion";
 import type { useResourceActions } from "../lib/useResourceActions";
+import { WORKLOAD_LOG_KINDS } from "../lib/workloadLogs";
 import { Icon, type IconName } from "./Icon";
-import { KeyHint, StatusIcon } from "./Status";
+import { KeyHint, RequestedBadge, Spinner, StatusIcon } from "./Status";
 
 export function KindChip({ kind }: { kind: string }) {
   return (
@@ -21,11 +23,20 @@ export function KindChip({ kind }: { kind: string }) {
 
 const STATUS_BOX: Partial<Record<Resource["status"], string>> = {
   failed: "border-bad/45 bg-bad/6",
-  reconciling: "border-run/40",
-  suspended: "border-off/40",
+  reconciling: "border-run/40 bg-surface",
+  suspended: "border-off/40 bg-surface",
+  // A finished run: calm, a quiet green outline, no fill.
+  completed: "border-ok/25 bg-surface",
 };
 
-export function ResourceHeader({ r, large }: { r: Resource; large?: boolean }) {
+/**
+ * Kind, name and the status box. With `cluster`, a live status change flashes the box in
+ * the new status colour and swaps the label in, and a pending action shows "requested".
+ */
+export function ResourceHeader({ r, large, cluster }: { r: Resource; large?: boolean; cluster?: string }) {
+  const change = useClusterMotion(cluster).changed.get(r.id);
+  const requested = useRequested(cluster).get(r.id);
+  const flash = change?.kind === "status" ? change.to : undefined;
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 text-12-5 text-ink-3">
@@ -49,12 +60,22 @@ export function ResourceHeader({ r, large }: { r: Resource; large?: boolean }) {
         </div>
       ) : (
         <div
-          className={`my-3 flex items-start gap-2.5 rounded-[14px] border border-line bg-surface px-3.5 py-3 text-13 [overflow-wrap:anywhere] ${STATUS_BOX[r.status] ?? ""}`}
+          // One border and one background class each: two colour utilities for the same property
+          // resolve by CSS order, not by class order, so the status box replaces the default.
+          className={`live-row my-3 flex items-start gap-2.5 rounded-[14px] border px-3.5 py-3 text-13 transition-colors duration-(--duration-slow) [overflow-wrap:anywhere] ${STATUS_BOX[r.status] ?? "border-line bg-surface"}`}
+          data-flash={flash}
         >
-          <StatusIcon status={r.status} className="mt-px" />
-          <div>
-            <b className="block font-semibold">{STATUS_LABEL[r.status]}</b>
-            {r.message}
+          <StatusIcon key={r.status} status={r.status} className={`mt-px ${flash ? "swap-in" : ""}`} />
+          <div className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-2">
+              <b key={r.status} className={`block font-semibold ${flash ? "swap-in" : ""}`}>
+                {STATUS_LABEL[r.status]}
+              </b>
+              {requested && <RequestedBadge req={requested} />}
+            </span>
+            <span key={r.message} className={`block ${change ? "swap-fade" : ""}`}>
+              {r.message}
+            </span>
           </div>
         </div>
       )}
@@ -70,6 +91,7 @@ function ActionButton({
   primary,
   soft,
   disabled,
+  pending,
   title,
 }: {
   icon: IconName;
@@ -79,6 +101,8 @@ function ActionButton({
   primary?: boolean;
   soft?: boolean;
   disabled?: boolean;
+  /** The request is in flight: a spinner replaces the icon until the hub answers. */
+  pending?: boolean;
   title?: string;
 }) {
   return (
@@ -86,10 +110,11 @@ function ActionButton({
       type="button"
       className={`btn${primary ? " btn-primary" : ""}${soft ? " btn-soft" : ""}`}
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || pending}
+      aria-busy={pending || undefined}
       title={title}
     >
-      <Icon name={icon} />
+      {pending ? <Spinner /> : <Icon name={icon} />}
       {label}
       <KeyHint id={keyId} />
     </button>
@@ -108,7 +133,8 @@ interface ActionsProps {
 export function ResourceActions({ cluster, r, actions, onLogs, onOpen, onAsk }: ActionsProps) {
   const { data: me } = useMe();
   const info = kindInfo(r.kind);
-  const busy = actions.busy.has(r.id);
+  const pending = actions.busy.get(r.id);
+  const busy = pending !== undefined;
   const offline = !cluster.connected;
   const note = "mt-0.5 mb-4 flex items-center gap-1.5 text-12 text-ink-3 [&_svg]:size-[13px]";
   if (r.inventoryOnly) return null;
@@ -119,10 +145,11 @@ export function ResourceActions({ cluster, r, actions, onLogs, onOpen, onAsk }: 
           <>
             <ActionButton
               icon="sync"
-              label="Reconcile"
+              label={pending === "reconcile" ? "Requesting…" : "Reconcile"}
               keyId="reconcile"
               primary
               title={`flux reconcile ${r.kind.toLowerCase()} ${r.name}`}
+              pending={pending === "reconcile"}
               disabled={busy || r.suspended || offline}
               onClick={() => actions.reconcile(r)}
             />
@@ -138,16 +165,27 @@ export function ResourceActions({ cluster, r, actions, onLogs, onOpen, onAsk }: 
             )}
             <ActionButton
               icon={r.suspended ? "play" : "pause"}
-              label={r.suspended ? "Resume" : "Suspend"}
+              label={
+                pending === "suspend"
+                  ? "Suspending…"
+                  : pending === "resume"
+                    ? "Resuming…"
+                    : r.suspended
+                      ? "Resume"
+                      : "Suspend"
+              }
               keyId="suspend"
+              pending={pending === "suspend" || pending === "resume"}
               disabled={busy || offline}
               onClick={() => actions.toggleSuspend(r)}
             />
           </>
         )}
-        {r.kind === "Pod" && onLogs && me?.features.logs && (
-          <ActionButton icon="term" label="Logs" keyId="logs" primary onClick={onLogs} />
-        )}
+        {onLogs &&
+          ((r.kind === "Pod" && me?.features.logs) ||
+            (WORKLOAD_LOG_KINDS.has(r.kind) && me?.features.workloadLogs)) && (
+            <ActionButton icon="term" label="Logs" keyId="logs" primary onClick={onLogs} />
+          )}
         {onOpen && <ActionButton icon="open" label="Open" keyId="open" onClick={onOpen} />}
         {onAsk && me?.features.ai && (
           <ActionButton icon="spark" label="Ask" keyId="ask" soft onClick={onAsk} />

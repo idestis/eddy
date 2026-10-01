@@ -3,6 +3,7 @@
 // real hub so the UI's handling of both is exercised.
 
 import type {
+  AskAttachment,
   AskStep,
   AuditEvent,
   Author,
@@ -55,7 +56,8 @@ const me: Me = {
     ephemeralStore: true,
     devMode: false,
     onboarding: true,
-    workloadLogs: false,
+    workloadLogs: true,
+    aiLogs: true,
   },
   version: "v1.0.0",
 };
@@ -163,16 +165,140 @@ export class MockHub {
     this.emit("clusters", { items: this.clusterInfos() });
   }
 
+  /** Broadcasts several upserts and deletes as one delta, like the hub batches them. */
+  private emitChange(c: MockCluster, upserts: MockResource[], deletes: string[]): void {
+    for (const r of upserts) r.resourceVersion = nextResourceVersion();
+    const change: ChangeEvent = { cluster: c.info.name, upserts: upserts.map(strip), deletes };
+    this.emit("change", change);
+    this.emit("clusters", { items: this.clusterInfos() });
+  }
+
   /** Background churn so the live indicator and SSE deltas have something to show. */
   tick(): void {
     const prod = this.cluster("prod-eu");
-    if (!prod) return;
+    if (!prod?.info.connected) return;
+    this.jobCycle(prod);
     const pods = [...prod.resources.values()].filter(
       (r) => r.kind === "Pod" && r.name.startsWith("checkout"),
     );
     const p = pods[Math.floor(Math.random() * pods.length)];
     if (!p || p.status === "reconciling") return;
     this.update(prod, p, { message: `Running (restarts: ${Math.floor(Math.random() * 3)})` });
+  }
+
+  private jobRuns = 0;
+
+  /**
+   * A Prefect flow run every few ticks: a running Job (and its pod) appears, completes a
+   * little later, and the oldest listed run of the flow leaves the list, as the agent's
+   * history limit would hide it. This drives the list's enter, flash and exit motion.
+   */
+  private jobCycle(c: MockCluster): void {
+    const now = Date.now();
+    const jobs = [...c.resources.values()].filter(
+      (r) => r.kind === "Job" && r.labels?.["prefect.io/deployment-name"] === "etl-hourly",
+    );
+    const running = jobs.find((j) => j.status === "reconciling");
+    const podsOf = (j: MockResource) =>
+      [...c.resources.values()].filter(
+        (p) => p.kind === "Pod" && p.owner?.kind === "Job" && p.owner.name === j.name,
+      );
+    if (running) {
+      const started = Date.parse(running.lastChanged ?? "") || now;
+      if (now - started < 10_000) return;
+      const secs = Math.max(1, Math.round((now - (Date.parse(running.createdAt ?? "") || started)) / 1000));
+      Object.assign(running, {
+        status: "completed",
+        message: `Completed in ${Math.floor(secs / 60)}m${secs % 60}s`,
+        replicas: undefined,
+        completions: "1/1",
+        lastChanged: iso(),
+      });
+      const pods = podsOf(running);
+      for (const p of pods)
+        Object.assign(p, { status: "completed", message: "Succeeded", lastChanged: iso() });
+      this.emitChange(c, [running, ...pods], []);
+      return;
+    }
+    const name = `etl-hourly-run-${(0x9a17 + this.jobRuns++ * 131).toString(36)}`;
+    const images = ["prefecthq/prefect:3.4.1-python3.12"];
+    const job: MockResource = {
+      group: "batch",
+      kind: "Job",
+      namespace: "prefect",
+      name,
+      id: `batch/Job/prefect/${name}`,
+      version: "v1",
+      status: "reconciling",
+      message: "Running, 1 active",
+      replicas: "1/1",
+      completions: "0/1",
+      images,
+      labels: { "prefect.io/deployment-name": "etl-hourly" },
+      createdAt: iso(),
+      lastChanged: iso(),
+      resourceVersion: nextResourceVersion(),
+      events: [],
+      spec: {},
+    };
+    const podName = `${name}-${Math.random().toString(36).slice(2, 7)}`;
+    const pod: MockResource = {
+      group: "",
+      kind: "Pod",
+      namespace: "prefect",
+      name: podName,
+      id: `/Pod/prefect/${podName}`,
+      version: "v1",
+      status: "ready",
+      message: "Running",
+      owner: { group: "batch", kind: "Job", namespace: "prefect", name },
+      containers: ["prefect-job"],
+      images,
+      createdAt: iso(),
+      lastChanged: iso(),
+      resourceVersion: nextResourceVersion(),
+      events: [],
+      spec: { container: "prefect-job" },
+    };
+    c.resources.set(job.id, job);
+    c.resources.set(pod.id, pod);
+    // The oldest finished run of the flow leaves the list.
+    const oldest = jobs
+      .filter((j) => j.status === "completed")
+      .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""))[0];
+    const deletes: string[] = [];
+    if (oldest && jobs.length >= 6) {
+      for (const r of [oldest, ...podsOf(oldest)]) {
+        c.resources.delete(r.id);
+        deletes.push(r.id);
+      }
+    }
+    this.emitChange(c, [job, pod], deletes);
+  }
+
+  /** Mock-only: drops or restores a cluster's agent, as the hub reports it. */
+  setConnected(name: string, connected: boolean): void {
+    const c = this.cluster(name);
+    if (!c || c.info.connected === connected) return;
+    c.info.connected = connected;
+    c.info.lastSeen = iso();
+    this.emit("clusters", { items: this.clusterInfos() });
+    this.emit("resync", { cluster: name });
+  }
+
+  /** The current pods of a workload, newest first, for its log stream. */
+  workloadPods(cluster: string, kind: string, namespace: string, name: string): MockResource[] {
+    const cl = this.cluster(cluster);
+    if (!cl) return [];
+    return [...cl.resources.values()]
+      .filter(
+        (r) =>
+          r.kind === "Pod" &&
+          r.owner?.kind === kind &&
+          r.owner.namespace === namespace &&
+          r.owner.name === name,
+      )
+      .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
   }
 
   /**
@@ -723,12 +849,24 @@ export class MockHub {
 
   private ask(body: unknown): Response {
     if (!me.features.ai) return error(503, "disabled", "Ask AI is turned off.");
-    const { cluster, resourceId, threadId, question } = body as {
+    const { cluster, resourceId, threadId, question, attachments } = body as {
       cluster: string;
       resourceId?: string;
       threadId?: string;
       question: string;
+      attachments?: AskAttachment[];
     };
+    if (attachments?.length) {
+      if (!me.features.aiLogs)
+        return error(400, "bad_request", "Log attachments are turned off (ai.allowLogs).");
+      const lines = attachments.reduce((n, a) => n + a.lines.length, 0);
+      const size = attachments.reduce(
+        (n, a) => n + a.lines.reduce((m, l) => m + new TextEncoder().encode(l).length + 1, 0),
+        0,
+      );
+      if (attachments.length > 3 || lines > 500 || size > 32 * 1024)
+        return error(400, "bad_request", "At most 3 attachments, 500 lines and 32 KiB in total.");
+    }
     const cl = this.cluster(cluster);
     if (!cl) return error(404, "not_found", "Cluster not found.");
     const r = resourceId ? cl.resources.get(resourceId) : undefined;
@@ -742,7 +880,13 @@ export class MockHub {
 
     const steps: AskStep[] = [];
     let text: string;
-    if (r) {
+    if (attachments?.length) {
+      const all = attachments.flatMap((a) => a.lines);
+      const errors = all.filter((l) => /\b(error|fatal|panic|failed)\b/i.test(l));
+      const warns = all.filter((l) => /\bwarn(ing)?\b/i.test(l));
+      const sources = attachments.map((a) => `\`${a.source}\``).join(", ");
+      text = `I read ${all.length} log line${all.length === 1 ? "" : "s"} from ${sources}.\n\n- ${errors.length} error${errors.length === 1 ? "" : "s"} and ${warns.length} warning${warns.length === 1 ? "" : "s"}.${errors[0] ? `\n- The first error:\n\n\`\`\`\n${errors[0]}\n\`\`\`` : "\n- Nothing in these lines looks like a failure."}\n- If this repeats, check the pod's events and recent rollouts.`;
+    } else if (r) {
       steps.push({ tool: "get_resource", args: { cluster, id: r.id }, bytes: 1830 });
       steps.push({ tool: "get_events", args: { cluster, id: r.id }, bytes: 942 });
       if (r.status === "failed") {

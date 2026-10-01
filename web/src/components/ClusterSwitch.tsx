@@ -2,13 +2,14 @@ import { useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import type { ClusterInfo } from "../api/types";
 import { useAppState } from "../lib/appState";
-import { clusterStyle } from "../lib/clusterColor";
+import { clusterStyle, initials } from "../lib/clusterColor";
 import { usePrefs } from "../lib/prefs";
 import { Icon } from "./Icon";
 import { Modal } from "./Modal";
 import { Health, KeyHint } from "./Status";
 
-const initial = (c: ClusterInfo) => (c.displayName || c.name).charAt(0).toUpperCase();
+/** Two characters (PE for prod-eu), so a tile never relies on colour alone. */
+const tileText = (c: ClusterInfo) => initials(c.name || c.displayName);
 
 /**
  * A cluster's identity tile. Protected clusters get a solid colour (no gradient, never
@@ -23,7 +24,10 @@ export function ClusterTile({
   size?: "sm" | "md";
   children?: ReactNode;
 }) {
-  const box = size === "sm" ? "size-[30px] rounded-[9px] text-13" : "size-[38px] rounded-tile text-15";
+  const box =
+    size === "sm"
+      ? "size-[30px] rounded-[9px] text-12 tracking-[-0.02em]"
+      : "size-[38px] rounded-tile text-14 tracking-[-0.02em]";
   const fill = !cluster
     ? "bg-surface-sunken text-ink-2 border border-line"
     : cluster.protected
@@ -35,7 +39,7 @@ export function ClusterTile({
       style={cluster ? clusterStyle(cluster) : undefined}
       aria-hidden="true"
     >
-      {children ?? (cluster ? initial(cluster) : <Icon name="globe" />)}
+      {children ?? (cluster ? tileText(cluster) : <Icon name="globe" />)}
     </span>
   );
 }

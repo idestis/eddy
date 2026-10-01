@@ -4,11 +4,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { isApiError } from "../api/client";
-import { createJoinToken, deleteCluster } from "../api/endpoints";
+import { createJoinToken, deleteCluster, updateCluster } from "../api/endpoints";
 import { connectionQuery, keys } from "../api/queries";
 import type { ClusterInfo, ConnectionInfo, IssuedJoinToken } from "../api/types";
 import { CANCELLED, withConfirm } from "../lib/confirm";
 import { coreReady } from "../lib/onboarding";
+import { ClusterColorPicker } from "./ClusterColorPicker";
 import { ClusterTile } from "./ClusterSwitch";
 import { useConfirm } from "./ConfirmDialog";
 import { ConnectionChecklist, JoinTokenSummary, RejectedAttempts } from "./ConnectionStatus";
@@ -80,6 +81,18 @@ export function ConnectionDialog({ cluster, onClose }: { cluster: ClusterInfo; o
     },
   });
 
+  // Colour: Auto (undefined, sent as "") or a hex. Saved explicitly, not on every click.
+  const [color, setColor] = useState<string | undefined>(cluster.color?.toLowerCase());
+  const colorChanged = (color ?? "") !== (cluster.color?.toLowerCase() ?? "");
+  const saveColor = useMutation({
+    mutationFn: () => updateCluster(name, { color: color ?? "" }),
+    onSuccess: () => {
+      toast(`Colour of ${name} saved`, "ok");
+      void qc.invalidateQueries({ queryKey: keys.clusters });
+    },
+    onError: (err) => toast(`Couldn't save the colour: ${err.message}`, "bad"),
+  });
+
   const onDelete = () => {
     // Protected clusters confirm by typing the name; others with a second click.
     if (!(info?.cluster.protected ?? cluster.protected) && !armed) {
@@ -139,6 +152,27 @@ export function ConnectionDialog({ cluster, onClose }: { cluster: ClusterInfo; o
                 <RejectedAttempts attempts={info.attempts} />
               </section>
             </div>
+            {info.permissions.update && !helm && (
+              <section className="flex flex-col gap-2 rounded-card border border-line px-4 py-3">
+                <ClusterColorPicker
+                  value={color}
+                  onChange={setColor}
+                  name={name}
+                  preview={{ ...cluster, color }}
+                />
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    disabled={!colorChanged || saveColor.isPending}
+                    aria-busy={saveColor.isPending || undefined}
+                    onClick={() => saveColor.mutate()}
+                  >
+                    {saveColor.isPending ? "Saving…" : "Save colour"}
+                  </button>
+                </div>
+              </section>
+            )}
             {issued ? (
               <section className="flex min-w-0 flex-col gap-2 rounded-card border border-ok/40 bg-ok/6 p-4">
                 <h3 className={H3}>Reinstall the agent with the new token</h3>

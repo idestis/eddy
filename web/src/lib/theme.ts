@@ -1,5 +1,8 @@
 // Light/dark theme. The system preference applies unless the user picked one;
-// the choice is kept in localStorage and set as <html data-theme>.
+// the choice is kept in localStorage and set as <html data-theme>, and saved with the
+// view preferences so it follows the user to other browsers.
+
+import { getViewPrefs, setViewPrefs, subscribeViewPrefs } from "./viewPrefs";
 
 export type Theme = "light" | "dark";
 
@@ -22,17 +25,27 @@ export function effectiveTheme(): Theme {
 
 /** Applies the stored choice; call before the first render. */
 export function initTheme(): void {
-  const t = stored();
+  const t = stored() ?? getViewPrefs().theme ?? null;
   if (t) document.documentElement.dataset.theme = t;
+  // A theme picked on another device arrives with the hub's prefs.
+  subscribeViewPrefs(() => {
+    const v = getViewPrefs().theme;
+    if (v && v !== document.documentElement.dataset.theme) apply(v);
+  });
+}
+
+function apply(t: Theme): void {
+  document.documentElement.dataset.theme = t;
+  try {
+    localStorage.setItem(STORAGE_KEY, t);
+  } catch {
+    // Private mode or blocked storage: the toggle still works for this page.
+  }
 }
 
 export function toggleTheme(): Theme {
   const next: Theme = effectiveTheme() === "dark" ? "light" : "dark";
-  document.documentElement.dataset.theme = next;
-  try {
-    localStorage.setItem(STORAGE_KEY, next);
-  } catch {
-    // Private mode or blocked storage: the toggle still works for this page.
-  }
+  apply(next);
+  setViewPrefs({ theme: next });
   return next;
 }
