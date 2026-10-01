@@ -10,7 +10,7 @@ export const Route = createFileRoute("/docs/ask-ai")({
     pageHead({
       title: "Ask AI · Eddy docs",
       description:
-        "Turn on Ask AI with the Anthropic API or AWS Bedrock: API key, IRSA or Pod Identity, IAM policy, Guardrails, model choice, limits and kill switches.",
+        "Turn on Ask AI with the Anthropic API or AWS Bedrock: API key, an AWS IAM role through IRSA or Pod Identity, IAM policy, Guardrails, model choice, limits and kill switches.",
       path: "/docs/ask-ai/",
     }),
   component: Page,
@@ -53,16 +53,12 @@ function Page() {
       </p>
       <ol>
         <li>
-          Create an API key in the Anthropic console, and store it in the credentials Secret under the key{" "}
-          <code>ANTHROPIC_API_KEY</code>:
-          <CodeBlock
-            code={`
-$ kubectl -n eddy create secret generic eddy-credentials \\
-    --from-literal=ANTHROPIC_API_KEY=sk-ant-... \\
-    --dry-run=client -o yaml | kubectl apply -f -
-`}
-          />
-          This replaces the Secret. If it holds other keys, add this one to it instead.
+          Create an API key in the Anthropic console, and add it to <code>eddy-credentials</code> under the
+          key <code>ANTHROPIC_API_KEY</code>, with the{" "}
+          <Link to="/docs/install/" hash="add-key">
+            add-a-key command
+          </Link>
+          .
         </li>
         <li>
           Enable it in <code>hub-values.yaml</code>, then <code>helm upgrade</code>:
@@ -87,16 +83,25 @@ config:
 
       <h2 id="bedrock">Option B: AWS Bedrock</h2>
       <p>
-        Recommended on AWS: there are no static keys, and data stays in your account and region. The hub
-        authenticates with IRSA or EKS Pod Identity.
+        Recommended on AWS: there are no static keys, and data stays in your account and region. The hub gets
+        AWS credentials from an <strong>AWS IAM role</strong>, through IRSA or EKS Pod Identity.
+      </p>
+      <p>
+        That IAM role is unrelated to the Kubernetes <code>eddy-viewer</code> and <code>eddy-operator</code>{" "}
+        roles. Ask AI needs no extra Kubernetes RBAC, because every tool call runs as the asking user.
       </p>
       <ol>
         <li>
-          <strong>Enable model access</strong> for the model in the Bedrock console, in the region you use.
+          <strong>Check model access.</strong> Bedrock models are available by default. For Anthropic models,
+          AWS asks once per account or organization for a use-case form (First Time Use): open the model in
+          the Bedrock console's model catalog. The first call to a third-party model also subscribes the
+          account through AWS Marketplace, which needs <code>aws-marketplace:Subscribe</code>,{" "}
+          <code>Unsubscribe</code> and <code>ViewSubscriptions</code>. Make that first call yourself, for
+          example in the playground, so the hub's role needs no Marketplace permissions.
         </li>
         <li>
-          <strong>Create an IAM role</strong> that the hub's ServiceAccount (<code>eddy-hub</code> in the{" "}
-          <code>eddy</code> namespace) can assume. For IRSA, the trust policy is:
+          <strong>Create an AWS IAM role for the hub pod</strong> that the hub's ServiceAccount (
+          <code>eddy-hub</code> in the <code>eddy</code> namespace) can assume. For IRSA, the trust policy is:
           <CodeBlock
             code={`
 {
@@ -113,13 +118,35 @@ config:
 }
 `}
           />
+          For EKS Pod Identity (with the Pod Identity Agent add-on), trust the Pod Identity service instead,
+          then associate the role with the ServiceAccount:
+          <CodeBlock
+            code={`
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"Service": "pods.eks.amazonaws.com"},
+    "Action": ["sts:AssumeRole", "sts:TagSession"]
+  }]
+}
+`}
+          />
+          <CodeBlock
+            code={`
+$ aws eks create-pod-identity-association --cluster-name <management-cluster> \\
+    --namespace eddy --service-account eddy-hub \\
+    --role-arn arn:aws:iam::111122223333:role/eddy-hub-bedrock
+`}
+          />
         </li>
         <li>
-          <strong>Attach a permissions policy</strong> that allows <code>InvokeModel</code> on only the
-          inference profile and the foundation models behind it. List each region the profile routes to. An{" "}
-          <code>eu.</code> profile stays inside Europe, while a <code>global.</code> profile can route
-          anywhere, so pick a geo or single-region profile if data residency matters. Drop the last statement
-          if you set no guardrail.
+          <strong>Attach a permissions policy</strong> that allows <code>bedrock:InvokeModel</code> (it also
+          covers the Converse API the hub uses) on only the inference profile and, through it, the foundation
+          model. The region wildcard covers every region the profile routes to, and the condition keeps it
+          usable only through that profile. An <code>eu.</code> profile stays inside Europe, while a{" "}
+          <code>global.</code> profile can route anywhere, so pick a geo or single-region profile if data
+          residency matters. Drop the last statement if you set no guardrail.
           <CodeBlock
             code={`
 {
@@ -135,11 +162,7 @@ config:
       "Sid": "InvokeUnderlyingModelOnlyViaThatProfile",
       "Effect": "Allow",
       "Action": "bedrock:InvokeModel",
-      "Resource": [
-        "arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
-        "arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
-        "arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
-      ],
+      "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
       "Condition": {"StringLike": {"bedrock:InferenceProfileArn": "arn:aws:bedrock:eu-central-1:111122223333:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0"}}
     },
     {
@@ -152,10 +175,19 @@ config:
 }
 `}
           />
+          To list the regions explicitly instead, put the ARNs from this command in <code>Resource</code>. The
+          list can change over time:
+          <CodeBlock
+            code={`
+$ aws bedrock get-inference-profile --region eu-central-1 \\
+    --inference-profile-identifier eu.anthropic.claude-haiku-4-5-20251001-v1:0 \\
+    --query 'models[].modelArn'
+`}
+          />
         </li>
         <li>
           <strong>Annotate the ServiceAccount and enable Bedrock</strong> in the hub values. With Pod
-          Identity, skip the annotation and associate the role with the ServiceAccount instead:
+          Identity, leave out the annotation (the association from step 2 does that job):
           <CodeBlock
             code={`
 serviceAccount:
@@ -211,9 +243,10 @@ config:
 
       <h2 id="kill">Kill switch</h2>
       <p>
-        To turn Ask AI off at once without a restart, set <code>aiEnabled: false</code> in the{" "}
-        <code>eddy-runtime</code> ConfigMap. Ask AI then returns 503 and its button disappears. A flag can
-        only turn a feature off, it cannot enable what <code>config.ai.enabled</code> disables. See{" "}
+        To turn Ask AI off without a restart, set <code>runtimeFlags.aiEnabled: false</code> in the hub
+        values, or patch the <code>flags.yaml</code> key of the <code>eddy-runtime</code> ConfigMap for an
+        immediate change. Ask AI then returns 503 and its button disappears. A flag can only turn a feature
+        off, it cannot enable what <code>config.ai.enabled</code> disables. See{" "}
         <Link to="/docs/operations/" hash="kill">
           Operations
         </Link>
@@ -242,8 +275,9 @@ config:
           Secret has <code>ANTHROPIC_API_KEY</code>.
         </li>
         <li>
-          <strong>Bedrock access denied.</strong> Model access is not enabled in that region, the role is not
-          attached to the ServiceAccount, or the policy ARNs do not match the profile's regions.
+          <strong>Bedrock access denied.</strong> The Anthropic use-case form is missing, the first call could
+          not subscribe the account in AWS Marketplace, the role is not attached to the ServiceAccount, or the
+          policy ARNs do not match the profile. Compare the ARNs in the error with the policy.
         </li>
         <li>
           <strong>No Ask AI button.</strong> It is off in <code>config.ai.enabled</code> or switched off in{" "}
@@ -251,7 +285,17 @@ config:
         </li>
         <li>
           <strong>Egress blocked.</strong> With <code>networkPolicy</code> on, the default egress allows HTTPS
-          to anywhere. Tighten it only if you allow the provider's endpoints.
+          to anywhere. Tighten it only if you allow the provider's endpoints. Pod Identity also needs port 80
+          to the node-local agent:
+          <CodeBlock
+            code={`
+networkPolicy:
+  egress:
+    extra:
+      - to: [{ipBlock: {cidr: 169.254.170.23/32}}]
+        ports: [{port: 80, protocol: TCP}]
+`}
+          />
         </li>
       </ul>
       <Pager current="/docs/ask-ai/" />

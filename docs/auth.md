@@ -89,13 +89,15 @@ You need to be an owner of the organization (or have the GitHub App manager role
 8. **Put the secret in a Kubernetes Secret.** The chart loads `credentialsSecret` as environment variables:
 
    ```sh
-   read -rs GH_SECRET   # paste the client secret, then Enter
-   kubectl -n eddy create secret generic eddy-credentials \
-     --from-literal=GITHUB_CLIENT_SECRET="$GH_SECRET" \
-     --dry-run=client -o yaml | kubectl apply -f -
+   read -rs VALUE   # paste the client secret, then Enter
+   kubectl -n eddy patch secret eddy-credentials --type merge \
+     -p "{\"stringData\":{\"GITHUB_CLIENT_SECRET\":\"$VALUE\"}}"
+   unset VALUE
    ```
 
-   If `eddy-credentials` already holds other keys (`ANTHROPIC_API_KEY`, `EDDY_PROXY_SECRET`), add the new key to it rather than replacing it, for example with `kubectl edit secret` or your secrets tooling (External Secrets, Sealed Secrets, SOPS).
+   This adds the key and keeps the others (`ANTHROPIC_API_KEY`, `EDDY_PROXY_SECRET`). Create the
+   empty Secret first if it does not exist yet (see [install.md](install.md), step 2), or manage it
+   with your secrets tooling (External Secrets, Sealed Secrets, SOPS).
 9. **Configure the chart** in `hub-values.yaml`:
 
    ```yaml

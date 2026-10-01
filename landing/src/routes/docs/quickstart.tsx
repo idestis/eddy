@@ -55,7 +55,8 @@ function Page() {
             </li>
             <li>
               installs two hub replicas with local users, the <code>eddy-db-app</code> Secret as the database
-              connection, and one registered cluster called <code>kind</code>.
+              connection, one registered cluster called <code>kind</code>, and the <code>platform</code> group
+              allowed to use the Add cluster wizard (<code>onboarding.admins</code>).
             </li>
             <li>
               installs two agent replicas in <code>eddy-system</code>, talking to the hub over TLS with a
@@ -84,7 +85,7 @@ function Page() {
           The fleet page shows one cluster, <code>kind</code>, as connected. From the terminal:
           <CodeBlock
             lines={[
-              "$ kubectl --context kind-eddy get clusters",
+              "$ kubectl --context kind-eddy get clusters.gitops.eddy.dev",
               "$ kubectl --context kind-eddy -n eddy get pods",
             ]}
           />
@@ -99,14 +100,13 @@ function Page() {
       </ul>
       <h2 id="add">Add another cluster</h2>
       <p>
-        The kind setup registers its own cluster in <code>clusters[]</code>. To try the{" "}
-        <strong>Add cluster</strong> wizard (<Kbd>n</Kbd> on the fleet page), the signed-in user also needs
-        permission to create <code>clusters.gitops.eddy.dev</code> in the management cluster. Bind your group
-        as shown in{" "}
+        The kind setup registers its own cluster in <code>clusters[]</code>. The <code>dev</code> user can
+        also try the <strong>Add cluster</strong> wizard (<Kbd>n</Kbd> on the fleet page), because the script
+        sets <code>onboarding.admins.groups: [eddy:platform]</code> (see{" "}
         <Link to="/docs/clusters/" hash="wizard">
           Add clusters
         </Link>
-        . The wizard prints a <code>helm install</code> command that dials the hub's agent endpoint, which on
+        ). The wizard prints a <code>helm install</code> command that dials the hub's agent endpoint, which on
         kind is only an in-cluster address. A second cluster that can reach it needs a real endpoint, so
         follow <Link to="/docs/install/">Install</Link> for that.
       </p>

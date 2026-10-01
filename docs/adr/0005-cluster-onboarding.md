@@ -75,8 +75,9 @@ the signed-in user, in the **management** cluster:
 - `update` to issue a join token for an existing cluster
 - `delete` to remove one (with a typed confirmation on protected clusters)
 
-The UI hides the actions a user may not perform. The recipe in `docs/install.md` binds
-`eddy:platform` to an `eddy-cluster-admin` ClusterRole in the management cluster.
+The UI hides the actions a user may not perform. The hub chart's `onboarding.admins.groups` (and
+`users`) creates the `eddy-cluster-admin` ClusterRole in the management cluster and binds it, for
+example to `eddy:platform`. Nobody is bound by default.
 
 ### RBAC and chart changes
 

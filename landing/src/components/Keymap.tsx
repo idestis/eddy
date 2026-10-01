@@ -34,8 +34,9 @@ export function Keymap({ items = keys, label = "Key bindings" }: { items?: KeyIt
           className="flex min-w-0 flex-col items-start gap-1.5 border-b border-dashed border-line py-3 text-[0.93rem] text-ink-2 sm:min-h-12 sm:flex-row sm:items-center sm:gap-3 sm:py-2"
         >
           <span className="flex gap-1 sm:w-[5.5rem] sm:shrink-0">
-            {k.keys.map((key) => (
-              <kbd key={key} className="min-w-[2.2em] text-center text-[0.85em]">
+            {k.keys.map((key, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: keys repeat within a sequence (g g)
+              <kbd key={`${i}-${key}`} className="min-w-[2.2em] text-center text-[0.85em]">
                 {key}
               </kbd>
             ))}

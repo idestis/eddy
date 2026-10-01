@@ -36,34 +36,23 @@ function Page() {
       </p>
       <ol>
         <li>
-          <strong>Allow your platform group</strong> to manage clusters. Eddy adds no roles of its own: the
-          hub asks the management cluster, as the signed-in user, whether they may create, update, delete and
-          get <code>clusters</code>. Apply this in the <strong>management</strong> cluster:
+          <strong>Allow your platform group</strong> to manage clusters. The hub asks the management cluster,
+          as the signed-in user, whether they may create, update, delete and get{" "}
+          <code>clusters.gitops.eddy.dev</code>. The hub chart grants that to the groups and users you list in{" "}
+          <code>hub-values.yaml</code>, and to nobody by default:
           <CodeBlock
             code={`
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: eddy-cluster-admin
-rules:
-  - apiGroups: [gitops.eddy.dev]
-    resources: [clusters]
-    verbs: [get, list, watch, create, update, patch, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: eddy-cluster-admin
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: eddy-cluster-admin
-subjects:
-  - apiGroup: rbac.authorization.k8s.io
-    kind: Group
-    name: eddy:platform
+onboarding:
+  admins:
+    groups: [eddy:platform]   # or a GitHub team, e.g. eddy:github:acme/platform
 `}
           />
+          Then run <code>helm upgrade</code>. The chart creates the ClusterRole{" "}
+          <code>eddy-cluster-admin</code> (get, list, watch, create, update, patch and delete on clusters) and
+          binds it to those subjects in the <strong>management</strong> cluster. Groups must start with{" "}
+          <code>eddy:</code> (<code>config.auth.groups.prefix</code>), and <code>system:</code> subjects are
+          refused. The install notes say who is bound. With <code>rbac.create: false</code>, create an
+          equivalent ClusterRole and ClusterRoleBinding yourself.
         </li>
         <li>
           <strong>Fill in the form:</strong> a name (a DNS label such as <code>prod-eu</code>), display name,
@@ -74,7 +63,13 @@ subjects:
         <li>
           <strong>Copy the install command</strong> from the Connect screen. It comes in three forms: a{" "}
           <code>helm</code> command, a <code>values.yaml</code>, and plain manifests for GitOps-managed
-          clusters. Run it against the <strong>workload</strong> cluster.
+          clusters. Run it against the <strong>workload</strong> cluster. The plain manifests do not include
+          the user roles <code>eddy-viewer</code> and <code>eddy-operator</code>, so apply{" "}
+          <code>deploy/rbac/eddy-user-rbac.yaml</code> as well (see{" "}
+          <Link to="/docs/access/" hash="raw">
+            Access and RBAC
+          </Link>
+          ).
         </li>
         <li>
           <strong>Watch the live checklist.</strong> It ticks as the agent connects: agent connected, protocol
@@ -152,7 +147,9 @@ $ kubectl --context prod-eu label namespace eddy-system pod-security.kubernetes.
           />
         </li>
         <li>
-          Write <code>agent-values.yaml</code>:
+          Write <code>agent-values.yaml</code>. The <code>impersonation</code> and <code>userRBAC</code>{" "}
+          blocks decide who sees and does what here; <Link to="/docs/access/">Access and RBAC</Link> explains
+          them:
           <CodeBlock
             code={`
 cluster:
@@ -351,8 +348,12 @@ $ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.
           through <code>extraEnv</code>). Keep the Kubernetes API in <code>NO_PROXY</code>.
         </li>
         <li>
-          The connection is one long-lived WebSocket with a ping every 20 seconds, so load balancers need an
-          idle timeout of 60 seconds or more. Reconnects use jittered backoff.
+          The connection is one long-lived WebSocket with a ping every 20 seconds, so any load balancer idle
+          timeout above that works; 3600 seconds is recommended, as in{" "}
+          <Link to="/docs/install/" hash="alb">
+            Install
+          </Link>
+          . Reconnects use jittered backoff.
         </li>
       </ul>
       <div className="tbl">
@@ -392,7 +393,7 @@ $ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.
         <li>
           Within about a minute the cluster shows as <code>Connected</code> in the UI and on the management
           cluster:
-          <CodeBlock lines={["$ kubectl --context mgmt get clusters"]} />
+          <CodeBlock lines={["$ kubectl --context mgmt get clusters.gitops.eddy.dev"]} />
         </li>
         <li>
           Read the agent log in the workload cluster:

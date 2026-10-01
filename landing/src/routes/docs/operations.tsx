@@ -74,7 +74,7 @@ $ helm upgrade eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version <new
       <CodeBlock
         lines={[
           "$ kubectl -n eddy rollout status deploy/eddy-hub",
-          "$ kubectl --context mgmt get clusters",
+          "$ kubectl --context mgmt get clusters.gitops.eddy.dev",
           "$ kubectl -n eddy logs deploy/eddy-hub",
         ]}
       />
@@ -230,7 +230,10 @@ runtimeFlags:
                 <code>/readyz</code>
               </th>
               <td>Hub metrics port, 9090</td>
-              <td>Readiness. Names the missing peer link or unsynced cluster when not ready</td>
+              <td>
+                Readiness. Not ready only until the cluster registry syncs; store or peer trouble shows as{" "}
+                <code>ok (degraded: …)</code>
+              </td>
             </tr>
             <tr>
               <th scope="row">
@@ -259,9 +262,9 @@ runtimeFlags:
         </table>
       </div>
       <p>
-        Cluster state is visible too: <code>kubectl get clusters</code> (short name <code>ecl</code>) shows
-        each cluster's phase. Logs from both components are JSON on standard output. Set{" "}
-        <code>networkPolicy.metrics.from</code> to your Prometheus namespace if you turn the hub's network
+        Cluster state is visible too: <code>kubectl get clusters.gitops.eddy.dev</code> (short name{" "}
+        <code>ecl</code>) shows each cluster's phase. Logs from both components are JSON on standard output.
+        Set <code>networkPolicy.metrics.from</code> to your Prometheus namespace if you turn the hub's network
         policy on.
       </p>
 
@@ -277,15 +280,20 @@ runtimeFlags:
           />
         </li>
         <li>
-          The database, the signing-key Secret and the CRD remain on purpose. To remove everything, drop the
-          database (or delete the CloudNativePG <code>Cluster</code>), then:
+          Some things remain on purpose: the database, the signing-key Secret, the CRD, the clusters added in
+          the UI with their token Secrets, and, on agents installed with a join token, the agent's token
+          Secret. To remove everything, drop the database (or delete the CloudNativePG <code>Cluster</code>),
+          then:
           <CodeBlock
             lines={[
+              "$ kubectl -n eddy-system delete secret eddy-agent-token --context prod-eu",
+              "$ kubectl -n eddy delete secret -l gitops.eddy.dev/cluster",
               "$ kubectl -n eddy delete secret eddy-hub-key",
               "$ kubectl delete crd clusters.gitops.eddy.dev",
             ]}
           />
-          Deleting the CRD removes every <code>Cluster</code> resource with it.
+          The label selects every <code>eddy-agent-&lt;name&gt;</code> token Secret, from the chart and the
+          wizard. Deleting the CRD removes every <code>Cluster</code> resource with it.
         </li>
       </ol>
       <p>

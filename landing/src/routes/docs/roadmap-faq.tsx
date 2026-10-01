@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { FullRef } from "../../components/FullRef";
 import { Kbd } from "../../components/Kbd";
 import { Pager } from "../../components/Pager";
@@ -92,8 +92,8 @@ function Page() {
             <tr>
               <th scope="row">Ask AI</th>
               <td>
-                Anthropic API, or AWS Bedrock with any model that supports tool use (IRSA, Guardrails);
-                read-only tools, redaction, log and YAML attachments
+                Anthropic API, or AWS Bedrock with Converse models that support tool use (Claude tested; IRSA
+                or Pod Identity, Guardrails); read-only tools, redaction, log and YAML attachments
               </td>
               <td>OpenAI-compatible endpoints (Ollama, vLLM, Azure OpenAI), streaming answers</td>
             </tr>
@@ -135,14 +135,15 @@ function Page() {
       </p>
       <h3>Is AI required?</h3>
       <p>
-        No. Ask AI is off by default, read-only, and works with the Anthropic API or AWS Bedrock. MCP is
-        optional too, and both can be switched off at runtime.
+        No. Ask AI is off by default, read-only, and works with the Anthropic API or AWS Bedrock. MCP is on by
+        default; turn it off with <code>config.mcp.enabled: false</code>. Both can also be switched off at
+        runtime.
       </p>
       <h3>Can I use my company login?</h3>
       <p>
         Yes. Eddy signs in with GitHub or OIDC (Google, Okta, Entra, Dex) natively, and a trusted reverse
-        proxy such as oauth2-proxy also works. SAML 2.0 is a possible future addition. See the{" "}
-        <a href="https://github.com/idestis/eddy/blob/HEAD/docs/auth.md">sign-in guide</a>.
+        proxy such as oauth2-proxy also works. SAML 2.0 is a possible future addition. See{" "}
+        <Link to="/docs/sign-in/">Sign-in</Link>.
       </p>
       <h3>How do I contribute or report a problem?</h3>
       <p>

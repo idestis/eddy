@@ -176,19 +176,12 @@ https://eddy.internal.example.com/auth/<oidc id>/callback
           each organization in <code>allowedOrganizations</code>.
         </li>
         <li>
-          <strong>Put the secret in the Kubernetes Secret.</strong> The chart loads{" "}
-          <code>credentialsSecret</code> as environment variables:
-          <CodeBlock
-            code={`
-$ read -rs GH_SECRET
-$ kubectl -n eddy create secret generic eddy-credentials \\
-    --from-literal=GITHUB_CLIENT_SECRET="$GH_SECRET" \\
-    --dry-run=client -o yaml | kubectl apply -f -
-`}
-          />
-          If <code>eddy-credentials</code> already holds other keys, add the new key to it instead (for
-          example with <code>kubectl edit secret</code> or your secrets tooling), because this command
-          replaces the Secret.
+          <strong>Put the secret in the Kubernetes Secret.</strong> Add it to <code>eddy-credentials</code>{" "}
+          under the key <code>GITHUB_CLIENT_SECRET</code>, with the{" "}
+          <Link to="/docs/install/" hash="add-key">
+            add-a-key command
+          </Link>
+          . The chart loads <code>credentialsSecret</code> as environment variables.
         </li>
         <li>
           <strong>Configure the chart</strong> in <code>hub-values.yaml</code>:
@@ -325,7 +318,11 @@ config:
         <code>/auth/&lt;id&gt;/login</code> and <code>/auth/&lt;id&gt;/callback</code>, and sessions named{" "}
         <code>oidc:&lt;id&gt;</code>. The client secret comes from <code>credentialsSecret</code> under{" "}
         <code>OIDC_&lt;ID&gt;_CLIENT_SECRET</code> (the id upper-cased, <code>-</code> becoming <code>_</code>
-        ), or the variable named by <code>clientSecretEnv</code>.
+        ), or the variable named by <code>clientSecretEnv</code>. Add it with the{" "}
+        <Link to="/docs/install/" hash="add-key">
+          add-a-key command
+        </Link>
+        .
       </p>
       <div className="tbl">
         <table>
@@ -478,7 +475,8 @@ config:
         </li>
         <li>
           Use the tenant-specific issuer. The multi-tenant <code>common</code> and <code>organizations</code>{" "}
-          endpoints are rejected.
+          endpoints do not work: the issuer in their discovery document does not match, and sign-in shows
+          &ldquo;cannot be reached&rdquo;.
           <CodeBlock
             code={`
 config:
@@ -629,7 +627,21 @@ config:
       </p>
       <ol>
         <li>
-          Create the shared secret (add it to <code>eddy-credentials</code>) and the proxy's Secret:
+          Add the shared secret, at least 32 random bytes, to <code>eddy-credentials</code> as{" "}
+          <code>EDDY_PROXY_SECRET</code> (the{" "}
+          <Link to="/docs/install/" hash="add-key">
+            add-a-key command
+          </Link>{" "}
+          with a generated value):
+          <CodeBlock
+            code={`
+$ kubectl -n eddy patch secret eddy-credentials --type merge \\
+    -p "{\\"stringData\\":{\\"EDDY_PROXY_SECRET\\":\\"$(openssl rand -base64 48)\\"}}"
+`}
+          />
+        </li>
+        <li>
+          Create the proxy's own Secret:
           <CodeBlock
             code={`
 $ kubectl -n eddy create secret generic eddy-oauth2-proxy \\
@@ -638,13 +650,12 @@ $ kubectl -n eddy create secret generic eddy-oauth2-proxy \\
     --from-literal=OAUTH2_PROXY_CLIENT_SECRET=...
 `}
           />
-          Add <code>EDDY_PROXY_SECRET</code> (at least 32 random bytes, for example{" "}
-          <code>openssl rand -base64 48</code>) to <code>eddy-credentials</code>.
         </li>
         <li>
           Add the values (Google shown):
           <CodeBlock
             code={`
+credentialsSecret: eddy-credentials   # holds EDDY_PROXY_SECRET; required with the sidecar
 config:
   auth:
     local:

@@ -42,7 +42,11 @@ function Page() {
         </li>
       </ul>
 
-      <h2 id="postgres">1. PostgreSQL</h2>
+      <h2 id="namespace">1. Namespace</h2>
+      <p>The hub, its database Secret and its credentials all live in one namespace:</p>
+      <CodeBlock lines={["$ kubectl create namespace eddy"]} />
+
+      <h2 id="postgres">2. PostgreSQL</h2>
       <p>
         The hub keeps its own data in PostgreSQL: sessions, personal access tokens, threads, audit events and
         preferences, plus the state replicas share. Cluster state is never stored there. The hub applies its
@@ -50,9 +54,19 @@ function Page() {
       </p>
       <h3 id="cnpg">Option A: CloudNativePG</h3>
       <p>
-        With the <a href="https://cloudnative-pg.io">CloudNativePG operator</a> installed, create a{" "}
-        <code>Cluster</code> in the hub's namespace. One instance is enough to start, and two give you a
-        standby.
+        Install the <a href="https://cloudnative-pg.io">CloudNativePG operator</a> if the cluster does not
+        have it yet:
+      </p>
+      <CodeBlock
+        code={`
+$ kubectl apply --server-side -f \\
+    https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml
+$ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
+`}
+      />
+      <p>
+        Then create a <code>Cluster</code> in the hub's namespace. One instance is enough to start, and two
+        give you a standby.
       </p>
       <CodeBlock
         code={`
@@ -74,7 +88,7 @@ spec:
       />
       <p>
         CloudNativePG creates a Secret named <code>eddy-db-app</code>. Its <code>uri</code> key is a complete
-        connection string, so the hub values in step 3 point at it and you do not create a DSN Secret
+        connection string, so the hub values in step 4 point at it and you do not create a DSN Secret
         yourself.
       </p>
       <h3 id="rds">Option B: RDS, Aurora, Cloud SQL or any PostgreSQL</h3>
@@ -93,7 +107,6 @@ CREATE DATABASE eddy OWNER eddy;
           outside the cluster:
           <CodeBlock
             code={`
-$ kubectl create namespace eddy
 $ kubectl -n eddy create secret generic eddy-db \\
     --from-literal=dsn='postgres://eddy:change-me@eddy.abc123.eu-central-1.rds.amazonaws.com:5432/eddy?sslmode=verify-full'
 `}
@@ -115,30 +128,34 @@ $ kubectl -n eddy create secret generic eddy-db \\
         </p>
       </div>
 
-      <h2 id="secrets">2. Namespace and secrets</h2>
+      <h2 id="secrets">3. Secrets</h2>
       <p>
-        Create the namespace and one credentials Secret for everything secret that the hub reads from its
-        environment. The chart loads it with <code>credentialsSecret</code>, so no secret ever goes into Helm
-        values.
+        One credentials Secret holds everything secret that the hub reads from its environment. The chart
+        loads it with <code>credentialsSecret</code>, so no secret ever goes into Helm values.
       </p>
       <ol>
         <li>
-          Create the namespace if you have not yet:
-          <CodeBlock lines={["$ kubectl create namespace eddy"]} />
+          Create the credentials Secret, empty for now:
+          <CodeBlock lines={["$ kubectl -n eddy create secret generic eddy-credentials"]} />
+          The later pages add keys to it as you need them. The key names are fixed by the config:{" "}
+          <code>GITHUB_CLIENT_SECRET</code> for <Link to="/docs/sign-in/">GitHub sign-in</Link>,{" "}
+          <code>OIDC_&lt;ID&gt;_CLIENT_SECRET</code> for each OIDC provider, <code>EDDY_PROXY_SECRET</code>{" "}
+          for the trusted proxy and <code>ANTHROPIC_API_KEY</code> for <Link to="/docs/ask-ai/">Ask AI</Link>.
         </li>
-        <li>
-          Create the credentials Secret with only the keys you use. The key names are fixed by the config:
+        <li id="add-key">
+          <strong>Add a key to eddy-credentials.</strong> Every page uses this command. It adds or replaces
+          one key and keeps the others, and <code>read -rs</code> keeps the value out of your shell history.
+          Change the key name:
           <CodeBlock
             code={`
-$ kubectl -n eddy create secret generic eddy-credentials \\
-    --from-literal=GITHUB_CLIENT_SECRET=... \\
-    --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+$ read -rs VALUE
+$ kubectl -n eddy patch secret eddy-credentials --type merge \\
+    -p "{\\"stringData\\":{\\"GITHUB_CLIENT_SECRET\\":\\"$VALUE\\"}}"
+$ unset VALUE
 `}
           />
-          <code>GITHUB_CLIENT_SECRET</code> is for <Link to="/docs/sign-in/">GitHub sign-in</Link>,{" "}
-          <code>OIDC_&lt;ID&gt;_CLIENT_SECRET</code> for each OIDC provider, <code>ANTHROPIC_API_KEY</code>{" "}
-          for <Link to="/docs/ask-ai/">Ask AI</Link> and <code>EDDY_PROXY_SECRET</code> for the trusted-proxy
-          mode. Skip the ones you do not need. If the Secret exists, add keys to it instead of replacing it.
+          The hub reads the Secret when it starts. If it is already running, restart it afterwards:{" "}
+          <code>kubectl -n eddy rollout restart deploy/eddy-hub</code>.
         </li>
         <li>
           <strong>Session key (optional).</strong> The chart generates the signing key on first install and
@@ -153,18 +170,15 @@ $ kubectl -n eddy create secret generic eddy-session-key \\
           />
         </li>
         <li>
-          <strong>Local users (optional).</strong> Hash a password for each user. The command reads the
-          password from standard input, so it stays out of your shell history:
-          <CodeBlock
-            code={`
-$ read -rs PW && printf '%s' "$PW" | docker run --rm -i ghcr.io/idestis/eddy-hub:1.0.0 hash-password
-`}
-          />
-          The output is an argon2id hash to paste into <code>users.list</code> below.
+          <strong>Local users (optional).</strong> Hash a password for each user as shown in{" "}
+          <Link to="/docs/sign-in/" hash="local">
+            Sign-in, local users
+          </Link>
+          , and paste the hash into <code>users.list</code> below.
         </li>
       </ol>
 
-      <h2 id="values">3. Write hub-values.yaml</h2>
+      <h2 id="values">4. Write hub-values.yaml</h2>
       <p>
         This is a complete minimal file: PostgreSQL from CloudNativePG, one local user, and both internal
         ingresses on nginx. Change the hostnames and the hash. Add real sign-in in{" "}
@@ -186,6 +200,10 @@ users:
 store:
   postgres:
     dsnSecret: {name: eddy-db-app, key: uri}   # use {name: eddy-db, key: dsn} for option B
+
+# onboarding:
+#   admins:
+#     groups: [eddy:platform]   # who may use the Add cluster wizard (see Add clusters)
 
 ingress:
   ui:
@@ -225,13 +243,14 @@ ingress:
         </li>
       </ul>
 
-      <h2 id="ingress">4. Internal ingress</h2>
+      <h2 id="ingress">5. Internal ingress</h2>
       <p>
-        The hub has two listeners and two Services, both <code>ClusterIP</code>: the UI, API and MCP on port
-        8080, and the agent endpoint on 8443. Expose them on separate hostnames. The UI uses server-sent
-        events and agents hold long WebSockets, so raise the idle timeouts. The agent ingress routes only{" "}
-        <code>/agent/v1/connect</code> and skips your sign-in proxy on purpose, because agents authenticate
-        with their token.
+        The hub has two listeners: container port 8080 for the UI, API and MCP, and 8443 for the agent
+        endpoint. Two <code>ClusterIP</code> Services front them: <code>eddy-hub</code> on port 80, and{" "}
+        <code>eddy-hub-agents</code> on ports 443 and 80, both to 8443. Expose them on separate hostnames. The
+        UI uses server-sent events and agents hold long WebSockets, so raise the idle timeouts. The agent
+        ingress routes only <code>/agent/v1/connect</code> and skips your sign-in proxy on purpose, because
+        agents authenticate with their token.
       </p>
       <h3 id="nginx">nginx</h3>
       <p>
@@ -271,7 +290,7 @@ ingress:
   agents:
     enabled: true
     className: alb
-    hosts: [eddy-agents.internal.example.com]   # a separate host, or the UI host
+    hosts: [eddy-agents.internal.example.com]
     annotations:
       alb.ingress.kubernetes.io/group.name: eddy
       alb.ingress.kubernetes.io/scheme: internal
@@ -282,6 +301,13 @@ ingress:
       alb.ingress.kubernetes.io/healthcheck-path: /healthz
 `}
       />
+      <p>
+        To put both on one hostname instead, set <code>ingress.agents.hosts</code> to the UI host and add{" "}
+        <code>alb.ingress.kubernetes.io/group.order: "-1"</code> to the agents annotations. The ALB evaluates
+        rules in <code>group.order</code>, then by ingress name, and <code>eddy-hub</code> (the UI,{" "}
+        <code>/</code>) sorts before <code>eddy-hub-agents</code>, so without the order the UI rule would
+        catch <code>/agent/v1/connect</code>.
+      </p>
       <p>The network path, with the ports that matter:</p>
       <ol>
         <li>
@@ -318,9 +344,10 @@ ingress:
       <p>
         Agents in other VPCs or accounts reach the endpoint over VPC peering, Transit Gateway or PrivateLink.
         If you prefer an internal NLB with no ingress for agents, set{" "}
-        <code>ingress.agents.enabled: false</code>, annotate the <code>eddy-hub-agents</code> Service with{" "}
-        <code>service.agents.annotations</code>, and let the hub terminate TLS itself with{" "}
-        <code>agentTLS.secretName</code> (a <code>kubernetes.io/tls</code> Secret).
+        <code>ingress.agents.enabled: false</code> and <code>service.agents.type: LoadBalancer</code>,
+        annotate the <code>eddy-hub-agents</code> Service with <code>service.agents.annotations</code>, and
+        let the hub terminate TLS itself with <code>agentTLS.secretName</code> (a{" "}
+        <code>kubernetes.io/tls</code> Secret).
       </p>
       <div className="callout">
         <p>
@@ -330,7 +357,7 @@ ingress:
         </p>
       </div>
 
-      <h2 id="helm">5. Install</h2>
+      <h2 id="helm">6. Install</h2>
       <CodeBlock
         code={`
 $ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \\
@@ -347,7 +374,7 @@ $ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \\
         .
       </p>
 
-      <h2 id="verify">6. Verify</h2>
+      <h2 id="verify">7. Verify</h2>
       <ol>
         <li>
           Wait for the rollout, then read the install notes the chart prints. They list the callback URLs to
@@ -358,8 +385,9 @@ $ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \\
           />
         </li>
         <li>
-          Check readiness. A hub pod is ready when the database is reachable, the cluster registry has synced
-          and it is linked to every peer replica. The readiness endpoint is on the metrics port, 9090:
+          Check readiness on the metrics port, 9090. A hub pod is ready once the cluster registry has synced.
+          Database or peer-link trouble shows as <code>ok (degraded: …)</code> but does not take the pod out
+          of service:
           <CodeBlock
             lines={[
               "$ kubectl -n eddy get pods",
@@ -394,8 +422,8 @@ $ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \\
         </li>
         <li>
           Every replica must mount the same session key. The chart does that, and each replica logs a{" "}
-          <code>keyFingerprint</code> at start. A replica that fails to authenticate its peers reports not
-          ready.
+          <code>keyFingerprint</code> at start. A replica that fails to authenticate its peers reports{" "}
+          <code>degraded</code> in <code>/readyz</code>.
         </li>
         <li>
           Default resources are 100m CPU and 256Mi memory requested, with a 512Mi memory limit. Raise them
@@ -425,9 +453,15 @@ networkPolicy:
       <h2 id="trouble">Troubleshooting</h2>
       <ul>
         <li>
-          <strong>A pod stays not ready.</strong> Read <code>/readyz</code> as above. It names the missing
-          peer link or the unsynced cluster. Check that the network policy allows port 8444 between hub pods
-          and that every replica logs the same <code>keyFingerprint</code>.
+          <strong>A pod stays not ready.</strong> The cluster registry has not synced: check the hub's RBAC on{" "}
+          <code>clusters.gitops.eddy.dev</code> and its log.
+        </li>
+        <li>
+          <strong>
+            <code>/readyz</code> says degraded.
+          </strong>{" "}
+          It names the missing peer link or the unreachable store. Check that the network policy allows port
+          8444 between hub pods and that every replica logs the same <code>keyFingerprint</code>.
         </li>
         <li>
           <strong>Sign-in answers 503.</strong> The hub cannot reach PostgreSQL. Reads of cluster data keep

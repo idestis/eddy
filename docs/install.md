@@ -46,7 +46,21 @@ The hub keeps its own data in PostgreSQL 14 or later: sessions, personal access 
 
 Give the hub a Secret whose key holds the DSN, a libpq URL such as `postgres://eddy:<password>@db.example.com:5432/eddy?sslmode=verify-full` (`verify-full` is recommended outside the cluster). Each replica opens up to `store.postgres.maxOpenConns` connections (default 10) plus one for `LISTEN`.
 
-**CloudNativePG.** With the [operator](https://cloudnative-pg.io) installed, this is all it takes (two instances give you a standby; one is enough to start):
+Create the hub's namespace first; the database Secret and the credentials live there:
+
+```sh
+kubectl create namespace eddy
+```
+
+**CloudNativePG.** Install the [operator](https://cloudnative-pg.io) if the cluster does not have it yet:
+
+```sh
+kubectl apply --server-side -f \
+  https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
+```
+
+Then this is all it takes (two instances give you a standby; one is enough to start):
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -92,12 +106,19 @@ Sessions, rate-limit counters and the agent session registry live in `UNLOGGED` 
 
 ### 2. Install the hub (management cluster)
 
-Create the credentials Secret first (only what you use), so no secret goes into Helm values:
+Create the credentials Secret first, empty, so no secret goes into Helm values. The hub loads it with `credentialsSecret` as environment variables (`GITHUB_CLIENT_SECRET`, `OIDC_<ID>_CLIENT_SECRET`, `EDDY_PROXY_SECRET`, `ANTHROPIC_API_KEY`):
 
 ```sh
-kubectl create namespace eddy
-kubectl -n eddy create secret generic eddy-credentials \
-  --from-literal=ANTHROPIC_API_KEY=sk-ant-...        # only if you use the Anthropic API
+kubectl -n eddy create secret generic eddy-credentials
+```
+
+Add each key when you need it. This adds or replaces one key and keeps the others, and `read -rs` keeps the value out of shell history (restart the hub afterwards if it is running, with `kubectl -n eddy rollout restart deploy/eddy-hub`):
+
+```sh
+read -rs VALUE
+kubectl -n eddy patch secret eddy-credentials --type merge \
+  -p "{\"stringData\":{\"GITHUB_CLIENT_SECRET\":\"$VALUE\"}}"
+unset VALUE
 ```
 
 Hash a password for each local user. `hash-password` reads stdin, so the password stays out of shell history:
@@ -125,6 +146,10 @@ users:
 store:
   postgres:
     dsnSecret: {name: eddy-db-app, key: uri}   # see step 1
+
+# onboarding:
+#   admins:
+#     groups: [eddy:platform]   # who may use the Add cluster wizard (step 3)
 
 ingress:
   ui:
@@ -160,8 +185,8 @@ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \
 Things to know:
 
 - The hub runs **two replicas** by default, active/active (ADR-0004): each serves the UI, API, SSE, MCP and the agent endpoint. Agents connect to whichever replica the load balancer picks; the other replicas relay to it over the peer channel, a WebSocket on port 8444 between hub pods. The chart adds a headless Service `eddy-hub-peers` for discovery, `POD_NAME`/`POD_IP`, a PodDisruptionBudget (`maxUnavailable: 1`), a rolling update that never removes a replica before its replacement is ready (`maxSurge: 1`, `maxUnavailable: 0`), zone and host spreading and a preferred anti-affinity. With `networkPolicy.enabled`, port 8444 accepts only hub pods.
-- Replicas authenticate each other with a key derived from the hub key Secret, so every replica must mount the same one (the chart does). Each replica logs a `keyFingerprint` at start; a replica whose peer links fail authentication reports not ready.
-- A replica is ready when the store is reachable, the cluster registry has synced, it has a link to every peer that DNS lists (after a 30 s grace) and its relayed clusters have synced.
+- Replicas authenticate each other with a key derived from the hub key Secret, so every replica must mount the same one (the chart does). Each replica logs a `keyFingerprint` at start; a replica whose peer links fail authentication reports `degraded` in `/readyz`.
+- A replica is ready once the cluster registry has synced. Store or peer-link trouble is reported by `/readyz` as `ok (degraded: …)` but never marks the pod unready: every replica would see the same fault, and taking all of them out of the Service would turn a partial outage into a full one.
 - The session/pepper key is generated on first install and kept across upgrades. With `helm template` or Argo CD, `lookup` does not work, so create the Secret yourself and set `sessionKeySecret` (key name `key`, at least 32 random bytes). The same goes for agent tokens: use `clusters[].existingTokenSecret`.
 - Both Services (`eddy-hub`, `eddy-hub-agents`) are `ClusterIP`. The UI, API and MCP are on port 8080 and the agent endpoint is on 8443, with separate listeners so they can be exposed separately.
 
@@ -207,7 +232,7 @@ If you prefer no ingress for agents, put an internal NLB in front of the `eddy-h
 ### 3. Register clusters
 
 There are two ways to register a workload cluster. Both end with a `Cluster` custom resource
-(`kubectl get clusters`, short name `ecl`) in the management cluster and a token Secret
+(`kubectl get clusters.gitops.eddy.dev`, short name `ecl`) in the management cluster and a token Secret
 `eddy-agent-<name>` in the hub namespace. Pick per cluster; they mix freely.
 
 #### Option A: from the UI (onboarding)
@@ -236,36 +261,25 @@ Afterwards the same checklist is the **Connection** panel of the cluster card, w
 join token there too, but are edited and removed in your Helm values.
 
 Set `agentsPublicURL` so the guide shows the address agents really dial; without it the guide
-uses the first `ingress.agents` host, then the in-cluster Service.
+uses the first `ingress.agents` host; with neither it shows a placeholder and a warning,
+because the in-cluster Service address only reaches agents in the hub's own cluster.
 
-**Who may do it.** Eddy adds no roles of its own: the hub asks the management cluster, with a
-SubjectAccessReview as the signed-in user, for `create` (add), `update` (join tokens and
-edits), `delete` (remove) and `get` (see the Connection panel) on `clusters.gitops.eddy.dev`.
-Bind your platform group in the **management** cluster:
+**Who may do it.** The hub asks the management cluster, with a SubjectAccessReview as the
+signed-in user, for `create` (add), `update` (join tokens and edits), `delete` (remove) and
+`get` (see the Connection panel) on `clusters.gitops.eddy.dev`. The hub chart grants that to the
+groups and users you list, and to nobody by default:
 
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: eddy-cluster-admin
-rules:
-  - apiGroups: [gitops.eddy.dev]
-    resources: [clusters]
-    verbs: [get, list, watch, create, update, patch, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: eddy-cluster-admin
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: eddy-cluster-admin
-subjects:
-  - apiGroup: rbac.authorization.k8s.io
-    kind: Group
-    name: eddy:platform
+onboarding:
+  admins:
+    groups: [eddy:platform]   # or a GitHub team, e.g. eddy:github:acme/platform
 ```
+
+Then `helm upgrade`. The chart creates the ClusterRole `eddy-cluster-admin`
+(`onboarding.admins.roleName`; get, list, watch, create, update, patch and delete on
+`clusters.gitops.eddy.dev`) and a ClusterRoleBinding to those subjects. Groups must carry
+`config.auth.groups.prefix` (default `eddy:`), and `system:` subjects are refused. NOTES.txt says
+who is bound. With `rbac.create: false`, create an equivalent ClusterRole and binding yourself.
 
 **What it adds to the hub's RBAC.** `onboarding.enabled: true` grants the hub ServiceAccount
 `create`, `update`, `patch` and `delete` on `clusters`, `create` on `subjectaccessreviews`, and
@@ -339,7 +353,7 @@ Options:
 
 The agent's ServiceAccount is read-only (Flux kinds, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, Pods, Services, Ingresses, HorizontalPodAutoscalers, PersistentVolumeClaims, events, Namespaces). It cannot read Secrets or ConfigMaps. Its only extra powers are creating SubjectAccessReviews and impersonating users and `eddy:` groups, plus, with `joinToken`, `get` and `update` on its own token Secret.
 
-Within a minute the cluster shows as `Connected`: `kubectl get clusters`.
+Within a minute the cluster shows as `Connected`: `kubectl get clusters.gitops.eddy.dev`.
 
 ### 5. Grant people access (`userRBAC`)
 
@@ -407,10 +421,7 @@ or keep managing them yourself with `userRBAC.create: false`.
 
 Eddy signs people in with **GitHub** (a GitHub App or OAuth App, github.com or Enterprise Server) and any **OpenID Connect** provider (Google, Okta, Entra ID, Dex and others) on its own. [docs/auth.md](auth.md) walks through creating the GitHub App or OIDC client, the callback URL `<publicURL>/auth/<id>/callback`, group mapping and RBAC, and keeping a break-glass admin password. In short:
 
-```sh
-kubectl -n eddy create secret generic eddy-credentials \
-  --from-literal=GITHUB_CLIENT_SECRET=...        # merge with the keys you already have
-```
+Add the client secret to `eddy-credentials` as `GITHUB_CLIENT_SECRET` with the add-a-key command from step 2, then:
 
 ```yaml
 config:
@@ -437,9 +448,9 @@ If you already run [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/) 
 Create two Secrets:
 
 ```sh
-# Shared secret between proxy and hub (at least 32 random bytes), merged into credentialsSecret.
-kubectl -n eddy create secret generic eddy-credentials \
-  --from-literal=EDDY_PROXY_SECRET="$(openssl rand -base64 48)"
+# Shared secret between proxy and hub (at least 32 random bytes), added to eddy-credentials.
+kubectl -n eddy patch secret eddy-credentials --type merge \
+  -p "{\"stringData\":{\"EDDY_PROXY_SECRET\":\"$(openssl rand -base64 48)\"}}"
 
 kubectl -n eddy create secret generic eddy-oauth2-proxy \
   --from-literal=OAUTH2_PROXY_COOKIE_SECRET="$(openssl rand -base64 32 | tr -- '+/' '-_')" \
@@ -450,6 +461,7 @@ kubectl -n eddy create secret generic eddy-oauth2-proxy \
 Values (Google shown; use a different `provider` and its options for GitHub, Okta and so on):
 
 ```yaml
+credentialsSecret: eddy-credentials   # holds EDDY_PROXY_SECRET; the chart refuses to render without it
 config:
   auth:
     local:
@@ -478,7 +490,7 @@ Ask AI answers questions about a resource using only what the asking user can se
 **Anthropic API:**
 
 ```yaml
-credentialsSecret: eddy-credentials     # holds ANTHROPIC_API_KEY
+credentialsSecret: eddy-credentials     # holds ANTHROPIC_API_KEY (add it with the command in step 2)
 config:
   ai:
     enabled: true
@@ -489,7 +501,9 @@ config:
 
 Resource summaries and redacted YAML go to Anthropic. The UI says which provider handles the data.
 
-**AWS Bedrock (recommended on AWS):** data stays in your AWS account and region, with no static keys. The hub uses IRSA (or EKS Pod Identity).
+**AWS Bedrock (recommended on AWS):** data stays in your AWS account and region, with no static keys. The hub gets AWS credentials from an **AWS IAM role** through IRSA or EKS Pod Identity. That IAM role is unrelated to the Kubernetes `eddy-viewer`/`eddy-operator` roles: Ask AI needs no extra Kubernetes RBAC, because every tool call runs as the asking user.
+
+Access to Bedrock models is on by default. For Anthropic models, AWS asks for a one-time use-case form (First Time Use) per account or organization: open the model in the Bedrock console's model catalog. The first call to a third-party model also subscribes the account through AWS Marketplace, which needs `aws-marketplace:Subscribe`, `Unsubscribe` and `ViewSubscriptions` for whoever makes it; make that first call yourself (for example in the playground) so the hub's role needs no Marketplace permissions.
 
 ```yaml
 serviceAccount:
@@ -505,7 +519,7 @@ config:
       guardrail: {id: "abc123xyz", version: "1", trace: false}  # optional
 ```
 
-The role trusts the hub ServiceAccount:
+With IRSA, the role trusts the hub ServiceAccount:
 
 ```json
 {
@@ -522,7 +536,28 @@ The role trusts the hub ServiceAccount:
 }
 ```
 
-and its permissions policy allows `InvokeModel` on only the inference profile and the foundation models behind it (list each region the profile routes to; an `eu.` profile stays inside Europe, while a `global.` profile can route anywhere, so pick a geo or single-region profile if data residency matters):
+With EKS Pod Identity (the Pod Identity Agent add-on installed), skip the ServiceAccount annotation, trust the Pod Identity service instead and associate the role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"Service": "pods.eks.amazonaws.com"},
+    "Action": ["sts:AssumeRole", "sts:TagSession"]
+  }]
+}
+```
+
+```sh
+aws eks create-pod-identity-association --cluster-name <management-cluster> \
+  --namespace eddy --service-account eddy-hub \
+  --role-arn arn:aws:iam::111122223333:role/eddy-hub-bedrock
+```
+
+Pod Identity fetches credentials from `169.254.170.23` on port 80, so with the hub's NetworkPolicy on add `networkPolicy.egress.extra: [{to: [{ipBlock: {cidr: 169.254.170.23/32}}], ports: [{port: 80, protocol: TCP}]}]`.
+
+The permissions policy allows `bedrock:InvokeModel` (which also covers the Converse API the hub uses) on only the inference profile and, through it, the foundation model. An `eu.` profile stays inside Europe, while a `global.` profile can route anywhere, so pick a geo or single-region profile if data residency matters:
 
 ```json
 {
@@ -538,11 +573,7 @@ and its permissions policy allows `InvokeModel` on only the inference profile an
       "Sid": "InvokeUnderlyingModelOnlyViaThatProfile",
       "Effect": "Allow",
       "Action": "bedrock:InvokeModel",
-      "Resource": [
-        "arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
-        "arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
-        "arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"
-      ],
+      "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
       "Condition": {"StringLike": {"bedrock:InferenceProfileArn": "arn:aws:bedrock:eu-central-1:111122223333:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0"}}
     },
     {
@@ -555,7 +586,7 @@ and its permissions policy allows `InvokeModel` on only the inference profile an
 }
 ```
 
-Drop the last statement if you do not set a guardrail. The condition keeps the foundation-model permission usable only through that profile. If Bedrock denies a call, compare the ARNs in the error message with the policy, because the regions behind a profile can change over time. Enable model access for the model in the Bedrock console first.
+Drop the last statement if you do not set a guardrail. The region wildcard covers every region the profile routes to, and the condition keeps it usable only through that profile. To list the regions instead, run `aws bedrock get-inference-profile --region eu-central-1 --inference-profile-identifier eu.anthropic.claude-haiku-4-5-20251001-v1:0 --query 'models[].modelArn'` and put those ARNs in `Resource`, but the list can change over time. If Bedrock denies a call, compare the ARNs in the error message with the policy.
 
 ### 8. Kill switches
 
@@ -626,5 +657,6 @@ kubectl delete crd clusters.gitops.eddy.dev
 - **Sign-in loops or fails with an Origin error:** `publicURL` must equal the address in the browser, including the scheme.
 - **The UI is empty:** the user has no RBAC in the cluster. Check `userRBAC` in that cluster's agent values (the agent NOTES list who got which role), or that your own bindings exist.
 - **Everyone got logged out:** the store is ephemeral (`store.driver: memory`), PostgreSQL crashed (its `UNLOGGED` session table is emptied on crash recovery), or the key Secret changed.
-- **A hub replica stays not ready:** read its `/readyz` on port 9090 (`kubectl -n eddy port-forward pod/<pod> 9090`, then `curl localhost:9090/readyz`). It names the missing peer link or unsynced cluster. Check that NetworkPolicies allow port 8444 between hub pods and that every replica logs the same `keyFingerprint`.
+- **A hub replica stays not ready:** the cluster registry has not synced. Check the hub's RBAC on `clusters.gitops.eddy.dev` and its log.
+- **`/readyz` says degraded:** read it on port 9090 (`kubectl -n eddy port-forward pod/<pod> 9090`, then `curl localhost:9090/readyz`). It names the missing peer link or the unreachable store. Check that NetworkPolicies allow port 8444 between hub pods and that every replica logs the same `keyFingerprint`.
 - **Sign-in answers 503:** the hub cannot reach PostgreSQL. Reads of cluster data keep working; sign-in, token and thread writes and rate-limited actions fail closed until it is back.

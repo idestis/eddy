@@ -46,7 +46,7 @@ function Page() {
         </li>
         <li>
           <strong>Add the server</strong>, keeping the token in an environment variable so it stays out of
-          shell history and config files:
+          your shell history:
           <CodeBlock
             code={`
 $ export EDDY_PAT=eddy_pat_...
@@ -54,9 +54,9 @@ $ claude mcp add --transport http eddy https://eddy.internal.example.com/mcp \\
     --header "Authorization: Bearer $EDDY_PAT"
 `}
           />
-          Add <code>--scope user</code> to make it available in every project, or <code>--scope project</code>{" "}
-          to write a shared <code>.mcp.json</code>. A shared file should reference the variable, not the
-          token:
+          <code>claude mcp add</code> stores the expanded token in your Claude Code config. Add{" "}
+          <code>--scope user</code> to make it available in every project. For a shared <code>.mcp.json</code>
+          , write the file yourself and reference the variable, not the token:
           <CodeBlock
             code={`
 {
@@ -133,9 +133,9 @@ $ claude mcp add --transport http eddy https://eddy.internal.example.com/mcp \\
 
       <h2 id="threads">Threads</h2>
       <p>
-        Threads are plain text (at most 8 KiB) on a resource or a cluster. Those written over MCP carry a{" "}
-        <code>via mcp</code> badge in the UI, so teammates can see what an assistant wrote, and reply or
-        resolve them. See{" "}
+        Threads are plain text or Markdown (at most 8 KiB) on a resource or a cluster. Those written over MCP
+        carry a <code>via mcp</code> badge in the UI, so teammates can see what an assistant wrote, and reply
+        or resolve them. See{" "}
         <Link to="/docs/using/" hash="threads">
           Using Eddy
         </Link>

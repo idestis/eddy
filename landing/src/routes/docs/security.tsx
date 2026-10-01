@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { FullRef } from "../../components/FullRef";
 import { Pager } from "../../components/Pager";
 import { pageHead } from "../../lib/head";
@@ -31,8 +31,9 @@ function Page() {
           credentials for any workload cluster.
         </li>
         <li>
-          <strong>Kubernetes RBAC is the only permission model.</strong> Every read and write runs as the
-          signed-in person, impersonated in the cluster.
+          <strong>Kubernetes RBAC is the only permission model.</strong> Every direct read (YAML, events,
+          logs) and every write is impersonated as the signed-in person. Lists and counts from the agent's
+          cache are filtered per user with SubjectAccessReviews before they leave the hub.
         </li>
         <li>
           <strong>Agents have no write access of their own.</strong> Their ServiceAccount is read-only, apart
@@ -48,7 +49,8 @@ function Page() {
       </ul>
       <h2 id="impersonation">Impersonation</h2>
       <p>
-        Users appear in the cluster as <code>local:&lt;username&gt;</code> (or the proxy identity), with
+        Users appear in the cluster as <code>local:&lt;username&gt;</code>, their verified GitHub email (or{" "}
+        <code>github:&lt;login&gt;</code>), the OIDC <code>usernameClaim</code>, or the proxy identity, with
         groups prefixed <code>eddy:</code>. <code>system:*</code> users and groups are never impersonated. The
         cluster's own audit log records the real user. A compromised hub cannot reach any cluster directly,
         and the damage is bounded by the RBAC you granted to <code>eddy:</code> groups.
@@ -57,8 +59,8 @@ function Page() {
       <ul>
         <li>
           v1.0 supports GitHub and OIDC sign-in (Google, Okta, Entra, Dex), local users (argon2id) and trusted
-          reverse-proxy headers. SAML 2.0 is a possible future addition. See the{" "}
-          <a href="https://github.com/idestis/eddy/blob/HEAD/docs/auth.md">sign-in guide</a>.
+          reverse-proxy headers. SAML 2.0 is a possible future addition. See{" "}
+          <Link to="/docs/sign-in/">Sign-in</Link>.
         </li>
         <li>
           Sessions are server-side behind a <code>__Host-</code> cookie, with CSRF protection and a strict

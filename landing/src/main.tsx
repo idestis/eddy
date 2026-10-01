@@ -22,12 +22,14 @@ async function start() {
       <RouterProvider router={router} />
     </StrictMode>
   );
-  // Prerendered pages hydrate; in `vite dev` the container is empty and the app renders from scratch.
-  if (container.hasChildNodes()) {
+  // Prerendered pages hydrate. In `vite dev` the container holds only the <!--app-html--> placeholder
+  // comment, so test for an element, not for any child node, and render from scratch.
+  if (container.firstElementChild) {
     // Tells the router the tree came from the server, so it skips the Suspense wrapper the server did not render.
     router.ssr = { manifest: undefined };
     hydrateRoot(container, app);
   } else {
+    container.textContent = "";
     syncHead();
     createRoot(container).render(app);
   }

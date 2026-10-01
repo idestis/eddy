@@ -20,14 +20,57 @@ function Page() {
     <>
       <h1>Access and RBAC</h1>
       <p className="lead">
-        Eddy has no permission model of its own. Nobody sees anything until you grant it with ordinary
-        Kubernetes RBAC in each workload cluster. This page explains how identities become Kubernetes subjects
-        and shows the roles to apply.
+        Eddy has no permission model of its own: ordinary Kubernetes RBAC in each workload cluster decides. By
+        default the agent chart lets every signed-in user read; you decide who may operate. This page explains
+        how identities become Kubernetes subjects and which roles to grant.
       </p>
       <FullRef
         path="deploy/rbac/eddy-user-rbac.yaml"
         label="deploy/rbac/eddy-user-rbac.yaml and the eddy-agent chart values"
       />
+
+      <h2 id="kinds">Two clusters, two kinds of roles</h2>
+      <div className="tbl">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Where</th>
+              <th scope="col">Set with</th>
+              <th scope="col">Decides</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Management cluster</th>
+              <td>
+                <code>onboarding.admins</code> in the hub chart
+              </td>
+              <td>
+                Who may add, edit and delete clusters in the Add cluster wizard (
+                <Link to="/docs/clusters/" hash="wizard">
+                  Add clusters
+                </Link>
+                )
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">Each workload cluster</th>
+              <td>
+                <code>userRBAC</code> in the agent chart
+              </td>
+              <td>Who may read and act on Flux and workloads there (this page)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Ask AI and MCP need no roles of their own: they run as the asking user. The AWS IAM role for Bedrock
+        in{" "}
+        <Link to="/docs/ask-ai/" hash="bedrock">
+          Ask AI
+        </Link>{" "}
+        is an AWS credential for the hub pod, not Kubernetes RBAC.
+      </p>
 
       <h2 id="how">How impersonation works</h2>
       <ol>
@@ -94,9 +137,9 @@ userRBAC:
                 <code>userRBAC.viewer.groups</code>: <code>eddy:authenticated</code>, every signed-in user
               </td>
               <td>
-                <code>get</code>, <code>list</code> and <code>watch</code> on the Flux kinds, workloads, Jobs,
-                CronJobs, pods, Services, Ingresses, HPAs, PVCs, events and the preset kinds, plus{" "}
-                <code>get</code> on <code>pods/log</code>. Never Secrets
+                <code>get</code>, <code>list</code> and <code>watch</code> on every kind the agent watches
+                (preset kinds only when enabled), plus <code>get</code> on <code>pods/log</code>. Never
+                Secrets or ConfigMaps
               </td>
             </tr>
             <tr>
@@ -143,9 +186,9 @@ userRBAC:
           them.
         </li>
         <li>
-          <strong>Logs</strong> are readable only with <code>get</code> on <code>pods/log</code>. Add a role
-          without it through <code>roleNames</code> and <code>extraRules</code> if you do not want people to
-          read logs in Eddy.
+          <strong>Logs</strong> are readable only with <code>get</code> on <code>pods/log</code>. To keep logs
+          out of Eddy, set <code>userRBAC.create: false</code> and apply your own copy of{" "}
+          <code>deploy/rbac/eddy-user-rbac.yaml</code> without the <code>pods/log</code> rule.
         </li>
         <li>
           <strong>Secrets and ConfigMaps</strong> are not in the roles. Eddy never shows Secret YAML and
@@ -313,7 +356,8 @@ impersonation:
             <tr>
               <th scope="row">Add, edit or delete a cluster in Eddy</th>
               <td colSpan={2}>
-                Needs RBAC on <code>clusters.gitops.eddy.dev</code> in the management cluster, see{" "}
+                Needs <code>onboarding.admins</code> in the hub chart (RBAC on{" "}
+                <code>clusters.gitops.eddy.dev</code> in the management cluster), see{" "}
                 <Link to="/docs/clusters/" hash="wizard">
                   Add clusters
                 </Link>
