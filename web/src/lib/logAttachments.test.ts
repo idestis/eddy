@@ -4,9 +4,13 @@ import {
   ATTACH_MAX_LINES,
   attachmentLabel,
   buildAttachment,
+  buildYamlAttachment,
   lineText,
   sliceWithContext,
   trimNewest,
+  trimOldest,
+  yamlAncestors,
+  yamlWithPath,
 } from "./logAttachments";
 import { appendEntries } from "./workloadLogs";
 
@@ -53,5 +57,65 @@ describe("log attachments", () => {
     const attachment = { kind: "logs" as const, source: "apps/web-1/app", lines: ["a", "b"] };
     expect(attachmentLabel({ attachment, total: 2 })).toBe("2 lines · apps/web-1/app");
     expect(attachmentLabel({ attachment, total: 900 })).toBe("last 2 lines attached · apps/web-1/app");
+  });
+});
+
+describe("yaml attachments", () => {
+  const doc = [
+    "apiVersion: apps/v1",
+    "kind: Deployment",
+    "spec:",
+    "  template:",
+    "    spec:",
+    "      containers:",
+    "      - name: app",
+    "        image: nginx",
+    "        env:",
+    "        - name: A",
+    "          value: b",
+    "      - name: side",
+    "        image: busybox",
+  ];
+
+  it("finds the parent keys of a line, outermost first", () => {
+    expect(yamlAncestors(doc, 7)).toEqual([
+      "spec:",
+      "  template:",
+      "    spec:",
+      "      containers:",
+      "      - name: app",
+    ]);
+    expect(yamlAncestors(doc, 12)).toEqual([
+      "spec:",
+      "  template:",
+      "    spec:",
+      "      containers:",
+      "      - name: side",
+    ]);
+    expect(yamlAncestors(doc, 1)).toEqual([]);
+  });
+
+  it("treats a list item as a child of the key at its own indent", () => {
+    expect(yamlAncestors(doc, 11)).toEqual(["spec:", "  template:", "    spec:", "      containers:"]);
+    expect(yamlAncestors(doc, 10).at(-1)).toBe("        - name: A");
+  });
+
+  it("puts the path above the selection", () => {
+    expect(yamlWithPath(doc, 8, 7)).toEqual([
+      ...yamlAncestors(doc, 7),
+      "        image: nginx",
+      "        env:",
+    ]);
+  });
+
+  it("keeps the top of a long document", () => {
+    const long = Array.from({ length: 700 }, (_, i) => `k${i}: v`);
+    const { attachment, total } = buildYamlAttachment(long, "apps/Deployment/ns/web");
+    expect(attachment.kind).toBe("yaml");
+    expect(attachment.lines).toHaveLength(ATTACH_MAX_LINES);
+    expect(attachment.lines[0]).toBe("k0: v");
+    expect(total).toBe(700);
+    expect(attachmentLabel({ attachment, total })).toBe("first 500 lines attached · apps/Deployment/ns/web");
+    expect(trimOldest(["a".repeat(40_000)])).toEqual([]);
   });
 });

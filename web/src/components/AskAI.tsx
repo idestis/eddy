@@ -4,15 +4,25 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useR
 import { isApiError } from "../api/client";
 import { askAI, getThread } from "../api/endpoints";
 import { threadsQuery, useMe } from "../api/queries";
-import type { AskAttachment, AskStep, ClusterInfo, Message, Resource, Thread } from "../api/types";
+import type {
+  AskAttachment,
+  AskStep,
+  ClusterInfo,
+  Message,
+  Resource,
+  ResourceRef,
+  Thread,
+} from "../api/types";
 import { ASK_PANEL_ATTR, useAppState } from "../lib/appState";
 import { ago, bytes } from "../lib/format";
 import { kindInfo } from "../lib/kinds";
 import { detailLink } from "../lib/links";
 import { attachmentLabel, type PendingAttachment } from "../lib/logAttachments";
+import { AnswerActions } from "./AnswerActions";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
+import { CHIP_LABEL_CLASS, CHIP_LABEL_PROPS, RemovableChip, RemoveButton } from "./RemovableChip";
 import { StatusIcon } from "./Status";
 
 export type Turn =
@@ -252,7 +262,18 @@ function AskHistory({
   );
 }
 
-function AIMessage({ turn, provider }: { turn: Extract<Turn, { kind: "ai" }>; provider?: string }) {
+function AIMessage({
+  turn,
+  provider,
+  question,
+  target,
+}: {
+  turn: Extract<Turn, { kind: "ai" }>;
+  provider?: string;
+  /** The user turn this answers; with `target`, it allows saving the answer as a thread. */
+  question?: { text: string; attachment?: PendingAttachment };
+  target?: ResourceRef;
+}) {
   const model = turn.message.author.client;
   return (
     <div className="min-w-0 max-w-full">
@@ -276,6 +297,15 @@ function AIMessage({ turn, provider }: { turn: Extract<Turn, { kind: "ai" }>; pr
         </ul>
       )}
       <Markdown source={turn.message.body} />
+      {question && target && (
+        <AnswerActions
+          message={turn.message}
+          provider={provider}
+          question={question.text}
+          attachment={question.attachment}
+          target={target}
+        />
+      )}
     </div>
   );
 }
@@ -422,12 +452,20 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
       <div className="flex shrink-0 flex-col gap-2 border-b border-line px-4 py-3 text-12-5 text-ink-3">
         <div className="flex min-w-0 items-center gap-2">
           About
-          <span className="inline-flex min-h-[30px] min-w-0 max-w-full items-center gap-[7px] rounded-full border border-line-strong bg-surface py-1 pr-1.5 pl-[9px] font-mono text-12 text-ink">
+          <RemovableChip
+            onRemove={resource ? () => setWholeCluster(!wholeCluster) : undefined}
+            removeLabel={
+              wholeCluster ? `Ask about ${resource?.name} instead` : "Ask about the whole cluster instead"
+            }
+            removeTitle={wholeCluster ? `Ask about ${resource?.name}` : "Ask about the whole cluster"}
+            removeIcon={wholeCluster ? "arrowUp" : "x"}
+          >
             <Link
+              {...CHIP_LABEL_PROPS}
               {...(target
                 ? detailLink(cluster.name, target)
                 : { to: "/c/$cluster" as const, params: { cluster: cluster.name } })}
-              className="-my-1 -ml-[9px] inline-flex min-w-0 items-center gap-[7px] rounded-full py-1 pl-[9px] pr-1 text-ink no-underline hover:bg-surface-sunken"
+              className={CHIP_LABEL_CLASS}
               title={target ? `Open ${target.name}` : `Open ${cluster.name}`}
               onClick={() => setPane("details")}
             >
@@ -436,20 +474,7 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
                 {target ? `${kindInfo(target.kind).abbr} ${target.name}` : `all of ${cluster.name}`}
               </span>
             </Link>
-            {resource && (
-              <button
-                type="button"
-                className="inline-flex size-[22px] items-center justify-center rounded-full text-ink-3 hover:bg-surface-sunken"
-                onClick={() => setWholeCluster(!wholeCluster)}
-                aria-label={
-                  wholeCluster ? `Ask about ${resource.name} instead` : "Ask about the whole cluster instead"
-                }
-                title={wholeCluster ? `Ask about ${resource.name}` : "Ask about the whole cluster"}
-              >
-                <Icon name={wholeCluster ? "arrowUp" : "x"} className="size-3.5" />
-              </button>
-            )}
-          </span>
+          </RemovableChip>
         </div>
       </div>
       {/* The conversation sits at the bottom, like a chat, and grows upwards. */}
@@ -491,7 +516,16 @@ export function AskAIPanel({ cluster, resource }: AskAIPanelProps) {
                 </div>
               </div>
             ) : t.kind === "ai" ? (
-              <AIMessage key={t.message.id} turn={t} provider={me?.features.aiProvider} />
+              <AIMessage
+                key={t.message.id}
+                turn={t}
+                provider={me?.features.aiProvider}
+                question={turns
+                  .slice(0, i)
+                  .reverse()
+                  .find((x) => x.kind === "user")}
+                target={target && { ...target, cluster: cluster.name }}
+              />
             ) : (
               // biome-ignore lint/suspicious/noArrayIndexKey: the transcript only grows
               <div key={i} className="text-12-5 text-bad">
@@ -614,9 +648,9 @@ export function AttachmentChip({
         {sent && <span className="shrink-0 font-semibold text-ink-2">attached</span>}
         {link ? (
           <Link
-            {...detailLink(link.cluster, link.ref, "logs")}
+            {...detailLink(link.cluster, link.ref, pending.attachment.kind === "yaml" ? "yaml" : "logs")}
             className="min-w-0 truncate font-mono text-ink no-underline hover:underline"
-            title={`Open the logs of ${link.ref.name}`}
+            title={`Open the ${pending.attachment.kind === "yaml" ? "YAML" : "logs"} of ${link.ref.name}`}
             onClick={() => setPane("details")}
           >
             {label}
@@ -632,16 +666,7 @@ export function AttachmentChip({
         >
           {open ? "Hide" : "Preview"}
         </button>
-        {onRemove && (
-          <button
-            type="button"
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-ink-3 hover:bg-surface hover:text-ink"
-            aria-label="Remove the attached lines"
-            onClick={onRemove}
-          >
-            <Icon name="x" className="size-3.5" />
-          </button>
-        )}
+        {onRemove && <RemoveButton label="Remove the attached lines" onClick={onRemove} />}
       </div>
       {open && (
         <pre className="anim-fade-in m-0 max-h-48 overflow-auto border-t border-line bg-code-bg px-2.5 py-2 font-mono text-11-5 leading-[1.5] whitespace-pre text-code-ink">

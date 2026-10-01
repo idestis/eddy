@@ -35,6 +35,8 @@ export const Route = createFileRoute("/_app/c/$cluster/r/$kind/$ns/$name")({
   validateSearch: z.object({
     view: z.enum(DETAIL_VIEWS).optional().catch(undefined),
     compose: z.boolean().optional().catch(undefined),
+    // A thread to open in the Threads tab, such as one just saved from an Ask AI answer.
+    thread: z.string().optional().catch(undefined),
     // The API group, for a kind outside the registry that two groups may share ("core" is the core group).
     group: z.string().optional().catch(undefined),
   }),
@@ -59,7 +61,7 @@ const TAB_KEY: Record<DetailView, KeyId> = {
 
 function DetailPage() {
   const params = Route.useParams();
-  const { view = "overview", compose = false, group } = Route.useSearch();
+  const { view = "overview", compose = false, group, thread } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const cluster = useCluster(params.cluster);
   const { data: me } = useMe();
@@ -264,6 +266,7 @@ function DetailPage() {
             <ResourceThreads
               target={target}
               compose={compose}
+              openId={thread}
               onCompose={(open) => setView("threads", { compose: open || undefined })}
             />
           )}

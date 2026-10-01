@@ -24,6 +24,8 @@ import { fieldText, type StructuredLevel } from "../lib/logFormat";
 import type { LogFormat } from "../lib/viewPrefs";
 import { LOG_LEVELS, type LogLevel, type LogLine, MARKER_LABEL, podHue, podLabel } from "../lib/workloadLogs";
 import { Icon } from "./Icon";
+import { OverflowChips, type OverflowItem } from "./OverflowChips";
+import { SelectionToolbar } from "./SelectionToolbar";
 
 export type AskMode = "selection" | "context";
 
@@ -395,7 +397,7 @@ export function LogLines({
                       style={{ ...podStyle(l.pod), width: podCol }}
                       title={`${l.pod}${l.container ? `/${l.container}` : ""}`}
                     >
-                      {podLabel(l.pod, workload)}
+                      {podLabel(l.pod, workload ?? "")}
                       {l.container && showContainer && <span className="opacity-60">/{l.container}</span>}
                     </span>
                   )}
@@ -453,34 +455,14 @@ export function LogLines({
         </div>
       </div>
       {onAsk && range && (
-        <div
-          ref={toolbar}
-          role="toolbar"
-          aria-label={`${picked} selected line${picked === 1 ? "" : "s"}`}
-          className={`anim-pop-in absolute z-10 flex items-center gap-1 rounded-[11px] border border-white/14 bg-code-bg p-1 text-12-5 text-code-ink shadow-pop ${pos ? "" : "invisible"}`}
-          style={pos ? { top: pos.top, left: pos.left } : undefined}
-          onMouseDown={(e) => e.preventDefault()}
-        >
-          <span className="px-1.5 text-11-5 text-code-dim tabular-nums">
-            {picked} line{picked === 1 ? "" : "s"}
-          </span>
-          <button
-            type="button"
-            className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-c px-2.5 font-semibold text-c-ink hover:brightness-110"
-            onClick={() => ask("selection")}
-          >
-            <Icon name="spark" className="size-3.5" />
-            Ask AI about selection
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 hover:bg-white/10"
-            title="The selection and 20 lines on each side"
-            onClick={() => ask("context")}
-          >
-            Ask AI with context
-          </button>
-        </div>
+        <SelectionToolbar
+          toolbarRef={toolbar}
+          count={picked}
+          pos={pos}
+          contextTitle="The selection and 20 lines on each side"
+          onSelection={() => ask("selection")}
+          onContext={() => ask("context")}
+        />
       )}
       {!follow && unseen > 0 && (
         <button
@@ -504,35 +486,47 @@ export function LevelChips({
   counts,
   picked,
   onChange,
+  className = "min-w-0 flex-1",
 }: {
   counts: Record<LogLevel, number>;
   picked: ReadonlySet<LogLevel> | undefined;
   onChange: (next: ReadonlySet<LogLevel> | undefined) => void;
+  className?: string;
 }) {
+  const toggle = (lv: LogLevel) => {
+    const next = new Set(picked ?? []);
+    if (next.has(lv)) next.delete(lv);
+    else next.add(lv);
+    onChange(next.size ? next : undefined);
+  };
+  const items: OverflowItem[] = LOG_LEVELS.map((lv) => {
+    const on = picked?.has(lv) ?? false;
+    const name = () => <span className={`lg-lvl lg-lvl-${lv} m-0!`}>{LEVEL_SHORT[lv]}</span>;
+    return {
+      key: lv,
+      text: LEVEL_SHORT[lv],
+      active: on,
+      option: name(),
+      meta: counts[lv].toLocaleString(),
+      chip: (
+        <button type="button" className={CHIP} aria-pressed={on} onClick={() => toggle(lv)}>
+          {name()}
+          <span className="tabular-nums text-code-dim">{counts[lv].toLocaleString()}</span>
+        </button>
+      ),
+    };
+  });
   return (
-    <fieldset className="m-0 flex items-center gap-1 border-0 p-0">
-      <legend className="sr-only">Levels</legend>
-      {LOG_LEVELS.map((lv) => {
-        const on = picked?.has(lv) ?? false;
-        return (
-          <button
-            key={lv}
-            type="button"
-            className={CHIP}
-            aria-pressed={on}
-            onClick={() => {
-              const next = new Set(picked ?? []);
-              if (on) next.delete(lv);
-              else next.add(lv);
-              onChange(next.size ? next : undefined);
-            }}
-          >
-            <span className={`lg-lvl lg-lvl-${lv} m-0!`}>{LEVEL_SHORT[lv]}</span>
-            <span className="tabular-nums text-code-dim">{counts[lv].toLocaleString()}</span>
-          </button>
-        );
-      })}
-    </fieldset>
+    <OverflowChips
+      label="Levels"
+      tone="code"
+      gap={4}
+      className={className}
+      chipClass={`${CHIP} aria-pressed:bg-white/10`}
+      items={items}
+      onToggle={(k) => toggle(k as LogLevel)}
+      summary={(on) => (on.length ? on.map((i) => i.option) : "Levels")}
+    />
   );
 }
 

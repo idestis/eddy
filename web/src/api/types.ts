@@ -273,10 +273,10 @@ export interface AskStep {
   bytes: number;
 }
 
-/** Log lines sent with a question (POST /ai/ask `attachments`). */
+/** Log lines or a YAML excerpt sent with a question (POST /ai/ask `attachments`). */
 export interface AskAttachment {
-  kind: "logs";
-  /** "<ns>/<pod>/<container>" or "<ns>/<workload> · N pods". */
+  kind: "logs" | "yaml";
+  /** Logs: "<ns>/<pod>/<container>" or "<ns>/<workload> · N pods". YAML: the resource id "<group>/<Kind>/<ns>/<name>". */
   source: string;
   lines: string[];
 }

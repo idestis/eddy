@@ -66,8 +66,16 @@ function MessageItem({ m }: { m: Message }) {
 export const targetLabel = (ref: ResourceRef): string =>
   ref.kind ? `${ref.kind}/${ref.namespace ? `${ref.namespace}/` : ""}${ref.name}` : `cluster ${ref.cluster}`;
 
-function ThreadItem({ thread, showTarget }: { thread: Thread; showTarget?: boolean }) {
-  const [open, setOpen] = useState(false);
+function ThreadItem({
+  thread,
+  showTarget,
+  defaultOpen,
+}: {
+  thread: Thread;
+  showTarget?: boolean;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(Boolean(defaultOpen));
   const [reply, setReply] = useState("");
   const qc = useQueryClient();
   const toast = useToast();
@@ -222,11 +230,19 @@ function ThreadItem({ thread, showTarget }: { thread: Thread; showTarget?: boole
   );
 }
 
-export function ThreadList({ threads, showTarget }: { threads: Thread[]; showTarget?: boolean }) {
+export function ThreadList({
+  threads,
+  showTarget,
+  openId,
+}: {
+  threads: Thread[];
+  showTarget?: boolean;
+  openId?: string;
+}) {
   return (
     <div className="flex flex-col gap-2.5">
       {threads.map((t) => (
-        <ThreadItem key={t.id} thread={t} showTarget={showTarget} />
+        <ThreadItem key={t.id} thread={t} showTarget={showTarget} defaultOpen={t.id === openId} />
       ))}
     </div>
   );
@@ -304,10 +320,12 @@ function NewThread({
 export function ResourceThreads({
   target,
   compose,
+  openId,
   onCompose,
 }: {
   target: ResourceRef;
   compose: boolean;
+  openId?: string;
   onCompose: (open: boolean) => void;
 }) {
   const { data, isPending, error } = useQuery(
@@ -343,7 +361,7 @@ export function ResourceThreads({
       )}
       {isPending && <p className="text-ink-3">Loading threads…</p>}
       {error && <p className="text-12-5 text-bad">Couldn't load threads: {error.message}</p>}
-      {data && !empty && <ThreadList threads={data.items} />}
+      {data && !empty && <ThreadList threads={data.items} openId={openId} />}
     </div>
   );
 }

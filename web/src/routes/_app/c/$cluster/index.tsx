@@ -8,6 +8,8 @@ import { ClusterCards } from "../../../../components/ClusterCards";
 import { Empty } from "../../../../components/Empty";
 import { FindingCallout } from "../../../../components/Findings";
 import { Icon } from "../../../../components/Icon";
+import { OverflowChips, type OverflowItem } from "../../../../components/OverflowChips";
+import { RemovableChip } from "../../../../components/RemovableChip";
 import { ResourceList, type ResourceListHandle } from "../../../../components/ResourceList";
 import {
   EventsList,
@@ -79,6 +81,13 @@ const CHIP_TONE: Record<ChipStatus, string> = {
 const TOOL_BTN =
   "inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 whitespace-nowrap text-ink-2 hover:border-line-strong aria-pressed:border-c/60 aria-pressed:bg-c-soft aria-pressed:text-ink disabled:opacity-60";
 
+const CHIP_BASE =
+  "inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 whitespace-nowrap text-ink-2 hover:border-line-strong aria-pressed:text-ink";
+
+const CHIP_PICKER = `${CHIP_BASE} aria-pressed:border-c/60 aria-pressed:bg-c-soft`;
+
+const statusLabel = (s: ChipStatus) => (s === "attention" ? "Not ready" : STATUS_LABEL[s]);
+
 function StatusChip({
   status,
   count,
@@ -95,10 +104,10 @@ function StatusChip({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 whitespace-nowrap text-ink-2 hover:border-line-strong aria-pressed:text-ink ${CHIP_TONE[status]}`}
+      className={`${CHIP_BASE} ${CHIP_TONE[status]}`}
     >
       {status === "attention" ? <AttentionIcon /> : <StatusIcon status={status} />}
-      {status === "attention" ? "Not ready" : STATUS_LABEL[status]}
+      {statusLabel(status)}
       <span className="n font-semibold tabular-nums">{count}</span>
     </button>
   );
@@ -195,6 +204,31 @@ function ClusterPage() {
     (patch: Partial<z.infer<typeof searchSchema>>) =>
       void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true }),
     [navigate],
+  );
+
+  const statusItems = useMemo<OverflowItem[]>(
+    () =>
+      CHIPS.map((s) => ({
+        key: s,
+        text: statusLabel(s),
+        active: search.status === s,
+        meta: counts[s],
+        option: (
+          <span className="inline-flex items-center gap-1.5">
+            {s === "attention" ? <AttentionIcon /> : <StatusIcon status={s} />}
+            {statusLabel(s)}
+          </span>
+        ),
+        chip: (
+          <StatusChip
+            status={s}
+            count={counts[s]}
+            active={search.status === s}
+            onClick={() => setSearch({ status: search.status === s ? undefined : s })}
+          />
+        ),
+      })),
+    [counts, search.status, setSearch],
   );
 
   const open = useCallback(
@@ -303,8 +337,8 @@ function ClusterPage() {
       {findings.map((f) => (
         <FindingCallout key={f.id} cluster={name} finding={f} link={!namespace} />
       ))}
-      <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-        <label className="flex h-9 min-w-40 flex-[0_1_300px] items-center gap-[7px] rounded-control border border-line bg-surface pr-2 pl-2.5 text-ink-3 focus-within:border-c">
+      <div className="flex shrink-0 items-center gap-2.5">
+        <label className="flex h-9 min-w-24 flex-[0_1_300px] sm:min-w-[180px] items-center gap-[7px] rounded-control border border-line bg-surface pr-2 pl-2.5 text-ink-3 focus-within:border-c">
           <Icon name="filter" />
           <input
             ref={filterInput}
@@ -328,62 +362,32 @@ function ClusterPage() {
           />
           <kbd>/</kbd>
         </label>
-        <fieldset className="no-scrollbar flex min-w-0 gap-1.5 overflow-x-auto">
-          <legend className="sr-only">Status</legend>
-          {CHIPS.map((s) => (
-            <StatusChip
-              key={s}
-              status={s}
-              count={counts[s]}
-              active={search.status === s}
-              onClick={() => setSearch({ status: search.status === s ? undefined : s })}
-            />
-          ))}
-        </fieldset>
-        {namespace && (
-          <button
-            type="button"
-            className={TOOL_BTN}
-            aria-label={`Namespace ${namespace}, clear`}
-            onClick={() => setSearch({ namespace: undefined })}
-          >
-            <span className="text-ink-3">Namespace</span>
-            <span className="font-mono">{namespace}</span>
-            <Icon name="x" className="size-3.5" />
-          </button>
-        )}
-        {hiddenTotal > 0 && (
-          <button
-            type="button"
-            className={TOOL_BTN}
-            aria-pressed={showHidden}
-            onClick={() => setHiddenFor(showHidden ? undefined : hiddenScope)}
-          >
-            <Icon name={showHidden ? "check" : "clock"} className="size-3.5" />
-            {showHidden && hidden.isPending
-              ? "Loading finished Jobs…"
-              : `Show finished Jobs (${thousands(hiddenTotal)} hidden)`}
-          </button>
-        )}
-        {showHidden && remaining > 0 && (
-          <button
-            type="button"
-            className={TOOL_BTN}
-            disabled={hidden.isFetchingNextPage}
-            onClick={() => void hidden.fetchNextPage()}
-          >
-            {hidden.isFetchingNextPage ? "Loading…" : `Load more (${thousands(remaining)} remaining)`}
-          </button>
-        )}
-        {showHidden && hidden.error && (
-          <span className="text-12-5 text-bad" role="alert">
-            Couldn't load finished Jobs: {hidden.error.message}
+        <OverflowChips
+          label="Status"
+          className="min-w-[5.5rem] flex-[1_1_0]"
+          chipClass={CHIP_PICKER}
+          items={statusItems}
+          onToggle={(k) => setSearch({ status: search.status === k ? undefined : (k as ChipStatus) })}
+          summary={(on) =>
+            on[0] ? (
+              <>
+                {on[0].option}
+                <span className="font-semibold tabular-nums">{on[0].meta}</span>
+              </>
+            ) : (
+              "Status"
+            )
+          }
+        />
+        <span className="ml-auto shrink-0 text-12-5 whitespace-nowrap text-ink-3" aria-live="polite">
+          <span className="max-sm:sr-only">
+            {filteredCount === items.length
+              ? `${items.length} resources`
+              : `${filteredCount} of ${items.length}`}
           </span>
-        )}
-        <span className="ml-auto text-12-5 whitespace-nowrap text-ink-3" aria-live="polite">
-          {filteredCount === items.length
-            ? `${items.length} resources`
-            : `${filteredCount} of ${items.length}`}
+          <span className="sm:hidden" aria-hidden="true">
+            {filteredCount === items.length ? items.length : `${filteredCount}/${items.length}`}
+          </span>
         </span>
         <fieldset ref={viewSeg.list} className={`${SEG} m-0 shrink-0`}>
           <legend className="sr-only">View</legend>
@@ -411,6 +415,51 @@ function ClusterPage() {
           ))}
         </fieldset>
       </div>
+      {(namespace || hiddenTotal > 0) && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2.5">
+          {namespace && (
+            <RemovableChip
+              className="h-8 font-sans text-12-5"
+              onRemove={() => setSearch({ namespace: undefined })}
+              removeLabel={`Namespace ${namespace}, clear`}
+              removeTitle="Clear the namespace filter"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <span className="text-ink-3">Namespace</span>
+                <span className="font-mono">{namespace}</span>
+              </span>
+            </RemovableChip>
+          )}
+          {hiddenTotal > 0 && (
+            <button
+              type="button"
+              className={TOOL_BTN}
+              aria-pressed={showHidden}
+              onClick={() => setHiddenFor(showHidden ? undefined : hiddenScope)}
+            >
+              <Icon name={showHidden ? "check" : "clock"} className="size-3.5" />
+              {showHidden && hidden.isPending
+                ? "Loading finished Jobs…"
+                : `Show finished Jobs (${thousands(hiddenTotal)} hidden)`}
+            </button>
+          )}
+          {showHidden && remaining > 0 && (
+            <button
+              type="button"
+              className={TOOL_BTN}
+              disabled={hidden.isFetchingNextPage}
+              onClick={() => void hidden.fetchNextPage()}
+            >
+              {hidden.isFetchingNextPage ? "Loading…" : `Load more (${thousands(remaining)} remaining)`}
+            </button>
+          )}
+          {showHidden && hidden.error && (
+            <span className="text-12-5 text-bad" role="alert">
+              Couldn't load finished Jobs: {hidden.error.message}
+            </span>
+          )}
+        </div>
+      )}
       {!cluster.connected && !data ? (
         <Empty title={`${name} is disconnected`}>Resources appear when its agent reconnects.</Empty>
       ) : isPending ? (

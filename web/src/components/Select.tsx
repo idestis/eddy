@@ -47,6 +47,29 @@ interface SelectProps<T extends string | number> {
   disabled?: boolean;
   /** Replaces the selected option's label on the button. */
   renderValue?: (option: SelectOption<T> | undefined) => ReactNode;
+  /**
+   * Replaces the default button. Spread `props` onto the one button you render. Used by
+   * pickers that are not a single value, such as the "+N" overflow of a chip row.
+   */
+  renderTrigger?: (t: SelectTrigger) => ReactNode;
+  /** Marks options as selected (a check) for multi-select lists; picking still calls `onChange`. */
+  isSelected?: (value: T) => boolean;
+}
+
+export interface SelectTrigger {
+  ref: (el: HTMLButtonElement | null) => void;
+  open: boolean;
+  props: {
+    id?: string;
+    type: "button";
+    "aria-haspopup": "listbox";
+    "aria-expanded": boolean;
+    "aria-label": string;
+    "aria-controls"?: string;
+    disabled?: boolean;
+    onClick: () => void;
+    onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => void;
+  };
 }
 
 const TRIGGER: Record<SelectTone, string> = {
@@ -153,6 +176,8 @@ export function Select<T extends string | number>({
   id,
   disabled,
   renderValue,
+  renderTrigger,
+  isSelected,
 }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -162,6 +187,7 @@ export function Select<T extends string | number>({
   const base = useId();
   const selectedIndex = options.findIndex((o) => o.value === value);
   const selected = options[selectedIndex];
+  const chosen = (v: T) => (isSelected ? isSelected(v) : v === value);
   const style = usePopoverPosition(open, trigger, list);
   const optionId = (i: number) => `${base}-opt-${i}`;
 
@@ -183,7 +209,7 @@ export function Select<T extends string | number>({
   const pick = (i: number) => {
     const o = options[i];
     if (!o || o.disabled) return;
-    if (o.value !== value) onChange(o.value);
+    if (isSelected || o.value !== value) onChange(o.value);
     close();
   };
 
@@ -265,24 +291,32 @@ export function Select<T extends string | number>({
     }
   };
 
+  const triggerProps: SelectTrigger["props"] = {
+    id,
+    type: "button",
+    "aria-haspopup": "listbox",
+    "aria-expanded": open,
+    "aria-label": label,
+    "aria-controls": open ? `${base}-list` : undefined,
+    disabled,
+    onClick: () => (open ? close() : show()),
+    onKeyDown: onTriggerKey,
+  };
+
   return (
     <>
-      <button
-        ref={setTrigger}
-        id={id}
-        type="button"
-        className={`inline-flex min-w-0 items-center justify-between gap-2 text-left outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${TRIGGER[tone]} ${className}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={label}
-        aria-controls={open ? `${base}-list` : undefined}
-        disabled={disabled}
-        onClick={() => (open ? close() : show())}
-        onKeyDown={onTriggerKey}
-      >
-        <span className="min-w-0 truncate">{renderValue ? renderValue(selected) : selected?.label}</span>
-        <Icon name="updown" className="size-3.5 shrink-0 opacity-60" />
-      </button>
+      {renderTrigger ? (
+        renderTrigger({ ref: setTrigger, open, props: triggerProps })
+      ) : (
+        <button
+          ref={setTrigger}
+          {...triggerProps}
+          className={`inline-flex min-w-0 items-center justify-between gap-2 text-left outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${TRIGGER[tone]} ${className}`}
+        >
+          <span className="min-w-0 truncate">{renderValue ? renderValue(selected) : selected?.label}</span>
+          <Icon name="updown" className="size-3.5 shrink-0 opacity-60" />
+        </button>
+      )}
       {open &&
         createPortal(
           <div
@@ -302,7 +336,7 @@ export function Select<T extends string | number>({
                 key={String(o.value)}
                 id={optionId(i)}
                 role="option"
-                aria-selected={o.value === value}
+                aria-selected={chosen(o.value)}
                 aria-disabled={o.disabled || undefined}
                 data-active={i === active}
                 className={`flex cursor-default items-center gap-2 rounded-lg py-1.5 pr-2.5 pl-2 whitespace-nowrap aria-disabled:opacity-45 ${OPTION[tone]}`}
@@ -310,7 +344,7 @@ export function Select<T extends string | number>({
                 onClick={() => pick(i)}
               >
                 <span className="flex w-4 shrink-0 justify-center">
-                  {o.value === value && <Icon name="check" className="size-3.5 text-c" />}
+                  {chosen(o.value) && <Icon name="check" className="size-3.5 text-c" />}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{o.label}</span>
                 {o.meta !== undefined && (

@@ -8,12 +8,19 @@ import { AppStateProvider, useAppState } from "../lib/appState";
 import { resource } from "../test/fixtures";
 import { AskAIPanel, AskAIProvider, turnsFromMessages } from "./AskAI";
 
-const api = vi.hoisted(() => ({ askAI: vi.fn(), getThread: vi.fn(), listThreads: vi.fn() }));
+const api = vi.hoisted(() => ({
+  askAI: vi.fn(),
+  getThread: vi.fn(),
+  listThreads: vi.fn(),
+  createThread: vi.fn(),
+  listTokens: vi.fn(),
+}));
 vi.mock("../api/endpoints", async (orig) => ({
   ...(await orig<typeof import("../api/endpoints")>()),
   ...api,
 }));
 vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => vi.fn(),
   Link: ({ children, title, onClick }: { children: ReactNode; title?: string; onClick?: () => void }) => (
     <a href="/" title={title} onClick={onClick}>
       {children}
@@ -67,6 +74,8 @@ beforeEach(() => {
   });
   api.getThread.mockReset();
   api.listThreads.mockReset().mockResolvedValue({ items: [] });
+  api.createThread.mockReset().mockResolvedValue({ thread: { id: "th_saved" }, message: {} });
+  api.listTokens.mockReset().mockResolvedValue({ items: [] });
 });
 
 const logs = {
@@ -226,5 +235,51 @@ describe("Ask AI panel", () => {
     screen.getByRole("button", { name: "History" }).focus();
     await user.keyboard("{Escape}");
     expect(screen.getByLabelText("pane")).toHaveTextContent("details");
+  });
+
+  describe("answer actions", () => {
+    it("saves the answer as a thread on the same object, once", async () => {
+      const user = setup();
+      await user.type(box(), "why is it slow?{Enter}");
+      await screen.findByText("All good.");
+      await user.click(screen.getByRole("button", { name: "Save as thread" }));
+      await waitFor(() => expect(api.createThread).toHaveBeenCalledOnce());
+      const arg = api.createThread.mock.calls[0]?.[0];
+      expect(arg.ref).toMatchObject({ cluster: "staging", kind: "Kustomization", name: "apps" });
+      expect(arg.title).toBe("why is it slow?");
+      expect(arg.body).toContain("> why is it slow?");
+      expect(arg.body).toContain("**AI answer · claude via anthropic**");
+      expect(arg.body).toContain("All good.");
+      expect(await screen.findByRole("button", { name: "Saved" })).toBeDisabled();
+    });
+
+    it("copies the Claude Code prompt, saving first when no thread exists yet", async () => {
+      const user = setup();
+      await user.type(box(), "q{Enter}");
+      await screen.findByText("All good.");
+      await user.click(screen.getByRole("button", { name: "Copy for Claude Code" }));
+      // user-event stands in for the clipboard.
+      await waitFor(async () =>
+        expect(await navigator.clipboard.readText()).toContain("Read thread th_saved with get_thread"),
+      );
+      expect(api.createThread).toHaveBeenCalledOnce();
+      // A second copy reuses the saved thread.
+      await user.click(screen.getByRole("button", { name: "Copy for Claude Code" }));
+      expect(api.createThread).toHaveBeenCalledOnce();
+    });
+
+    it("never puts log lines in the thread", async () => {
+      const user = setup();
+      await user.click(screen.getByRole("button", { name: "ask about lines" }));
+      await screen.findByText("1 line · flux-system/apps-7d9f/manager");
+      await user.click(box());
+      await user.keyboard("{Enter}");
+      await screen.findByText("All good.");
+      await user.click(screen.getByRole("button", { name: "Save as thread" }));
+      await waitFor(() => expect(api.createThread).toHaveBeenCalledOnce());
+      const body = api.createThread.mock.calls[0]?.[0].body as string;
+      expect(body).toContain("(not copied)");
+      expect(body).not.toContain("error: boom");
+    });
   });
 });

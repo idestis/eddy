@@ -26,6 +26,7 @@ import {
 } from "../lib/workloadLogs";
 import { Icon } from "./Icon";
 import { type AskMode, FormatToggle, LevelChips, LogLines } from "./LogLines";
+import { OverflowChips, type OverflowItem } from "./OverflowChips";
 import { Select } from "./Select";
 import { KeyHint } from "./Status";
 import { useToast } from "./Toasts";
@@ -41,6 +42,8 @@ const SINCE: ReadonlyArray<[string, string]> = [
 ];
 
 type StreamStatus = "connecting" | "streaming" | "ended" | "error";
+
+const ALL_PODS = "\u0000all";
 
 export const HEAD_BTN =
   "flex h-[32px] items-center gap-[7px] rounded-[9px] border border-white/14 px-[10px] text-12-5 transition-colors duration-(--duration-fast) hover:bg-white/6 disabled:opacity-40 aria-pressed:bg-white/10 [&_kbd]:border-white/20 [&_kbd]:bg-transparent [&_kbd]:text-code-dim";
@@ -176,6 +179,55 @@ export function WorkloadLogsView({ cluster, workload }: { cluster: string; workl
       return next.size === pods.length ? undefined : next;
     });
 
+  const podItems: OverflowItem[] = [
+    {
+      key: ALL_PODS,
+      text: "All pods",
+      active: picked === undefined,
+      option: "All pods",
+      chip: (
+        <button
+          type="button"
+          className={`${HEAD_BTN} h-7!`}
+          aria-pressed={picked === undefined}
+          onClick={() => setPicked(undefined)}
+        >
+          All pods
+        </button>
+      ),
+    },
+    ...pods.map((p) => {
+      const label = podLabel(p.name, workload.name);
+      return {
+        key: p.name,
+        text: label,
+        active: picked?.has(p.name) ?? false,
+        option: (
+          <span
+            className="inline-flex items-center gap-1.5 font-mono"
+            style={{ "--pod-h": podHue(p.name) } as CSSProperties}
+          >
+            <span className="lg-pod-dot size-2 rounded-full" />
+            {label}
+          </span>
+        ),
+        chip: (
+          <button
+            type="button"
+            className={`${HEAD_BTN} h-7! font-mono text-11-5! ${picked && !picked.has(p.name) ? "opacity-45" : ""}`}
+            aria-pressed={picked ? picked.has(p.name) : true}
+            title={`${p.name} · ${p.status}`}
+            onClick={() => togglePod(p.name)}
+            style={{ "--pod-h": podHue(p.name) } as CSSProperties}
+          >
+            <span className="lg-pod-dot size-2 rounded-full" />
+            {label}
+          </button>
+        ),
+      };
+    }),
+  ];
+
   const copy = () =>
     navigator.clipboard.writeText(toText(shown)).then(
       () => toast(`Copied ${shown.length} lines`, "ok"),
@@ -256,32 +308,22 @@ export function WorkloadLogsView({ cluster, workload }: { cluster: string; workl
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-2 border-b border-code-line px-3.5 py-2">
-        <fieldset className="m-0 flex min-w-0 flex-1 flex-wrap items-center gap-1.5 border-0 p-0">
-          <legend className="sr-only">Pods</legend>
-          <button
-            type="button"
-            className={`${HEAD_BTN} h-7!`}
-            aria-pressed={picked === undefined}
-            onClick={() => setPicked(undefined)}
-          >
-            All pods
-          </button>
-          {pods.map((p) => (
-            <button
-              type="button"
-              key={p.name}
-              className={`${HEAD_BTN} h-7! font-mono text-11-5! ${picked && !picked.has(p.name) ? "opacity-45" : ""}`}
-              aria-pressed={picked ? picked.has(p.name) : true}
-              title={`${p.name} · ${p.status}`}
-              onClick={() => togglePod(p.name)}
-              style={{ "--pod-h": podHue(p.name) } as CSSProperties}
-            >
-              <span className="lg-pod-dot size-2 rounded-full" />
-              {podLabel(p.name, workload.name)}
-            </button>
-          ))}
-        </fieldset>
-        <LevelChips counts={counts} picked={levels} onChange={setLevels} />
+        <OverflowChips
+          label="Pods"
+          tone="code"
+          className="flex-[1_1_0]"
+          chipClass={`${HEAD_BTN} h-7! aria-pressed:bg-white/10`}
+          gap={6}
+          items={podItems}
+          onToggle={(k) => (k === ALL_PODS ? setPicked(undefined) : togglePod(k))}
+          summary={() => (picked ? `${picked.size} of ${pods.length} pods` : "All pods")}
+        />
+        <LevelChips
+          counts={counts}
+          picked={levels}
+          onChange={setLevels}
+          className="max-w-[18rem] min-w-0 flex-[1_1_0] justify-end"
+        />
       </div>
       <div className="flex flex-wrap items-center gap-2 border-b border-code-line px-3.5 py-2">
         {containers.length > 1 && (

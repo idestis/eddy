@@ -2,18 +2,24 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppStateProvider } from "../lib/appState";
 import { resource } from "../test/fixtures";
 import { EventsList, nearLimit, ResourceFacts, ResourceHeader, YamlView } from "./ResourceParts";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a href="/">{children}</a>,
 }));
+const me = vi.hoisted(() => ({ ai: true }));
+vi.mock("../api/queries", async (orig) => ({
+  ...(await orig<typeof import("../api/queries")>()),
+  useMe: () => ({ data: { features: { ai: me.ai } } }),
+}));
 
 afterEach(() => vi.unstubAllGlobals());
 
 const wrap = (node: ReactNode) => (
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    {node}
+    <AppStateProvider>{node}</AppStateProvider>
   </QueryClientProvider>
 );
 
@@ -116,5 +122,30 @@ describe("details", () => {
   it("show the project next to a notable kind", () => {
     render(wrap(<ResourceHeader r={pool} />));
     expect(screen.getByText(/Karpenter/)).toBeInTheDocument();
+  });
+});
+
+describe("YAML and Ask AI", () => {
+  const dep = resource("web", { group: "apps", kind: "Deployment", namespace: "shop" });
+  const yaml = "apiVersion: apps/v1\nkind: Deployment\nspec:\n  replicas: 2\n";
+
+  it("offers Ask AI for the whole document when AI is on, and not when it is off", async () => {
+    stubFetch({ yaml });
+    me.ai = true;
+    const { unmount } = render(wrap(<YamlView cluster="dev" r={dep} />));
+    expect(await screen.findByRole("button", { name: "Ask AI" })).toBeInTheDocument();
+    unmount();
+    me.ai = false;
+    render(wrap(<YamlView cluster="dev" r={dep} />));
+    await screen.findByText("replicas");
+    expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
+    me.ai = true;
+  });
+
+  it("marks every line so a selection maps to line numbers", async () => {
+    stubFetch({ yaml });
+    const { container } = render(wrap(<YamlView cluster="dev" r={dep} />));
+    await screen.findByText("replicas");
+    expect([...container.querySelectorAll("[data-line-index]")]).toHaveLength(4);
   });
 });

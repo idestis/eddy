@@ -1,16 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { eventsQuery, useMe, yamlQuery } from "../api/queries";
 import type { ClusterInfo, KubeEvent, Ref, Resource } from "../api/types";
+import { useAppState } from "../lib/appState";
 import { age, ago, dateTime, STATUS_LABEL } from "../lib/format";
 import type { KeyId } from "../lib/keys";
 import { isNotable, kindInfo, projectName } from "../lib/kinds";
 import { detailLink } from "../lib/links";
 import { useClusterMotion, useRequested } from "../lib/liveMotion";
+import { buildYamlAttachment, yamlWithPath } from "../lib/logAttachments";
 import type { useResourceActions } from "../lib/useResourceActions";
 import { WORKLOAD_LOG_KINDS } from "../lib/workloadLogs";
 import { Icon, type IconName } from "./Icon";
+import { SelectionToolbar } from "./SelectionToolbar";
+import { RevisionValue, SourceUrl } from "./SourceLinks";
 import { KeyHint, RequestedBadge, Spinner, StatusIcon } from "./Status";
 
 export function KindChip({ kind }: { kind: string }) {
@@ -249,8 +253,8 @@ export function factRows(cluster: string, r: Resource): Array<[string, ReactNode
   const rows: Array<[string, ReactNode]> = [];
   if (r.source) rows.push(["Source", <RefLink key="s" cluster={cluster} target={r.source} />]);
   if (r.chart) rows.push(["Chart", r.chart]);
-  if (r.revision) rows.push(["Revision", r.revision]);
-  if (r.url) rows.push(["URL", r.url]);
+  if (r.revision) rows.push(["Revision", <RevisionValue key="rev" cluster={cluster} r={r} />]);
+  if (r.url) rows.push(["URL", <SourceUrl key="url" url={r.url} />]);
   if (r.interval) rows.push(["Interval", r.interval]);
   if (r.schedule) rows.push(["Schedule", r.schedule]);
   if (r.inventory) rows.push(["Inventory", `${r.inventory} objects`]);
@@ -369,33 +373,158 @@ export function SecretNote() {
   );
 }
 
+const YAML_QUESTION = "Explain this configuration and flag anything risky.";
+
 export function YamlView({ cluster, r }: { cluster: string; r: Resource }) {
   const secret = r.kind === "Secret";
   const { data, isPending, error } = useQuery({ ...yamlQuery(cluster, r), enabled: !secret });
+  const { data: me } = useMe();
+  const { askWithLogs } = useAppState();
+  const lines = useMemo(() => (data ? data.yaml.replace(/\n$/, "").split("\n") : []), [data]);
+  const wrap = useRef<HTMLDivElement>(null);
+  const toolbar = useRef<HTMLDivElement>(null);
+  const [range, setRange] = useState<{ from: number; to: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const aiOn = Boolean(me?.features.ai) && lines.length > 0;
+
+  const send = useCallback(
+    (picked: readonly string[]) => {
+      const { attachment, total } = buildYamlAttachment(picked, r.id);
+      askWithLogs({ attachment, total, question: YAML_QUESTION, link: { cluster, ref: r } });
+    },
+    [askWithLogs, cluster, r],
+  );
+
+  // Native selection: map its ends to lines whenever it changes.
+  useEffect(() => {
+    if (!aiOn) return;
+    let frame = 0;
+    const indexOf = (node: Node | null) => {
+      const el = node instanceof Element ? node : node?.parentElement;
+      const row = el?.closest<HTMLElement>("[data-line-index]");
+      if (!row || !wrap.current?.contains(row)) return undefined;
+      return Number(row.dataset.lineIndex);
+    };
+    const onChange = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const sel = window.getSelection();
+        const a = sel && !sel.isCollapsed ? indexOf(sel.anchorNode) : undefined;
+        const f = sel && !sel.isCollapsed ? indexOf(sel.focusNode) : undefined;
+        if (a === undefined || f === undefined) {
+          setRange(null);
+          return;
+        }
+        const next = { from: Math.min(a, f), to: Math.max(a, f) };
+        setRange((c) => (c && c.from === next.from && c.to === next.to ? c : next));
+      });
+    };
+    document.addEventListener("selectionchange", onChange);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("selectionchange", onChange);
+    };
+  }, [aiOn]);
+
+  // Above the selection, below it near the top of the box.
+  const place = useCallback(() => {
+    const box = wrap.current?.getBoundingClientRect();
+    const sel = window.getSelection();
+    if (!box || !range || !sel || sel.rangeCount === 0) {
+      setPos(null);
+      return;
+    }
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    const tw = toolbar.current?.offsetWidth ?? 320;
+    const th = toolbar.current?.offsetHeight ?? 34;
+    const above = rect.top - box.top - th - 6;
+    const next = {
+      top: Math.round(above >= 0 ? above : rect.bottom - box.top + 6),
+      left: Math.round(Math.max(0, Math.min(rect.left + rect.width / 2 - box.left - tw / 2, box.width - tw))),
+    };
+    setPos((p) => (p && p.top === next.top && p.left === next.left ? p : next));
+  }, [range]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: placed whenever the selection moves
+  useLayoutEffect(() => {
+    place();
+  }, [place, range]);
+
+  useEffect(() => {
+    if (!range) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.getSelection()?.removeAllRanges();
+      setRange(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [range, place]);
+
+  const ask = (withPath: boolean) => {
+    if (!range) return;
+    send(withPath ? yamlWithPath(lines, range.from, range.to) : lines.slice(range.from, range.to + 1));
+    window.getSelection()?.removeAllRanges();
+    setRange(null);
+  };
+
   if (secret) return <SecretNote />;
   if (isPending) return <p className="text-ink-3">Loading YAML…</p>;
   if (error) return <p className="text-12-5 text-bad">Couldn't load YAML: {error.message}</p>;
   return (
-    <pre className="m-0 overflow-auto rounded-xl border border-line bg-surface px-3.5 py-3 font-mono text-12 leading-[1.65]">
-      {data.yaml.split("\n").map((line, i) => {
-        const m = line.match(YAML_KEY);
-        return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: lines are positional
-          <span key={i}>
-            {m ? (
-              <>
-                {m[1]}
-                <span className="text-c">{m[2]}</span>
-                {m[3]}
-                <span className="text-ink-2">{m[4]}</span>
-              </>
-            ) : (
-              line
-            )}
-            {"\n"}
-          </span>
-        );
-      })}
-    </pre>
+    <div ref={wrap} className="relative flex flex-col gap-2">
+      {aiOn && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 whitespace-nowrap text-ink-2 hover:border-line-strong"
+            title="Attach this YAML (the first 500 lines) to a question"
+            onClick={() => send(lines)}
+          >
+            <Icon name="spark" className="size-3.5 text-c" />
+            Ask AI
+          </button>
+        </div>
+      )}
+      <pre className="m-0 overflow-auto rounded-xl border border-line bg-surface px-3.5 py-3 font-mono text-12 leading-[1.65]">
+        {lines.map((line, i) => {
+          const m = line.match(YAML_KEY);
+          return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: lines are positional
+            <span key={i} data-line-index={i}>
+              {m ? (
+                <>
+                  {m[1]}
+                  <span className="text-c">{m[2]}</span>
+                  {m[3]}
+                  <span className="text-ink-2">{m[4]}</span>
+                </>
+              ) : (
+                line
+              )}
+              {"\n"}
+            </span>
+          );
+        })}
+      </pre>
+      {aiOn && range && (
+        <SelectionToolbar
+          toolbarRef={toolbar}
+          count={range.to - range.from + 1}
+          pos={pos}
+          contextTitle="The selection with the keys that contain it, so the excerpt stays valid YAML"
+          onSelection={() => ask(false)}
+          onContext={() => ask(true)}
+        />
+      )}
+    </div>
   );
 }
