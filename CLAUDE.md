@@ -98,11 +98,13 @@ every file is written for outside contributors.
 
 ## Adding a Flux kind
 
-Four places change together:
-1. The entry in `internal/flux/kinds.go` and its summarizer.
-2. The agent ClusterRole in `deploy/charts/eddy-agent`.
-3. The viewer and operator RBAC examples in `docs/install.md`.
-4. The kind label in `web/src/lib/kinds.ts`.
+These places change together:
+1. The entry in `internal/flux/kinds.go` and its summarizer. Preset kinds (Karpenter,
+   External Secrets) also set `Kind.Preset`.
+2. The agent ClusterRole in `deploy/charts/eddy-agent`, inside the matching preset block for
+   preset kinds. `internal/flux/chart_test.go` checks the verbs.
+3. The viewer and operator RBAC examples in `deploy/rbac/eddy-user-rbac.yaml`.
+4. The kind label and icon in `web/src/lib/kinds.ts`, and the project in `internal/flux/catalog.go` for a new API group.
 
 ## Style
 

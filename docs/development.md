@@ -226,3 +226,7 @@ context matches `PROTECT`. Give your dev user RBAC in the cluster with the examp
   `:5173`. Stop it, or stop the other `task dev`.
 - **Cluster names changed:** you changed `CONTEXTS`. Keep `CONTEXTS` the same for the hub
   and the agent, or run `task dev` so both use one value.
+
+## Watch presets in local mode
+
+Local mode turns on both agent watch presets, `karpenter` and `externalSecrets`, so their kinds show real status. Set `EDDY_AGENT_PRESETS=karpenter` (or `none`) in `.env` to change that. Installed agents use the chart value `watch.presets`.
