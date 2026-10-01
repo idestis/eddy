@@ -6,6 +6,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
+
+	"github.com/idestis/eddy/internal/model"
 )
 
 // Redacted replaces sensitive values in sanitized YAML.
@@ -162,6 +164,9 @@ func Trim(k Kind, u *unstructured.Unstructured) {
 			spec["containers"] = containers
 		}
 	}
+	if k.Kind == KindHelmRelease || k.Kind == KindKustomization {
+		trimDependsOn(mapping(obj, "spec"))
+	}
 	if k.Kind == KindHelmRelease {
 		if spec := mapping(obj, "spec"); spec != nil {
 			delete(spec, "values")
@@ -175,6 +180,31 @@ func Trim(k Kind, u *unstructured.Unstructured) {
 			delete(spec, "postBuild")
 		}
 	}
+}
+
+// trimDependsOn keeps spec.dependsOn for Summarize, reduced to the name and
+// namespace of at most model.MaxDependsOn entries (readyExpr is dropped).
+func trimDependsOn(spec map[string]any) {
+	if spec == nil {
+		return
+	}
+	deps := maps(spec, "dependsOn")
+	if len(deps) == 0 {
+		delete(spec, "dependsOn")
+		return
+	}
+	out := make([]any, 0, min(len(deps), model.MaxDependsOn))
+	for _, d := range deps {
+		if len(out) == model.MaxDependsOn {
+			break
+		}
+		e := map[string]any{"name": str(d, "name")}
+		if ns := str(d, "namespace"); ns != "" {
+			e["namespace"] = ns
+		}
+		out = append(out, e)
+	}
+	spec["dependsOn"] = out
 }
 
 // trimPreset drops the parts of preset kinds that summaries never read and

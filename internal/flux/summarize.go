@@ -254,6 +254,11 @@ func summarizeFlux(k Kind, obj map[string]any, r *model.Resource) {
 		r.Status, r.Message = model.StatusSuspended, "Reconciliation suspended"
 	case isTrue(stalled):
 		r.Status, r.Message = model.StatusFailed, stalled.Message
+	case isFalse(ready) && ready.Reason == ReasonDependencyNotReady:
+		// Waiting for a dependency is not a failure: kustomize-controller
+		// and helm-controller requeue until every dependency is ready
+		// (helm-controller also keeps Reconciling=True meanwhile).
+		r.Status, r.Message, r.Blocked = model.StatusReconciling, waitingMessage(ready.Message), true
 	case isTrue(reconciling) && isFalse(ready) && reconciling.Reason == "ProgressingWithRetry":
 		// Flux retries a failed reconciliation with Reconciling=True; the
 		// object is still failing.
@@ -285,8 +290,10 @@ func fillFluxDetails(k Kind, obj map[string]any, r *model.Resource) {
 		r.Revision = str(obj, "status", "lastAppliedRevision")
 		r.Source = sourceRef(mapping(obj, "spec", "sourceRef"), r.Namespace)
 		r.Inventory = len(list(obj, "status", "inventory", "entries"))
+		r.DependsOn = dependsOn(k, obj, r.Namespace)
 	case KindHelmRelease:
 		r.Source = helmReleaseSource(obj, r.Namespace)
+		r.DependsOn = dependsOn(k, obj, r.Namespace)
 		chart := str(obj, "spec", "chart", "spec", "chart")
 		version := str(obj, "spec", "chart", "spec", "version")
 		if h := maps(obj, "status", "history"); len(h) > 0 {
@@ -322,6 +329,54 @@ func fillFluxDetails(k Kind, obj map[string]any, r *model.Resource) {
 		r.Revision = str(obj, "status", "artifact", "revision")
 		r.URL = str(obj, "spec", "url")
 	}
+}
+
+// ReasonDependencyNotReady is the Ready=False reason kustomize-controller
+// and helm-controller set while a dependency is not ready
+// (meta.DependencyNotReadyReason in github.com/fluxcd/pkg/apis/meta, and
+// v2.DependencyNotReadyReason in the helm-controller API).
+const ReasonDependencyNotReady = "DependencyNotReady"
+
+// dependsOn returns spec.dependsOn of a Kustomization or HelmRelease as
+// refs of the same kind, the namespace defaulting to the object's, without
+// duplicates and at most model.MaxDependsOn.
+func dependsOn(k Kind, obj map[string]any, namespace string) []model.Ref {
+	var out []model.Ref
+	for _, d := range maps(obj, "spec", "dependsOn") {
+		if len(out) == model.MaxDependsOn {
+			break
+		}
+		name := str(d, "name")
+		if name == "" {
+			continue
+		}
+		ref := model.Ref{Group: k.Group, Kind: k.Kind, Namespace: firstNonEmpty(str(d, "namespace"), namespace), Name: name}
+		if !slices.Contains(out, ref) {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+// waitingMessage turns the controllers' dependency error into "Waiting for
+// <namespace>/<name>". The controllers quote the dependency's namespaced
+// name: "dependency 'ns/name' is not ready", "dependency 'ns/name' not
+// found: …" (kustomize-controller) or "unable to get 'ns/name' dependency:
+// …" (helm-controller).
+func waitingMessage(msg string) string {
+	_, rest, ok := strings.Cut(msg, "'")
+	if !ok {
+		return "Waiting for dependencies"
+	}
+	name, rest, ok := strings.Cut(rest, "'")
+	if !ok || name == "" || strings.Count(name, "/") != 1 {
+		return "Waiting for dependencies"
+	}
+	out := "Waiting for " + name
+	if strings.Contains(rest, "not found") || strings.HasPrefix(msg, "unable to get") {
+		out += " (not found)"
+	}
+	return out
 }
 
 // helmReleaseSource returns the chart source of a HelmRelease: spec.chartRef
