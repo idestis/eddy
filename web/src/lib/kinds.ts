@@ -360,23 +360,65 @@ const REGISTERED = new Set(KINDS.map((info) => info.kind));
 
 export const isRegistered = (kind: string): boolean => REGISTERED.has(kind);
 
-/**
- * Object counts for every entry of a nav tree, in one pass over `items`. A parent counts its
- * children; "Other" counts every object whose kind is outside the registry.
- */
-export function navCounts(
-  nodes: readonly NavNode[],
-  items: ReadonlyArray<{ kind: string; group: string }>,
-): Map<string, number> {
+/** Object totals by Kind and by `<group>/<Kind>`, the input of the nav counts. */
+export interface KindTotals {
+  byKind: ReadonlyMap<string, number>;
+  byRef: ReadonlyMap<string, number>;
+}
+
+/** Totals from a loaded snapshot: one pass over `items`. */
+export function totalsOfItems(items: ReadonlyArray<{ kind: string; group: string }>): KindTotals {
   const byKind = new Map<string, number>();
   const byRef = new Map<string, number>();
-  let unregistered = 0;
   for (const r of items) {
     byKind.set(r.kind, (byKind.get(r.kind) ?? 0) + 1);
     const ref = `${groupLabel(r.group)}/${r.kind}`;
     byRef.set(ref, (byRef.get(ref) ?? 0) + 1);
-    if (!REGISTERED.has(r.kind)) unregistered++;
   }
+  return { byKind, byRef };
+}
+
+/**
+ * Totals without loading the cluster's resources (ADR-0006): the kinds endpoint's counts,
+ * overridden by the live per-Kind counts of `ClusterInfo.kinds` (pushed by the stream).
+ * `ClusterInfo.kinds` has no API group, so a live count replaces a ref count only when a
+ * single group holds that Kind. Returns undefined when neither source is there yet.
+ */
+export function totalsOfCounts(
+  live: Readonly<Record<string, Partial<Record<string, number>>>> | undefined,
+  kinds: KindsResponse | null | undefined,
+): KindTotals | undefined {
+  if (!live && !kinds) return undefined;
+  const byKind = new Map<string, number>();
+  const byRef = new Map<string, number>();
+  const groupsOf = new Map<string, string[]>();
+  for (const i of kinds?.items ?? []) {
+    byKind.set(i.kind, (byKind.get(i.kind) ?? 0) + i.count);
+    byRef.set(`${groupLabel(i.group)}/${i.kind}`, i.count);
+    groupsOf.set(i.kind, [...(groupsOf.get(i.kind) ?? []), i.group]);
+  }
+  for (const [kind, statuses] of Object.entries(live ?? {})) {
+    const n = Object.values(statuses).reduce<number>((a, b) => a + (b ?? 0), 0);
+    byKind.set(kind, n);
+    const groups = groupsOf.get(kind);
+    if (groups?.length === 1) byRef.set(`${groupLabel(groups[0] ?? "")}/${kind}`, n);
+    else if (!groups) byRef.set(`${groupLabel(kindInfo(kind).group)}/${kind}`, n);
+  }
+  return { byKind, byRef };
+}
+
+/**
+ * Object counts for every entry of a nav tree. A parent counts its children; "Other"
+ * counts every object whose kind is outside the registry. `source` is a loaded snapshot or
+ * precomputed totals (totalsOfCounts).
+ */
+export function navCounts(
+  nodes: readonly NavNode[],
+  source: ReadonlyArray<{ kind: string; group: string }> | KindTotals,
+): Map<string, number> {
+  const { byKind, byRef } = "byKind" in source ? source : totalsOfItems(source);
+  let unregistered = 0;
+  for (const [kind, n] of byKind) if (!REGISTERED.has(kind)) unregistered += n;
   const out = new Map<string, number>();
   const count = (n: NavNode): number => {
     let total: number;

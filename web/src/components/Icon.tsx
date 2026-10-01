@@ -38,6 +38,9 @@ const PATHS = {
   chat: "M2.5 3.5h11v7.5h-6l-3.5 2.5V11h-1.5z",
   key: "M5.5 7.2a3 3 0 1 1 0 .1zM8.3 8.3l5.2 5.2M11.2 11.2l1.6-1.6",
   list: "M2.5 4h11M2.5 8h11M2.5 12h11",
+  // Steps in order: the graph as an outline.
+  outline:
+    "M6.5 4h7M6.5 8h7M6.5 12h7M2.5 3.2l.8-.4v2.6M2.3 7.2h1.6l-1.6 1.9h1.6M2.3 11h1.5l-.8.9a.8.8 0 1 1-.8.9",
   filter: "M2.5 4h11M4.5 8h7M6.5 12h3",
   copy: "M5.5 5.5h7v7h-7zM3.5 10.5v-7h7",
   external: "M9 2.5h4.5V7M13.5 2.5l-6 6M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3",

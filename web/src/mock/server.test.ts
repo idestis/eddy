@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  AttentionResponse,
+  ClusterInfo,
   ConnectionInfo,
   CreatedCluster,
   Finding,
   GraphResponse,
+  IndexPage,
   JobsSnapshot,
   KindsResponse,
   List,
   Resource,
   ResourceSnapshot,
+  SearchResponse,
 } from "../api/types";
 import { MockHub } from "./server";
 
@@ -248,5 +252,89 @@ describe("mock dependency graph", () => {
     expect(seen.filter((s) => s.id === `${HR}/alchemic`).at(-1)?.status).toBe("ready");
     expect(worker.map((s) => s.status)).toEqual(["reconciling", "ready"]);
     expect(worker.at(-1)?.blocked).toBeUndefined();
+  });
+});
+
+describe("mock ADR-0006 endpoints", () => {
+  it("ranks GET /search across the fleet and answers an empty q with nothing", async () => {
+    const hub = new MockHub();
+    const res = await call<SearchResponse>(
+      hub,
+      "GET",
+      "/api/v1/search?q=podinfo&scope=fleet&cluster=staging",
+    );
+    expect(res.status).toBe(200);
+    expect(res.data.items.length).toBeGreaterThan(0);
+    expect(res.data.items[0]?.resource.name).toMatch(/podinfo/);
+    expect(res.data.items[0]?.match.primary.length).toBeGreaterThan(0);
+    expect((await call<SearchResponse>(hub, "GET", "/api/v1/search?q=")).data.items).toEqual([]);
+    expect((await call(hub, "GET", "/api/v1/search?q=x&scope=cluster")).status).toBe(400);
+  });
+
+  it("serves GET /attention with total and warning findings", async () => {
+    const hub = new MockHub();
+    const res = await call<AttentionResponse>(hub, "GET", "/api/v1/attention");
+    expect(res.status).toBe(200);
+    expect(res.data.total).toBeGreaterThanOrEqual(res.data.items.length);
+    expect(res.data.items.every((i) => i.resource.status !== "ready")).toBe(true);
+  });
+
+  it("carries per-kind counts and keeps a stale view of a disconnected cluster", async () => {
+    const hub = new MockHub();
+    const before = (await call<List<ClusterInfo>>(hub, "GET", "/api/v1/clusters")).data.items;
+    expect(before.find((c) => c.name === "prod-eu")?.kinds).toBeTruthy();
+    hub.setConnected("prod-eu", false);
+    const info = (await call<List<ClusterInfo>>(hub, "GET", "/api/v1/clusters")).data.items.find(
+      (c) => c.name === "prod-eu",
+    );
+    expect(info).toMatchObject({ connected: false, stale: true });
+    const list = await call<ResourceSnapshot>(hub, "GET", "/api/v1/clusters/prod-eu/resources");
+    expect(list.status).toBe(200);
+    expect(list.data.stale).toBe(true);
+    expect(
+      (
+        await call(
+          hub,
+          "POST",
+          "/api/v1/clusters/prod-eu/objects/Kustomization/flux-system/apps/reconcile",
+          {},
+        )
+      ).status,
+    ).toBe(503);
+  });
+
+  it("acts like an older hub when asked", async () => {
+    const hub = new MockHub();
+    hub.oldHub = true;
+    expect((await call(hub, "GET", "/api/v1/search?q=pod")).status).toBe(404);
+    expect((await call(hub, "GET", "/api/v1/attention")).status).toBe(404);
+    const items = (await call<List<ClusterInfo>>(hub, "GET", "/api/v1/clusters")).data.items;
+    expect(items.every((c) => c.kinds === undefined)).toBe(true);
+  });
+});
+
+describe("mock paged list", () => {
+  it("pages view=index with total, offset and status facets", async () => {
+    const hub = new MockHub();
+    const first = await call<IndexPage>(
+      hub,
+      "GET",
+      "/api/v1/clusters/prod-eu/resources?view=index&limit=5&sort=kind",
+    );
+    expect(first.data.items).toHaveLength(5);
+    expect(first.data.total).toBeGreaterThan(5);
+    expect(first.data.facets?.statuses).toBeTruthy();
+    const next = await call<IndexPage>(
+      hub,
+      "GET",
+      "/api/v1/clusters/prod-eu/resources?view=index&limit=5&offset=5",
+    );
+    expect(next.data.items[0]?.id).not.toBe(first.data.items[0]?.id);
+    const failed = await call<IndexPage>(
+      hub,
+      "GET",
+      "/api/v1/clusters/prod-eu/resources?view=index&status=failed",
+    );
+    expect(failed.data.items.every((r) => r.status === "failed")).toBe(true);
   });
 });

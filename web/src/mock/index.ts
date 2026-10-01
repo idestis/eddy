@@ -3,7 +3,8 @@
 // UI runs without the Go backend. main.tsx imports this module only when
 // VITE_MOCK is set, so production builds never include it.
 
-import type { WorkloadLogEntry } from "../api/types";
+import { isAttentionRow } from "../api/delta";
+import type { ChangeEvent, WorkloadLogEntry } from "../api/types";
 import { logLine } from "./fixtures";
 import { MockHub } from "./server";
 
@@ -59,6 +60,8 @@ export function installMock(): void {
   const hub = new MockHub(extra);
   // An older hub without GET …/graph: the UI builds the graph in the browser.
   hub.noGraph = import.meta.env.VITE_MOCK_NO_GRAPH === "1";
+  // A hub from before ADR-0006 P1/P2: no /search, /attention, `kinds` or `watch=`.
+  hub.oldHub = import.meta.env.VITE_MOCK_OLD_HUB === "1";
   const realFetch = window.fetch.bind(window);
   const RealEventSource = window.EventSource;
 
@@ -190,7 +193,33 @@ function workloadLogs(hub: MockHub, url: URL, source: MockEventSource, m: RegExp
 function startStream(hub: MockHub, url: URL, source: MockEventSource): () => void {
   if (url.pathname === "/api/v1/stream") {
     source.send("hello", {});
-    return hub.subscribe((event, data) => source.send(event, data));
+    source.send("clusters", { items: hub.clusterInfos() });
+    // ADR-0006 P2: full deltas only for the watched clusters; `counts` and `attention` for
+    // every cluster. Without `watch=` (or as an older hub) every delta goes out, as before.
+    const watchParam = url.searchParams.get("watch");
+    const watch =
+      watchParam !== null && !hub.oldHub ? new Set(watchParam.split(",").filter(Boolean)) : undefined;
+    // Changes between the client's fetch and this stream are never lost.
+    for (const c of watch ?? []) source.send("resync", { cluster: c });
+    return hub.subscribe((event, data) => {
+      if (event === "counts") {
+        if (watch) source.send("counts", data);
+        else source.send("clusters", { items: hub.clusterInfos() });
+        return;
+      }
+      if (event === "change" && watch) {
+        const change = data as ChangeEvent;
+        const upserts = change.upserts.filter(isAttentionRow);
+        const deletes = [
+          ...change.deletes,
+          ...change.upserts.filter((r) => !isAttentionRow(r)).map((r) => r.id),
+        ];
+        if (upserts.length || deletes.length)
+          source.send("attention", { cluster: change.cluster, upserts, deletes });
+        if (!watch.has(change.cluster)) return;
+      }
+      source.send(event, data);
+    });
   }
   const workload = url.pathname.match(
     /^\/api\/v1\/clusters\/([^/]+)\/workloads\/([^/]+)\/([^/]+)\/([^/]+)\/logs$/,

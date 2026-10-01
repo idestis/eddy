@@ -1,6 +1,13 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { type FleetResource, useCanAddCluster, useFleetResources, useMe } from "../../api/queries";
+import {
+  attentionQuery,
+  type FleetResource,
+  useCanAddCluster,
+  useFleetResources,
+  useMe,
+} from "../../api/queries";
 import type { ClusterInfo, Finding } from "../../api/types";
 import { AddClusterDialog } from "../../components/AddClusterDialog";
 import { FactList } from "../../components/ClusterCards";
@@ -10,6 +17,7 @@ import { Empty } from "../../components/Empty";
 import { Icon } from "../../components/Icon";
 import { PageHead } from "../../components/PageHead";
 import { Screen } from "../../components/Screen";
+import { SkeletonText } from "../../components/Skeleton";
 import { Health, KeyHint, StatusPill } from "../../components/Status";
 import { clusterStyle } from "../../lib/clusterColor";
 import { warningFindings } from "../../lib/findings";
@@ -60,7 +68,16 @@ function ClusterCard({ c, index, onboarding }: { c: ClusterInfo; index: number; 
       <FactList
         rows={[
           ["Health", <Health key="h" cluster={c} />],
-          ["Resources", c.connected ? total : "–"],
+          [
+            "Resources",
+            c.countsPending ? (
+              <SkeletonText key="n" className="w-10" label="Counting" />
+            ) : c.connected || c.stale ? (
+              total
+            ) : (
+              "–"
+            ),
+          ],
           ["Flux", c.fluxVersion ?? "–"],
           ["Kubernetes", c.kubernetesVersion ?? "–"],
         ]}
@@ -74,7 +91,7 @@ function ClusterCard({ c, index, onboarding }: { c: ClusterInfo; index: number; 
             {c.connected
               ? `Connected, agent ${c.agentVersion ?? ""}`
               : c.lastSeen
-                ? `Disconnected, last seen ${ago(c.lastSeen)}`
+                ? `${c.stale ? "Stale" : "Disconnected"} · last seen ${ago(c.lastSeen)}`
                 : "Waiting for the agent to connect"}
           </span>
         </span>
@@ -106,14 +123,17 @@ const TD = "border-b border-line px-3.5 py-2.5 align-middle group-last:border-b-
 interface FleetFinding {
   cluster: string;
   finding: Finding;
+  stale?: boolean;
 }
+
+type FleetAttention = FleetResource & { stale?: boolean };
 
 function UnhealthyTable({
   items,
   findings,
   clusters,
 }: {
-  items: FleetResource[];
+  items: FleetAttention[];
   findings: FleetFinding[];
   clusters: Map<string, ClusterInfo>;
 }) {
@@ -134,10 +154,11 @@ function UnhealthyTable({
           </tr>
         </thead>
         <tbody>
-          {items.map(({ cluster, resource: r }) => (
+          {items.map(({ cluster, resource: r, stale }) => (
             <tr
               key={`${cluster}/${r.id}`}
-              className="group cursor-pointer hover:bg-surface-sunken"
+              className={`group cursor-pointer hover:bg-surface-sunken ${stale ? "opacity-60" : ""}`}
+              title={stale ? `${cluster} is disconnected; this is its last known state` : undefined}
               onClick={() => void navigate(detailLink(cluster, r))}
             >
               <td className={TD}>
@@ -205,26 +226,45 @@ function UnhealthyTable({
   );
 }
 
+/**
+ * Fleet-wide "needs attention": GET /attention, kept live by the stream's `attention` events
+ * (ADR-0006), so no cluster's snapshot is loaded. A hub without the endpoint gets the old
+ * way: every cluster's snapshot, filtered here.
+ */
+function useFleetAttention(clusters: readonly ClusterInfo[]) {
+  const { data, isPending } = useQuery(attentionQuery(""));
+  const fallback = data === null;
+  const { items: all, loading } = useFleetResources(fallback);
+  const rank = useMemo(() => new Map(clusters.map((c, i) => [c.name, i])), [clusters]);
+  const items = useMemo((): FleetAttention[] => {
+    if (data) return data.items;
+    return all
+      .filter(({ resource: r }) => isFlux(r.kind) && needsAttention(r))
+      .sort(
+        (a, b) =>
+          STATUS_RANK[a.resource.status] - STATUS_RANK[b.resource.status] ||
+          (rank.get(a.cluster) ?? 0) - (rank.get(b.cluster) ?? 0),
+      );
+  }, [data, all, rank]);
+  const findings = useMemo(
+    (): FleetFinding[] =>
+      data
+        ? data.findings
+        : clusters.flatMap((c) => warningFindings(c).map((finding) => ({ cluster: c.name, finding }))),
+    [data, clusters],
+  );
+  return {
+    items,
+    findings,
+    total: (data ? Math.max(data.total, data.items.length) : items.length) + findings.length,
+    loading: isPending || (fallback && loading),
+  };
+}
+
 function FleetPage() {
   const clusters = useOrderedClusters();
-  const { items, loading } = useFleetResources();
   const byName = useMemo(() => new Map(clusters.map((c) => [c.name, c])), [clusters]);
-  const rank = useMemo(() => new Map(clusters.map((c, i) => [c.name, i])), [clusters]);
-  const unhealthy = useMemo(
-    () =>
-      items
-        .filter(({ resource: r }) => isFlux(r.kind) && needsAttention(r))
-        .sort(
-          (a, b) =>
-            STATUS_RANK[a.resource.status] - STATUS_RANK[b.resource.status] ||
-            (rank.get(a.cluster) ?? 0) - (rank.get(b.cluster) ?? 0),
-        ),
-    [items, rank],
-  );
-  const findings = useMemo(
-    () => clusters.flatMap((c) => warningFindings(c).map((finding) => ({ cluster: c.name, finding }))),
-    [clusters],
-  );
+  const { items: unhealthy, findings, total, loading } = useFleetAttention(clusters);
   const disconnected = clusters.filter((c) => !c.connected).length;
   const { data: me } = useMe();
   const onboarding = Boolean(me?.features.onboarding);
@@ -255,9 +295,7 @@ function FleetPage() {
       {adding && <AddClusterDialog onClose={() => setAdding(false)} />}
       <h3 className="mt-2 flex items-center gap-2 text-14 font-semibold">
         Needs attention across the fleet{" "}
-        <span className="font-normal text-ink-3">
-          {loading ? "loading…" : unhealthy.length + findings.length}
-        </span>
+        <span className="font-normal text-ink-3">{loading ? "loading…" : total}</span>
       </h3>
       <UnhealthyTable items={unhealthy} findings={findings} clusters={byName} />
     </Screen>

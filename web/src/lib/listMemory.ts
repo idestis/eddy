@@ -2,12 +2,13 @@
 // detail page returns to the same filter and selection.
 
 import type { StatusFilter } from "./resourceRows";
+import type { ListView } from "./viewPrefs";
 
 export interface ListSearch {
   filter?: string;
   kind?: string;
   status?: StatusFilter;
-  view?: "grouped" | "flat" | "graph";
+  view?: ListView;
 }
 
 interface ListPlace {

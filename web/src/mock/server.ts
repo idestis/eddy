@@ -2,6 +2,7 @@
 // It enforces the same CSRF header and protected-cluster confirmation as the
 // real hub so the UI's handling of both is exercised.
 
+import { compareAttention, isAttentionRow } from "../api/delta";
 import type {
   AskAttachment,
   AskStep,
@@ -14,19 +15,24 @@ import type {
   ConnectionAttempt,
   ConnectionCheck,
   ConnectionInfo,
+  IndexRow,
   JoinTokenInfo,
+  KindCounts,
   KindSummary,
   KindsResponse,
   Me,
   Message,
   OnboardedCluster,
   ResourceRef,
+  Status,
   Thread,
   TokenItem,
   TokenScope,
 } from "../api/types";
+import { STATUS_RANK } from "../lib/format";
+import { rank } from "../lib/fuzzy";
 import { buildGraph, isFluxResource, MAX_HOPS } from "../lib/graph";
-import { KINDS, kindInfo, projectName, projectOf } from "../lib/kinds";
+import { KINDS, kindInfo, matchesKindFilter, projectName, projectOf } from "../lib/kinds";
 import {
   buildCluster,
   buildFleet,
@@ -127,9 +133,18 @@ export class MockHub {
 
   /** Answer GET …/graph with 404, like a hub from before the endpoint (VITE_MOCK_NO_GRAPH=1). */
   noGraph = false;
+  /**
+   * Behave like a hub from before ADR-0006 P1/P2 (VITE_MOCK_OLD_HUB=1): no /search, no
+   * /attention, no `ClusterInfo.kinds`, no stale views. The UI falls back to snapshots.
+   */
+  oldHub = false;
+  /** Disconnected clusters whose last view the hub keeps (docs/api.md "Stale views"). */
+  private staleViews = new Set<string>();
 
   constructor(extraPods = 0) {
     this.clusters = buildFleet(extraPods);
+    for (const c of this.clusters)
+      if (!c.info.connected && c.resources.size) this.staleViews.add(c.info.name);
     this.seedOnboarding();
     this.seedThreads();
     this.seedAudit();
@@ -157,10 +172,21 @@ export class MockHub {
   }
 
   clusterInfos(): ClusterInfo[] {
-    return this.clusters.map((c) => ({
-      ...c.info,
-      counts: c.info.connected ? countsOf(c.resources) : c.info.counts,
-    }));
+    return this.clusters.map((c) => {
+      const readable = this.readable(c);
+      if (this.oldHub) return { ...c.info, counts: c.info.connected ? countsOf(c.resources) : c.info.counts };
+      return {
+        ...c.info,
+        counts: readable ? countsOf(c.resources) : c.info.counts,
+        kinds: readable ? kindCountsOf(c.resources) : undefined,
+        ...(!c.info.connected && readable && { stale: true }),
+      };
+    });
+  }
+
+  /** Connected, or disconnected with a kept view. */
+  private readable(c: MockCluster): boolean {
+    return c.info.connected || (!this.oldHub && this.staleViews.has(c.info.name));
   }
 
   /** Applies a change to a resource and broadcasts it like the hub would. */
@@ -168,7 +194,7 @@ export class MockHub {
     Object.assign(r, patch, { resourceVersion: nextResourceVersion(), lastChanged: iso() });
     const change: ChangeEvent = { cluster: c.info.name, upserts: [strip(r)], deletes: [] };
     this.emit("change", change);
-    this.emit("clusters", { items: this.clusterInfos() });
+    this.emitCounts(c);
   }
 
   /** Broadcasts several upserts and deletes as one delta, like the hub batches them. */
@@ -176,7 +202,16 @@ export class MockHub {
     for (const r of upserts) r.resourceVersion = nextResourceVersion();
     const change: ChangeEvent = { cluster: c.info.name, upserts: upserts.map(strip), deletes };
     this.emit("change", change);
-    this.emit("clusters", { items: this.clusterInfos() });
+    this.emitCounts(c);
+  }
+
+  /**
+   * A cluster's counts changed. The stream turns this into a `counts` event (ADR-0006) or,
+   * for a client that sent no `watch=` (an older SPA), into the full `clusters` event.
+   */
+  private emitCounts(c: MockCluster): void {
+    const info = this.clusterInfos().find((i) => i.name === c.info.name);
+    this.emit("counts", { cluster: c.info.name, counts: info?.counts, kinds: info?.kinds });
   }
 
   /** Background churn so the live indicator and SSE deltas have something to show. */
@@ -288,6 +323,8 @@ export class MockHub {
     if (!c || c.info.connected === connected) return;
     c.info.connected = connected;
     c.info.lastSeen = iso();
+    if (connected) this.staleViews.delete(name);
+    else this.staleViews.add(name);
     this.emit("clusters", { items: this.clusterInfos() });
     this.emit("resync", { cluster: name });
   }
@@ -311,7 +348,131 @@ export class MockHub {
    * GET …/resources, with the hub's optional kind and namespace filters. includeHidden (Jobs
    * only) adds the hidden finished Jobs a page at a time; a cursor page holds hidden Jobs only.
    */
+  /** GET …/resources?view=index: one page of IndexRow, filtered and sorted by kind (ADR-0006). */
+  private indexRoute(cl: MockCluster, q: URLSearchParams): Response {
+    const kind = q.get("kind") ?? "";
+    const status = q.get("status") ?? "";
+    const namespace = q.get("namespace") ?? "";
+    const text = (q.get("q") ?? "").toLowerCase();
+    const limit = Math.min(Number(q.get("limit") ?? 200) || 200, 1000);
+    const offset = Math.max(0, Number(q.get("offset") ?? 0) || 0);
+    const all = [...cl.resources.values()];
+    const inScope = all.filter(
+      (r) =>
+        matchesKindFilter(r.kind, kind || undefined, r.group) && (!namespace || r.namespace === namespace),
+    );
+    const statuses: Partial<Record<Status, number>> = {};
+    for (const r of inScope) if (!r.inventoryOnly) statuses[r.status] = (statuses[r.status] ?? 0) + 1;
+    const rows = inScope
+      .filter(
+        (r) =>
+          (!status ||
+            (status === "attention"
+              ? !r.inventoryOnly && r.status !== "ready" && r.status !== "completed"
+              : r.status === status)) &&
+          (!text || `${r.name} ${r.namespace} ${r.kind} ${r.message ?? ""}`.toLowerCase().includes(text)),
+      )
+      .sort(
+        (a, b) =>
+          kindInfo(a.kind).order - kindInfo(b.kind).order ||
+          a.kind.localeCompare(b.kind) ||
+          a.namespace.localeCompare(b.namespace) ||
+          a.name.localeCompare(b.name),
+      );
+    const page = rows.slice(offset, offset + limit).map(
+      (r): IndexRow => ({
+        id: r.id,
+        group: r.group,
+        kind: r.kind,
+        namespace: r.namespace,
+        name: r.name,
+        status: r.status,
+        ...(r.blocked && { blocked: true }),
+        ...(r.message && { message: r.message.slice(0, 160) }),
+        ...(r.revision && { revision: r.revision }),
+        ...(r.replicas && { replicas: r.replicas }),
+        ...(r.completions && { completions: r.completions }),
+        ...(r.owner && { owner: r.owner }),
+        ...(r.project && { project: r.project }),
+        ...(r.inventoryOnly && { inventoryOnly: true }),
+        ...((r.lastChanged ?? r.createdAt) && { lastChanged: r.lastChanged ?? r.createdAt }),
+      }),
+    );
+    const end = offset + page.length;
+    return json({
+      items: page,
+      total: rows.length,
+      ...(end < rows.length && { next: `o${end}` }),
+      facets: { statuses },
+    });
+  }
+
+  /** GET /search: fuzzy.ts over every readable cluster, the way internal/hub/fuzzy.go ranks. */
+  private searchRoute(q: URLSearchParams): Response {
+    const text = (q.get("q") ?? "").trim();
+    const scope = q.get("scope") || "fleet";
+    const current = q.get("cluster") ?? "";
+    const kind = q.get("kind") ?? "";
+    const limit = Math.min(Number(q.get("limit") ?? 30) || 30, 100);
+    if (scope === "cluster" && !current) return error(400, "bad_request", "scope=cluster needs cluster.");
+    if (text.length > 128) return error(400, "bad_request", "q is at most 128 characters.");
+    if (!text) return json({ items: [], partial: [] });
+    const pool = this.clusters
+      .filter((c) => this.readable(c) && (scope !== "cluster" || c.info.name === current))
+      .flatMap((c) =>
+        [...c.resources.values()]
+          .filter((r) => !kind || r.kind === kind)
+          .map((r) => ({ cluster: c.info.name, r, stale: !c.info.connected })),
+      );
+    const order = (x: { cluster: string; r: MockResource }) =>
+      (x.r.inventoryOnly ? 9 : STATUS_RANK[x.r.status]) * 2 + (x.cluster === current ? 0 : 1);
+    const hits = rank(
+      text,
+      pool,
+      (x) => ({
+        primary: x.r.name,
+        secondary: [x.r.namespace, x.r.kind, kindInfo(x.r.kind).abbr, x.cluster],
+      }),
+      limit,
+      (a, b) => order(a) - order(b),
+    );
+    return json({
+      items: hits.map(({ item, match }) => ({
+        cluster: item.cluster,
+        resource: strip(item.r),
+        match,
+        ...(item.stale && { stale: true }),
+      })),
+      partial: [],
+    });
+  }
+
+  /** GET /attention: failed rows and Flux rows reconciling or suspended, plus warning findings. */
+  private attentionRoute(q: URLSearchParams): Response {
+    const only = q.get("cluster") ?? "";
+    const limit = Math.min(Number(q.get("limit") ?? 200) || 200, 1000);
+    const clusters = this.clusters.filter((c) => this.readable(c) && (!only || c.info.name === only));
+    if (only && !clusters.length && !this.cluster(only))
+      return error(404, "not_found", `Cluster ${only} not found.`);
+    const items = clusters
+      .flatMap((c) =>
+        [...c.resources.values()].filter(isAttentionRow).map((r) => ({
+          cluster: c.info.name,
+          resource: strip(r),
+          ...(!c.info.connected && { stale: true }),
+        })),
+      )
+      .sort(compareAttention);
+    const findings = clusters.flatMap((c) =>
+      (c.info.findings ?? [])
+        .filter((f) => f.severity === "warning")
+        .map((finding) => ({ cluster: c.info.name, finding, ...(!c.info.connected && { stale: true }) })),
+    );
+    return json({ items: items.slice(0, limit), total: items.length, findings, partial: [] });
+  }
+
   private resourcesRoute(cl: MockCluster, q: URLSearchParams): Response {
+    if (q.get("view") === "index" && !this.oldHub) return this.indexRoute(cl, q);
     const kind = q.get("kind") ?? "";
     const namespace = q.get("namespace") ?? "";
     const match = (r: MockResource) =>
@@ -389,6 +550,10 @@ export class MockHub {
     const [root, a, b, c, d, e, f] = p;
 
     if (root === "me") return json(me);
+    if (root === "search" && !a && method === "GET" && !this.oldHub)
+      return this.searchRoute(url.searchParams);
+    if (root === "attention" && !a && method === "GET" && !this.oldHub)
+      return this.attentionRoute(url.searchParams);
     if (root === "clusters" && p.length === 1 && method === "GET")
       return json({ items: this.clusterInfos() });
     if (root === "clusters") {
@@ -399,11 +564,24 @@ export class MockHub {
     if (root === "clusters" && a) {
       const cl = this.cluster(a);
       if (!cl) return error(404, "not_found", `Cluster ${a} not found.`);
-      if (!cl.info.connected) return error(503, "disconnected", `${a} is disconnected.`);
-      if (b === "resources") return this.resourcesRoute(cl, url.searchParams);
-      if (b === "kinds" && !c) return json(kindsOf(cl));
-      if (b === "graph" && !c) return this.graphRoute(cl, url.searchParams);
-      if (b === "findings" && !c) return json({ items: cl.info.findings ?? [] });
+      // A stale view answers reads of the last state; writes, YAML, events and logs need the agent.
+      const stale = !cl.info.connected;
+      const staleRead =
+        stale &&
+        this.readable(cl) &&
+        method === "GET" &&
+        (b === "resources" ||
+          b === "kinds" ||
+          b === "graph" ||
+          b === "findings" ||
+          (b === "objects" && !f) ||
+          f === "children");
+      if (stale && !staleRead) return error(503, "disconnected", `${a} is disconnected.`);
+      const mark = (res: Response) => (staleRead ? markStale(res) : res);
+      if (b === "resources") return mark(this.resourcesRoute(cl, url.searchParams));
+      if (b === "kinds" && !c) return mark(json(kindsOf(cl)));
+      if (b === "graph" && !c) return mark(this.graphRoute(cl, url.searchParams));
+      if (b === "findings" && !c) return mark(json({ items: cl.info.findings ?? [] }));
       if (b === "objects" && c && d && e) {
         const group = url.searchParams.get("group") ?? undefined;
         const r = findResource(cl, c, d === "_" ? "" : d, e, group);
@@ -1208,13 +1386,40 @@ function findResource(
 const refKey = (r: { kind: string; namespace: string; name: string }) => `${r.kind}/${r.namespace}/${r.name}`;
 
 /** Drops mock-only fields so responses match the wire shape. */
+/** Per-Kind status counts, as `ClusterInfo.kinds` (inventory-only rows not counted). */
+export function kindCountsOf(resources: Map<string, MockResource>): KindCounts {
+  const out: KindCounts = {};
+  for (const r of resources.values()) {
+    if (r.inventoryOnly) continue;
+    const k = out[r.kind] ?? {};
+    k[r.status] = (k[r.status] ?? 0) + 1;
+    out[r.kind] = k;
+  }
+  return out;
+}
+
+/** The data behind each json() response, so a stale read can be marked without re-parsing. */
+const bodies = new WeakMap<Response, unknown>();
+
+/** Marks a read as served from a stale view: the header, and `stale: true` in object bodies. */
+function markStale(res: Response): Response {
+  if (!res.ok) return res;
+  const data = bodies.get(res);
+  const marked = data && typeof data === "object" && !Array.isArray(data) ? { ...data, stale: true } : data;
+  const out = json(marked, res.status);
+  out.headers.set("X-Eddy-Stale", "true");
+  return out;
+}
+
 function strip(r: MockResource) {
   const { events: _events, spec: _spec, recovers: _recovers, ...wire } = r;
   return wire;
 }
 
 function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+  const res = new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+  bodies.set(res, data);
+  return res;
 }
 
 function error(status: number, code: string, message: string): Response {

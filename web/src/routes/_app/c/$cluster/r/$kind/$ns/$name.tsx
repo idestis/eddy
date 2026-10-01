@@ -7,7 +7,7 @@ import type { ResourceRef } from "../../../../../../../api/types";
 import { AskAIPanel } from "../../../../../../../components/AskAI";
 import { ChildrenTree } from "../../../../../../../components/ChildrenTree";
 import { Empty } from "../../../../../../../components/Empty";
-import { Icon } from "../../../../../../../components/Icon";
+import type { GraphMeta } from "../../../../../../../components/graph/GraphView";
 import { LogsView } from "../../../../../../../components/LogsView";
 import {
   Conditions,
@@ -19,11 +19,11 @@ import {
   YamlView,
 } from "../../../../../../../components/ResourceParts";
 import { Screen } from "../../../../../../../components/Screen";
-import { SEG, SEG_BTN } from "../../../../../../../components/SidePanel";
 import { KeyHint } from "../../../../../../../components/Status";
 import { TabIndicator, useTabIndicator } from "../../../../../../../components/TabIndicator";
 import { ResourceThreads } from "../../../../../../../components/Threads";
 import { useToast } from "../../../../../../../components/Toasts";
+import { SectionToolbar, type ViewOption, ViewSwitch } from "../../../../../../../components/ViewSwitch";
 import { WorkloadLogsView } from "../../../../../../../components/WorkloadLogsView";
 import { useAppState } from "../../../../../../../lib/appState";
 import { type KeyId, useKeys } from "../../../../../../../lib/keys";
@@ -31,7 +31,7 @@ import { kindInfo } from "../../../../../../../lib/kinds";
 import { DETAIL_VIEWS, type DetailView, detailLink, nsFromParam } from "../../../../../../../lib/links";
 import { recallList } from "../../../../../../../lib/listMemory";
 import { useResourceActions } from "../../../../../../../lib/useResourceActions";
-import { setViewPrefs, useViewPrefs } from "../../../../../../../lib/viewPrefs";
+import { type ManagesView, setViewPrefs, useViewPrefs } from "../../../../../../../lib/viewPrefs";
 import { WORKLOAD_LOG_KINDS } from "../../../../../../../lib/workloadLogs";
 
 // The graph and its layout code load only when the Graph toggle is on.
@@ -50,6 +50,17 @@ export const Route = createFileRoute("/_app/c/$cluster/r/$kind/$ns/$name")({
   }),
   component: DetailPage,
 });
+
+const MANAGES_VIEWS: ReadonlyArray<ViewOption<ManagesView>> = [
+  { value: "tree", label: "Tree", icon: "list", title: "Ownership tree" },
+  {
+    value: "graph",
+    label: "Graph",
+    icon: "graph",
+    title: "Dependencies, sources and managed objects as a graph",
+  },
+  { value: "outline", label: "Outline", icon: "outline", title: "The graph as a list, step by step" },
+];
 
 const TAB_LABEL: Record<DetailView, string> = {
   overview: "Overview",
@@ -84,7 +95,7 @@ function DetailPage() {
 
   const { data, isPending } = useQuery({
     ...resourcesQuery(params.cluster),
-    enabled: cluster?.connected ?? false,
+    enabled: Boolean(cluster?.connected || cluster?.stale),
   });
   const items = data?.items ?? [];
   const found = items.find(
@@ -149,7 +160,33 @@ function DetailPage() {
     void navigate({ to: "/c/$cluster", params: { cluster: params.cluster }, search: place.search });
   };
 
-  const graphOn = view === "overview" && managesView === "graph" && Boolean(r && kindInfo(r.kind).flux);
+  const fluxRoot = Boolean(r && kindInfo(r.kind).flux);
+  const graphOn = view === "overview" && managesView !== "tree" && fluxRoot;
+  // One line: "Manages" and its caption, then [Tree | Graph | Outline] and the graph's size.
+  const managesHeader = (meta?: GraphMeta, extra?: ReactNode) => {
+    const size = meta
+      ? `${meta.nodes} nodes · ${meta.edges} edges${meta.truncated ? " · truncated" : ""}`
+      : undefined;
+    return (
+      <SectionToolbar
+        title="Manages"
+        caption={graphOn ? "Upstream ← this object → downstream" : undefined}
+        extra={extra}
+        meta={size}
+        views={
+          fluxRoot ? (
+            <ViewSwitch
+              legend="Show as"
+              value={graphOn ? managesView : "tree"}
+              options={MANAGES_VIEWS}
+              title={size}
+              onChange={(v) => setViewPrefs({ managesView: v })}
+            />
+          ) : undefined
+        }
+      />
+    );
+  };
   const actTarget = (graphOn && graphPick && items.find((x) => x.id === graphPick)) || r;
   useKeys({
     back,
@@ -263,55 +300,27 @@ function DetailPage() {
                   <EventsList cluster={params.cluster} r={r} limit={5} />
                 </section>
               </div>
-              {!r.inventoryOnly && (
-                <>
-                  <div className="flex items-center gap-3">
-                    <SectionTitle>Manages</SectionTitle>
-                    {kindInfo(r.kind).flux && (
-                      <fieldset className={`${SEG} m-0 mt-3 ml-auto shrink-0 p-[2px]`}>
-                        <legend className="sr-only">Show as</legend>
-                        {(
-                          [
-                            ["tree", "Tree", "list"],
-                            ["graph", "Graph", "graph"],
-                          ] as const
-                        ).map(([v, label, icon]) => (
-                          <button
-                            key={v}
-                            type="button"
-                            aria-pressed={managesView === v}
-                            className={`${SEG_BTN} h-[26px] flex-none aria-pressed:bg-ink`}
-                            title={
-                              v === "graph"
-                                ? "Dependencies, sources and managed objects as a graph"
-                                : "Ownership tree"
-                            }
-                            onClick={() => setViewPrefs({ managesView: v })}
-                          >
-                            <Icon name={icon} className="size-3.5" />
-                            {label}
-                          </button>
-                        ))}
-                      </fieldset>
-                    )}
-                  </div>
-                  {graphOn ? (
-                    <Suspense fallback={<Empty>Loading the graph…</Empty>}>
-                      <LineageGraph
-                        cluster={cluster}
-                        root={r}
-                        items={items}
-                        selectedId={graphPick}
-                        onSelect={setGraphPick}
-                        onOpen={(ref) => void navigate(detailLink(params.cluster, ref))}
-                        actions={actions}
-                      />
-                    </Suspense>
-                  ) : (
+              {!r.inventoryOnly &&
+                (graphOn ? (
+                  <Suspense fallback={managesHeader()}>
+                    <LineageGraph
+                      cluster={cluster}
+                      root={r}
+                      items={items}
+                      selectedId={graphPick}
+                      onSelect={setGraphPick}
+                      onOpen={(ref) => void navigate(detailLink(params.cluster, ref))}
+                      actions={actions}
+                      outline={managesView === "outline"}
+                      header={managesHeader}
+                    />
+                  </Suspense>
+                ) : (
+                  <>
+                    {managesHeader()}
                     <ChildrenTree cluster={params.cluster} root={r} items={items} />
-                  )}
-                </>
-              )}
+                  </>
+                ))}
             </>
           )}
           {view === "yaml" && <YamlView cluster={params.cluster} r={r} />}

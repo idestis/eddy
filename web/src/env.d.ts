@@ -15,5 +15,7 @@ declare global {
     readonly VITE_MOCK_ROWS?: string;
     /** "1": the mock hub answers GET …/graph with 404, like an older hub. */
     readonly VITE_MOCK_NO_GRAPH?: string;
+    /** "1": the mock hub predates ADR-0006 P1/P2 (no /search, /attention, `kinds`, `watch=`). */
+    readonly VITE_MOCK_OLD_HUB?: string;
   }
 }

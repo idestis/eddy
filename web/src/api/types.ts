@@ -136,9 +136,18 @@ export interface ClusterInfo {
   /** The kubeconfig context a local-mode agent serves. */
   context?: string;
   counts?: Partial<Record<Status, number>>;
+  /** The hub is still computing counts for this cluster; a `counts` event fills them in. */
+  countsPending?: boolean;
+  /** `counts` per Kind (watched kinds only, inventory-only rows not counted), for navigation. */
+  kinds?: KindCounts;
+  /** The agent is gone but the hub still serves its last view, read-only; see `lastSeen`. */
+  stale?: boolean;
   /** Cluster-level findings such as a build-up of finished Jobs. They are not resources. */
   findings?: Finding[];
 }
+
+/** Per-Kind status counts: `{Kind: {status: n}}`. */
+export type KindCounts = Record<string, Partial<Record<Status, number>>>;
 
 export type FindingSeverity = "warning" | "info";
 
@@ -262,6 +271,48 @@ export interface GraphResponse {
 export interface ResourceSnapshot {
   items: Resource[];
   resourceVersion: string;
+  /** Served from the hub's last view of a disconnected cluster. */
+  stale?: boolean;
+}
+
+/**
+ * One row of the paged list (`…/resources?view=index`, ADR-0006 T1): the columns the list
+ * renders and filters on, with short keys. The group is implied by the kind table unless `g`
+ * says otherwise.
+ */
+/** One compact row of `…/resources?view=index` (ADR-0006 T1); full details load by id. */
+export interface IndexRow {
+  id: string;
+  group: string;
+  kind: string;
+  namespace: string;
+  name: string;
+  status: Status;
+  blocked?: boolean;
+  /** Message, truncated by the hub. */
+  message?: string;
+  /** Short revision. */
+  revision?: string;
+  replicas?: string;
+  completions?: string;
+  owner?: Ref;
+  project?: string;
+  inventoryOnly?: boolean;
+  lastChanged?: string;
+}
+
+export interface IndexPage {
+  items: IndexRow[];
+  /** Rows matching the filter, across every page. Its presence marks a hub that pages. */
+  total: number;
+  next?: string;
+  facets?: {
+    kinds?: Record<string, number>;
+    statuses?: Partial<Record<Status, number>>;
+    /** The most common namespaces among the matching rows. */
+    namespaces?: { name: string; n: number }[];
+  };
+  stale?: boolean;
 }
 
 /** GET …/resources?kind=Job&includeHidden=1: listed Jobs plus a page of hidden finished ones. */
@@ -369,11 +420,69 @@ export interface AuditEvent {
   detail?: unknown;
 }
 
-/** SSE `change` payload. */
+/** SSE `change` payload. Sent only for watched clusters by hubs that take `watch=`. */
 export interface ChangeEvent {
   cluster: string;
   upserts: Resource[];
   deletes: string[];
+}
+
+/** SSE `counts` payload: a cluster's counts changed (at most 1/s per cluster); replaces `counts` and `kinds`. */
+export interface CountsEvent {
+  cluster: string;
+  counts?: Partial<Record<Status, number>>;
+  kinds?: KindCounts;
+  connected?: boolean;
+}
+
+/**
+ * SSE `attention` payload (every cluster, watched ones too): rows that now need attention,
+ * ids that left the set, and, when present, the cluster's findings (all severities).
+ */
+export interface AttentionEvent {
+  cluster: string;
+  upserts: Resource[];
+  deletes: string[];
+  findings?: Finding[];
+}
+
+/** One hit of GET /api/v1/search. Ranges are offsets into the name and the secondary fields. */
+export interface SearchHit {
+  cluster: string;
+  resource: Resource;
+  match: {
+    score: number;
+    primary: Array<[number, number]>;
+    /** Namespace, kind, kind abbreviation, cluster. */
+    secondary: Array<Array<[number, number]>>;
+  };
+  stale?: boolean;
+}
+
+export interface SearchResponse {
+  items: SearchHit[];
+  /** Clusters skipped because their scan was too slow or their access checks failed. */
+  partial?: string[];
+}
+
+export interface AttentionItem {
+  cluster: string;
+  resource: Resource;
+  stale?: boolean;
+}
+
+export interface AttentionFinding {
+  cluster: string;
+  finding: Finding;
+  stale?: boolean;
+}
+
+/** GET /api/v1/attention. */
+export interface AttentionResponse {
+  items: AttentionItem[];
+  total: number;
+  findings: AttentionFinding[];
+  partial?: string[];
 }
 
 // Cluster onboarding (ADR-0005).

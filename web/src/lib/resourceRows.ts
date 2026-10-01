@@ -1,7 +1,7 @@
 // Filtering, sorting and grouping for the resource list. Pure functions so
 // they can be tested and memoised; the list renders whatever rows they return.
 
-import type { Resource, Status } from "../api/types";
+import type { ClusterInfo, Resource, Status } from "../api/types";
 import { STATUS_RANK } from "./format";
 import { kindInfo, matchesKindFilter } from "./kinds";
 
@@ -18,6 +18,9 @@ export interface ListFilter {
 export type Row =
   | { type: "group"; key: string; kind: string; project?: string; count: number; failing: number }
   | { type: "resource"; key: string; resource: Resource };
+
+/** A list row, or a row of a windowed list whose page has not loaded yet. */
+export type ListRow = Row | { type: "placeholder"; key: string };
 
 /** Healthy statuses: ready, or a finished Job or Pod that completed. */
 export const isHealthy = (status: Status): boolean => status === "ready" || status === "completed";
@@ -37,6 +40,37 @@ export interface StatusCounts {
   reconciling: number;
   suspended: number;
   completed: number;
+}
+
+/**
+ * The list's total and status chips from `ClusterInfo` alone (ADR-0006: counts render before
+ * any row). `kind` narrows to a nav filter through `ClusterInfo.kinds`. Undefined when the
+ * hub sends no counts yet, or with a namespace filter (counts are not per namespace).
+ */
+export function summaryCounts(
+  cluster: ClusterInfo | undefined,
+  filter: { kind?: string; namespace?: string },
+): { total: number; counts: StatusCounts } | undefined {
+  if (!cluster || filter.namespace || cluster.countsPending) return undefined;
+  let byStatus: Partial<Record<Status, number>> | undefined;
+  if (!filter.kind) byStatus = cluster.counts;
+  else if (cluster.kinds) {
+    byStatus = {};
+    for (const [kind, statuses] of Object.entries(cluster.kinds)) {
+      if (!matchesKindFilter(kind, filter.kind)) continue;
+      for (const [st, n] of Object.entries(statuses) as Array<[Status, number | undefined]>)
+        byStatus[st] = (byStatus[st] ?? 0) + (n ?? 0);
+    }
+  }
+  if (!byStatus) return undefined;
+  const counts: StatusCounts = { attention: 0, failed: 0, reconciling: 0, suspended: 0, completed: 0 };
+  let total = 0;
+  for (const [st, n = 0] of Object.entries(byStatus) as Array<[Status, number | undefined]>) {
+    total += n;
+    if (!isHealthy(st)) counts.attention += n;
+    if (st !== "ready" && st !== "unknown") counts[st] += n;
+  }
+  return { total, counts };
 }
 
 export function statusCounts(items: readonly Resource[]): StatusCounts {

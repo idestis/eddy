@@ -2,12 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { logout } from "../api/endpoints";
-import { resourcesQuery, useMe } from "../api/queries";
+import { kindsQuery, resourcesQuery, useMe } from "../api/queries";
 import { type StreamState, useStreamState } from "../api/stream";
-import type { ClusterInfo } from "../api/types";
+import type { ClusterInfo, Status } from "../api/types";
 import { useAppState } from "../lib/appState";
-import { isRegistered, type NavNode, navCounts, navPath } from "../lib/kinds";
-import { needsAttention, type StatusFilter } from "../lib/resourceRows";
+import { isRegistered, type NavNode, navCounts, navPath, totalsOfCounts } from "../lib/kinds";
+import { isHealthy, needsAttention, type StatusFilter } from "../lib/resourceRows";
 import { toggleTheme } from "../lib/theme";
 import { useNav } from "../lib/useNav";
 import { getViewPrefs, setViewPrefs } from "../lib/viewPrefs";
@@ -86,13 +86,43 @@ function loadOpen(): Record<string, boolean> {
   }
 }
 
+/**
+ * The sidebar's numbers without loading the cluster's resources (ADR-0006): totals from
+ * `ClusterInfo.counts` and `.kinds` (kept live by the stream) plus the kinds endpoint for
+ * inventory-only kinds. A hub without `kinds` gets the old way: the cluster's snapshot.
+ * Exported for tests.
+ */
+export function useNavCounts(cluster: ClusterInfo, nodes: readonly NavNode[]) {
+  const live = cluster.kinds;
+  const readable = cluster.connected || Boolean(cluster.stale);
+  const { data: kinds } = useQuery({ ...kindsQuery(cluster.name), enabled: readable });
+  const { data } = useQuery({ ...resourcesQuery(cluster.name), enabled: readable && !live });
+  const items = live ? undefined : data?.items;
+  return useMemo(() => {
+    if (live) {
+      const totals = totalsOfCounts(live, kinds);
+      const statuses = Object.entries(cluster.counts ?? {}) as Array<[Status, number | undefined]>;
+      return {
+        counts: totals ? navCounts(nodes, totals) : new Map<string, number>(),
+        all: statuses.reduce((a, [, n]) => a + (n ?? 0), 0),
+        attention: statuses.reduce((a, [s, n]) => a + (isHealthy(s) ? 0 : (n ?? 0)), 0),
+        known: !cluster.countsPending,
+      };
+    }
+    return {
+      counts: navCounts(nodes, items ?? []),
+      all: items?.length,
+      attention: (items ?? []).filter(needsAttention).length,
+      known: items !== undefined,
+    };
+  }, [live, kinds, cluster.counts, cluster.countsPending, nodes, items]);
+}
+
 function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
-  const { data } = useQuery({ ...resourcesQuery(cluster.name), enabled: cluster.connected });
   const search = useSearch({ strict: false }) as { kind?: string; status?: StatusFilter };
   const onList = useLocation({ select: (l) => l.pathname === `/c/${encodeURIComponent(cluster.name)}` });
-  const items = data?.items;
   const params = { cluster: cluster.name };
-  const nodes = useNav(cluster.name, cluster.connected);
+  const nodes = useNav(cluster.name, cluster.connected || Boolean(cluster.stale));
   const activePath = useMemo(() => (onList ? navPath(search.kind, nodes) : []), [onList, search.kind, nodes]);
   // Collapsed state the user chose; a group is open by default while it holds the active page.
   // Saved with the view preferences, so it follows the user; the old key seeds it once.
@@ -101,8 +131,7 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
     setViewPrefs({ nav: open });
   }, [open]);
 
-  const counts = useMemo(() => navCounts(nodes, items ?? []), [nodes, items]);
-  const attention = useMemo(() => (items ?? []).filter(needsAttention).length, [items]);
+  const { counts, all, attention, known } = useNavCounts(cluster, nodes);
 
   const link = (
     key: string,
@@ -138,7 +167,7 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
             inventory
           </span>
         )}
-        <Count n={items ? n : undefined} bad={bad} />
+        <Count n={known ? n : undefined} bad={bad} />
       </Link>
     );
   };
@@ -146,14 +175,14 @@ function ClusterNav({ cluster }: { cluster: ClusterInfo }) {
   return (
     <nav className="mt-4 flex flex-col gap-px" aria-label={`Browse ${cluster.name}`}>
       <h3 className="mx-2.5 mb-1.5 text-12 font-medium text-ink-3">Browse</h3>
-      {link("all", "All resources", "list", {}, items?.length)}
+      {link("all", "All resources", "list", {}, all)}
       {link("attention", "Needs attention", "alert", { status: "attention" }, attention, true)}
       <div className="mt-1">
         <NavTree
           nodes={nodes}
           isOpen={(n) => open[n.id] ?? activePath.includes(n.id)}
           setOpen={(id, on) => setOpen((o) => ({ ...o, [id]: on }))}
-          skip={(n) => !n.keep && items !== undefined && (counts.get(n.id) ?? 0) === 0}
+          skip={(n) => !n.keep && known && (counts.get(n.id) ?? 0) === 0}
           renderLink={(n, props) =>
             link(n.id, n.label, n.icon, { kind: n.id }, counts.get(n.id) ?? 0, false, props, n)
           }

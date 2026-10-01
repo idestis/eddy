@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
-import { hiddenJobsQuery, resourcesQuery, useCluster, useMe } from "../../../../api/queries";
+import { hiddenJobsQuery, objectQuery, resourcesQuery, useCluster, useMe } from "../../../../api/queries";
 import { type Resource, STATUSES } from "../../../../api/types";
 import { ClusterCards } from "../../../../components/ClusterCards";
 import { Empty } from "../../../../components/Empty";
@@ -21,18 +21,27 @@ import {
 } from "../../../../components/ResourceParts";
 import { Screen } from "../../../../components/Screen";
 import { SEG, SEG_BTN, SidePanel } from "../../../../components/SidePanel";
+import { SkeletonRows, SkeletonText } from "../../../../components/Skeleton";
 import { AttentionIcon, StatusIcon } from "../../../../components/Status";
 import { TabIndicator, useTabIndicator } from "../../../../components/TabIndicator";
 import { useToast } from "../../../../components/Toasts";
 import { useAppState } from "../../../../lib/appState";
 import { hiddenJobCount, warningFindings } from "../../../../lib/findings";
-import { STATUS_LABEL, thousands } from "../../../../lib/format";
+import { ago, STATUS_LABEL, thousands } from "../../../../lib/format";
 import { useKeys } from "../../../../lib/keys";
 import { filterLabel, isFluxFilter, type NavNode, navNode } from "../../../../lib/kinds";
 import { type DetailView, detailLink } from "../../../../lib/links";
 import { recallList, rememberList } from "../../../../lib/listMemory";
 import { useClusterMotion, useRequested, withLeaving } from "../../../../lib/liveMotion";
-import { buildRows, filterResources, type StatusFilter, statusCounts } from "../../../../lib/resourceRows";
+import {
+  buildRows,
+  filterResources,
+  type ListRow,
+  type StatusFilter,
+  statusCounts,
+  summaryCounts,
+} from "../../../../lib/resourceRows";
+import { useListMode, useWindowedList } from "../../../../lib/useClusterList";
 import { useNav } from "../../../../lib/useNav";
 import { useResourceActions } from "../../../../lib/useResourceActions";
 import { type ListView, resolvePref, setViewPrefs, useViewPrefs } from "../../../../lib/viewPrefs";
@@ -46,7 +55,7 @@ const searchSchema = z.object({
     .enum([...STATUSES, "attention"])
     .optional()
     .catch(undefined),
-  view: z.enum(["grouped", "flat", "graph"]).optional().catch(undefined),
+  view: z.enum(["grouped", "flat", "graph", "outline"]).optional().catch(undefined),
 });
 
 // The graph and its layout code load only when a graph is shown.
@@ -54,10 +63,11 @@ const ClusterGraph = lazy(() =>
   import("../../../../components/graph").then((m) => ({ default: m.ClusterGraph })),
 );
 
-const VIEWS: ReadonlyArray<readonly [ListView, string, "layers" | "list" | "graph", string]> = [
+const VIEWS: ReadonlyArray<readonly [ListView, string, "layers" | "list" | "graph" | "outline", string]> = [
   ["grouped", "Grouped by kind", "layers", "Grouped"],
   ["flat", "Flat list", "list", "Flat"],
   ["graph", "Dependency graph: who goes first", "graph", "Graph"],
+  ["outline", "The dependency graph as a list, step by step", "outline", "Outline"],
 ];
 
 export const Route = createFileRoute("/_app/c/$cluster/")({
@@ -139,11 +149,19 @@ function ClusterPage() {
   const graphRef = useRef<ClusterGraphHandle>(null);
   const filterInput = useRef<HTMLInputElement>(null);
 
+  // A disconnected cluster whose last view the hub keeps (`stale`) stays readable.
+  const readable = Boolean(cluster?.connected || cluster?.stale);
+  // Counts, then the first page, then the rest (lib/useClusterList.ts). Above 25k rows the
+  // list stays windowed and the hub filters; otherwise the full list loads behind the first page.
+  const { mode, firstPage } = useListMode(name, readable);
+  const windowed = mode === "windowed";
   const { data, isPending, error } = useQuery({
     ...resourcesQuery(name),
-    enabled: cluster?.connected ?? false,
+    enabled: readable && (mode === "legacy" || mode === "fill"),
   });
-  const listed = data?.items;
+  // Until the full list is there, the rows are the first page (partial summaries).
+  const partialRows = !data && (windowed || (mode === "fill" && Boolean(firstPage)));
+  const listed = data?.items ?? (mode === "fill" ? firstPage : undefined);
 
   // Finished Jobs the agent hides: fetched on demand, a page at a time, only on the Jobs list.
   const namespace = search.namespace;
@@ -155,7 +173,7 @@ function ClusterPage() {
   const showHidden = onJobs && hiddenFor === hiddenScope;
   const hidden = useInfiniteQuery({
     ...hiddenJobsQuery(name, namespace),
-    enabled: showHidden && (cluster?.connected ?? false),
+    enabled: showHidden && readable,
   });
   const hiddenPages = showHidden ? hidden.data?.pages : undefined;
   // The normal list stays the source of truth (SSE deltas patch it); pages add only the rows it lacks.
@@ -181,10 +199,13 @@ function ClusterPage() {
   const savedView = useViewPrefs().listView;
   const fluxPage = isFluxFilter(search.kind);
   const wanted = resolvePref(search.view, savedView, "grouped");
-  // The graph is a view of Flux pages; elsewhere a saved "graph" reads as grouped.
-  const listView: ListView = wanted === "graph" && !fluxPage ? "grouped" : wanted;
-  const graphMode = listView === "graph";
-  const grouped = listView !== "flat";
+  // The graph (and its outline) is a view of Flux pages; elsewhere a saved one reads as grouped.
+  const graphView = wanted === "graph" || wanted === "outline";
+  // A windowed list is flat: the hub sorts it by kind, without group headers or a graph.
+  const listView: ListView = windowed ? "flat" : graphView && !fluxPage ? "grouped" : wanted;
+  const graphMode = listView === "graph" || listView === "outline";
+  // A windowed list comes sorted by kind from the hub, without group headers.
+  const grouped = listView !== "flat" && !windowed;
   const viewSeg = useTabIndicator<HTMLFieldSetElement>(listView);
   // Rows deleted by a live delta stay for their exit animation; counts never include them.
   const motion = useClusterMotion(name);
@@ -194,16 +215,28 @@ function ClusterPage() {
     () => filterResources(shown, { text, kind: search.kind, status: search.status, namespace }),
     [shown, text, search.kind, search.status, namespace],
   );
-  const rows = useMemo(() => buildRows(filtered, grouped), [filtered, grouped]);
-  const filteredCount = motion.leaving.size
-    ? filtered.filter((r) => !motion.leaving.has(r.id)).length
-    : filtered.length;
+  const win = useWindowedList(
+    name,
+    { kind: search.kind, status: search.status, namespace, text },
+    readable && windowed,
+  );
+  const built = useMemo(() => buildRows(filtered, grouped), [filtered, grouped]);
+  const rows: ListRow[] = windowed ? win.rows : built;
+  const filteredCount = windowed
+    ? win.total
+    : motion.leaving.size
+      ? filtered.filter((r) => !motion.leaving.has(r.id)).length
+      : filtered.length;
   // Counts follow the kind filter, so "Failed 3" on Workloads means three failing workloads.
   const inKind = useMemo(
     () => filterResources(items, { kind: search.kind, namespace }),
     [items, search.kind, namespace],
   );
-  const counts = useMemo(() => statusCounts(inKind), [inKind]);
+  // Counts come first (ADR-0006): until the rows arrive, the chips and the total use the
+  // cluster's counts, which `/clusters` and the stream already carry.
+  const summary = data ? undefined : summaryCounts(cluster, { kind: search.kind, namespace });
+  const loaded = useMemo(() => statusCounts(inKind), [inKind]);
+  const counts = (windowed ? win.counts : undefined) ?? summary?.counts ?? loaded;
   const resourceRows = useMemo(
     () => rows.flatMap((r) => (r.type === "resource" && !motion.leaving.has(r.key) ? [r.resource] : [])),
     [rows, motion.leaving],
@@ -211,9 +244,15 @@ function ClusterPage() {
 
   const [selectedId, setSelectedId] = useState<string | undefined>(() => recallList(name).selectedId);
   // In the graph, any Flux object (or nothing, for a group node) can be selected.
-  const selected = graphMode
+  const picked = graphMode
     ? items.find((r) => r.id === selectedId)
     : (resourceRows.find((r) => r.id === selectedId) ?? resourceRows[0]);
+  // A row from the paged list carries the list columns only; its details load on selection.
+  const detail = useQuery({
+    ...objectQuery(name, picked ?? { group: "", kind: "", namespace: "", name: "" }),
+    enabled: partialRows && Boolean(picked),
+  });
+  const selected = partialRows && picked && detail.data?.id === picked.id ? detail.data : picked;
 
   useEffect(() => {
     setSelection({ cluster: name, resource: selected });
@@ -406,19 +445,36 @@ function ClusterPage() {
           }
         />
         <span className="ml-auto shrink-0 text-12-5 whitespace-nowrap text-ink-3" aria-live="polite">
-          <span className="max-sm:sr-only">
-            {filteredCount === items.length
-              ? `${items.length} resources`
-              : `${filteredCount} of ${items.length}`}
-          </span>
-          <span className="sm:hidden" aria-hidden="true">
-            {filteredCount === items.length ? items.length : `${filteredCount}/${items.length}`}
-          </span>
+          {windowed ? (
+            <span>{win.loading && !win.total ? "Counting…" : `${thousands(win.total)} resources`}</span>
+          ) : !data && isPending && readable ? (
+            summary ? (
+              <span>
+                <span className="max-sm:sr-only">{thousands(summary.total)} resources</span>
+                <span className="sm:hidden">{thousands(summary.total)}</span>
+              </span>
+            ) : (
+              <SkeletonText className="w-20" label="Counting resources" />
+            )
+          ) : (
+            <>
+              <span className="max-sm:sr-only">
+                {filteredCount === items.length
+                  ? `${items.length} resources`
+                  : `${filteredCount} of ${items.length}`}
+              </span>
+              <span className="sm:hidden" aria-hidden="true">
+                {filteredCount === items.length ? items.length : `${filteredCount}/${items.length}`}
+              </span>
+            </>
+          )}
         </span>
         <fieldset ref={viewSeg.list} className={`${SEG} m-0 shrink-0`}>
           <legend className="sr-only">View</legend>
           <TabIndicator ref={viewSeg.indicator} variant="pill" />
-          {VIEWS.filter(([v]) => v !== "graph" || fluxPage).map(([v, label, icon, short]) => (
+          {VIEWS.filter(([v]) =>
+            windowed ? v === "flat" : (v !== "graph" && v !== "outline") || fluxPage,
+          ).map(([v, label, icon, short]) => (
             <button
               type="button"
               key={v}
@@ -436,6 +492,18 @@ function ClusterPage() {
           ))}
         </fieldset>
       </div>
+      {!cluster.connected && cluster.stale && (
+        <div
+          className="flex shrink-0 items-center gap-2 rounded-tile border border-line bg-surface-sunken px-3 py-2 text-12-5 text-ink-2"
+          role="status"
+        >
+          <span className="size-2 shrink-0 rounded-full bg-off" />
+          <span>
+            <b className="font-semibold">Stale</b> · last seen {ago(cluster.lastSeen)}. This is the last view
+            the hub kept; actions are off until the agent reconnects.
+          </span>
+        </div>
+      )}
       {(namespace || hiddenTotal > 0) && (
         <div className="flex shrink-0 flex-wrap items-center gap-2.5">
           {namespace && (
@@ -486,6 +554,7 @@ function ClusterPage() {
           <div className="stale-able flex min-h-0 flex-1 flex-col" data-stale={!cluster.connected}>
             <ClusterGraph
               ref={graphRef}
+              outline={listView === "outline"}
               cluster={cluster}
               items={items}
               namespace={namespace}
@@ -505,10 +574,33 @@ function ClusterPage() {
             />
           </div>
         </Suspense>
-      ) : !cluster.connected && !data ? (
+      ) : !readable && !data ? (
         <Empty title={`${name} is disconnected`}>Resources appear when its agent reconnects.</Empty>
-      ) : isPending ? (
-        <Empty>Loading resources…</Empty>
+      ) : windowed ? (
+        win.loading && !win.total ? (
+          <SkeletonRows label={`Loading resources of ${name}`} />
+        ) : win.total === 0 ? (
+          <Empty title={search.filter ? `Nothing matches “${search.filter}”` : "Nothing here"}>
+            {search.filter || search.kind || search.status || namespace
+              ? "Press Esc to clear the filter."
+              : `${name} has no resources you can see.`}
+          </Empty>
+        ) : (
+          <ResourceList
+            ref={list}
+            grouped={false}
+            rows={rows}
+            selectedId={selected?.id}
+            onSelect={(r) => setSelectedId(r.id)}
+            onOpen={(r) => open(r)}
+            label={`${title} on ${name}`}
+            requested={requested}
+            stale={!cluster.connected}
+            onRange={win.onRange}
+          />
+        )
+      ) : mode === "probing" || (isPending && !listed) ? (
+        <SkeletonRows label={`Loading resources of ${name}`} />
       ) : error ? (
         <Empty title="Couldn't load resources" alert>
           {error.message}

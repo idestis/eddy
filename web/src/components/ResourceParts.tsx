@@ -258,7 +258,8 @@ export function factRows(cluster: string, r: Resource): Array<[string, ReactNode
   if (r.interval) rows.push(["Interval", r.interval]);
   if (r.schedule) rows.push(["Schedule", r.schedule]);
   if (r.inventory) rows.push(["Inventory", `${r.inventory} objects`]);
-  if (r.replicas) rows.push(["Replicas", `${r.replicas} ready`]);
+  if (r.replicas)
+    rows.push(r.kind === "Pod" ? ["Containers ready", r.replicas] : ["Replicas", `${r.replicas} ready`]);
   if (r.completions) rows.push(["Completions", `${r.completions} succeeded`]);
   if (r.images?.length) rows.push([r.images.length > 1 ? "Images" : "Image", r.images.join("\n")]);
   if (r.containers?.length) rows.push(["Containers", r.containers.join(", ")]);

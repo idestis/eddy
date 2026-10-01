@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { ClusterInfo } from "../api/types";
 import { resource } from "../test/fixtures";
-import { buildRows, filterResources, needsAttention, statusCounts } from "./resourceRows";
+import { buildRows, filterResources, needsAttention, statusCounts, summaryCounts } from "./resourceRows";
 
 const items = [
   resource("apps", { status: "failed", message: "Health check failed" }),
@@ -109,5 +110,31 @@ describe("completed rows", () => {
 describe("namespace filter", () => {
   it("keeps one namespace", () => {
     expect(filterResources(items, { namespace: "apps" }).map((r) => r.name)).toEqual(["podinfo", "web-1"]);
+  });
+});
+
+describe("summaryCounts", () => {
+  const cluster = {
+    name: "prod",
+    counts: { ready: 4, failed: 1, reconciling: 2, completed: 3 },
+    kinds: { HelmRelease: { ready: 1, failed: 1 }, Job: { completed: 3, reconciling: 2 }, Pod: { ready: 3 } },
+  } as unknown as ClusterInfo;
+
+  it("gives the total and chips from the cluster's counts before any row loads", () => {
+    expect(summaryCounts(cluster, {})).toEqual({
+      total: 10,
+      counts: { attention: 3, failed: 1, reconciling: 2, suspended: 0, completed: 3 },
+    });
+  });
+
+  it("narrows by a nav filter through the per-kind counts", () => {
+    expect(summaryCounts(cluster, { kind: "Job" })?.total).toBe(5);
+    expect(summaryCounts(cluster, { kind: "HelmRelease" })?.counts.failed).toBe(1);
+  });
+
+  it("is unknown with a namespace filter, pending counts, or no per-kind counts", () => {
+    expect(summaryCounts(cluster, { namespace: "apps" })).toBeUndefined();
+    expect(summaryCounts({ ...cluster, countsPending: true }, {})).toBeUndefined();
+    expect(summaryCounts({ ...cluster, kinds: undefined }, { kind: "Job" })).toBeUndefined();
   });
 });

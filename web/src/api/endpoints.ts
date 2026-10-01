@@ -5,6 +5,7 @@ import { request, seg } from "./client";
 import type {
   AskAttachment,
   AskResponse,
+  AttentionResponse,
   AuditEvent,
   ClusterInfo,
   ClusterInput,
@@ -14,6 +15,7 @@ import type {
   CreatedToken,
   Finding,
   GraphResponse,
+  IndexPage,
   IssuedJoinToken,
   JobsSnapshot,
   KindsResponse,
@@ -28,6 +30,7 @@ import type {
   Resource,
   ResourceRef,
   ResourceSnapshot,
+  SearchResponse,
   Thread,
   ThreadDetail,
   ThreadStatus,
@@ -41,6 +44,14 @@ export const objectPath = (cluster: string, r: Pick<Ref, "kind" | "namespace" | 
   `${V1}/clusters/${seg(cluster)}/objects/${seg(r.kind)}/${seg(r.namespace)}/${seg(r.name)}`;
 
 export const streamUrl = `${V1}/stream`;
+
+/**
+ * The stream URL for a watch set (ADR-0006): full deltas for these clusters only, `counts`
+ * and `attention` for the rest. An empty set still sends `watch=` so a new hub streams no
+ * deltas at all (the fleet page); an older hub ignores the parameter and streams everything.
+ */
+export const streamUrlFor = (watch: readonly string[]): string =>
+  `${streamUrl}?watch=${watch.map(encodeURIComponent).join(",")}`;
 
 export const logsUrl = (cluster: string, namespace: string, pod: string): string =>
   `${V1}/clusters/${seg(cluster)}/pods/${seg(namespace)}/${seg(pod)}/logs`;
@@ -71,6 +82,25 @@ export const putPrefs = (data: Prefs) =>
 export const getClusters = () => request<List<ClusterInfo>>(`${V1}/clusters`);
 export const getResources = (cluster: string, signal?: AbortSignal) =>
   request<ResourceSnapshot>(`${V1}/clusters/${seg(cluster)}/resources`, { signal });
+export interface IndexQuery {
+  kind?: string;
+  status?: string;
+  namespace?: string;
+  q?: string;
+  sort?: "kind" | "status" | "name" | "changed";
+  offset?: number;
+  cursor?: string;
+  limit?: number;
+}
+/**
+ * One page of a cluster's list (`view=index`, ADR-0006). A hub that does not page ignores the
+ * parameters and answers the whole snapshot, which has no `total`.
+ */
+export const getIndexPage = (cluster: string, q: IndexQuery, signal?: AbortSignal) =>
+  request<IndexPage | ResourceSnapshot>(`${V1}/clusters/${seg(cluster)}/resources`, {
+    query: { view: "index", ...q },
+    signal,
+  });
 export interface GraphQuery {
   kinds: "flux" | "all";
   focus?: string;
@@ -89,6 +119,20 @@ export const getJobsWithHidden = (
     query: { kind: "Job", includeHidden: 1, ...q },
     signal,
   });
+export interface SearchQuery {
+  q: string;
+  scope: "fleet" | "cluster";
+  /** With scope "cluster" the cluster to search; with "fleet" the current one, for the tiebreak. */
+  cluster?: string;
+  kind?: string;
+  limit?: number;
+}
+/** Server-side palette search (docs/api.md "Search and attention"). */
+export const search = (q: SearchQuery, signal?: AbortSignal) =>
+  request<SearchResponse>(`${V1}/search`, { query: { ...q }, signal });
+/** Rows that need attention, across the fleet when `cluster` is empty. */
+export const getAttention = (cluster: string | undefined, signal?: AbortSignal) =>
+  request<AttentionResponse>(`${V1}/attention`, { query: { cluster: cluster || undefined }, signal });
 export const getFindings = (cluster: string) =>
   request<List<Finding>>(`${V1}/clusters/${seg(cluster)}/findings`);
 export const getKinds = (cluster: string, signal?: AbortSignal) =>

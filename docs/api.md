@@ -36,7 +36,7 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
 - **Rate limits** are global across hub replicas: login, MCP calls, logs and writes, thread writes, and the Ask AI hourly quota. Concurrency caps are per replica: SSE streams, log streams, MCP in-flight requests and Ask AI concurrency.
 - **Unknown routes:** an unknown `/api` route returns a 404 JSON body, or 401 when the caller is not signed in.
 - **Compression (ADR-0006):** `GET` responses under `/api/v1/` are gzipped (level 5; level 1 with a flush per event for SSE) when the request sends `Accept-Encoding: gzip` and the body is at least 1 KiB. They carry `Vary: Accept-Encoding`. To rule out BREACH, these are never compressed: `/auth/*`, `GET /api/v1/me` (CSRF token), `/api/v1/tokens*` (PATs), `…/join-token`, `…/connection`, pod and workload logs, `/api/v1/ai/*` and `/mcp`.
-- **ETags (ADR-0006):** `GET /api/v1/clusters`, `…/resources` (without `includeHidden`), `…/kinds`, `…/graph`, `/api/v1/attention` and `/api/v1/threads` return a weak `ETag` and `Cache-Control: private, no-cache`. `If-None-Match` with a current value gets `304` with no body and no filtering. The ETag covers the data version, the user and their exact groups, the query and a 45 s time bucket, so a validator never crosses users and a permission change takes effect within 90 s (the SAR cache's own bound). Thread lists hash their body instead.
+- **ETags (ADR-0006):** `GET /api/v1/clusters`, `…/resources` (without `includeHidden`; `view=index` pages too), `…/kinds`, `…/graph`, `/api/v1/attention` and `/api/v1/threads` return a weak `ETag` and `Cache-Control: private, no-cache`. `If-None-Match` with a current value gets `304` with no body and no filtering. The ETag covers the data version, the user and their exact groups, the query and a 45 s time bucket, so a validator never crosses users and a permission change takes effect within 90 s (the SAR cache's own bound). Thread lists hash their body instead.
 
 ## Session
 
@@ -71,6 +71,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | `GET /api/v1/search?q=&scope=fleet\|cluster&cluster=&limit=` | Server-side palette search; see [Search and attention](#search-and-attention). |
 | `GET /api/v1/attention?cluster=&limit=` | Rows that need attention and warning findings; see [Search and attention](#search-and-attention). |
 | `GET /api/v1/clusters/{c}/resources?kind=&namespace=&status=&q=` | `{items: Resource[], resourceVersion}`, RBAC-filtered snapshot. `kind` may repeat or be comma-separated. A kind outside the table (for example `ConfigMap`) matches inventory-only rows by exact name; a malformed kind or an unknown status gives 400. `resourceVersion` is an opaque hub counter. Finished Jobs the agent hides are not in it; see [Jobs](#jobs-completed-status-hidden-jobs-and-findings). |
+| `GET …/resources?view=index&kind=&status=&namespace=&q=&sort=&order=&offset=\|cursor=&limit=` | One page of index rows with `total` and `facets`, filtered, sorted and paged on the hub; see [Index lists](#index-lists-viewindex). Without `view` (or with `view=full`) the response above is unchanged. |
 | `GET …/resources?kind=Job&includeHidden=1&namespace=&limit=&cursor=` | `{items, resourceVersion, hidden: {total, next?}}`. Without `cursor`: the listed Jobs plus the first page of hidden ones. With `cursor=hidden.next`: hidden Jobs only (`resourceVersion` is `""`). `limit` is 1–1000 (default 500) hidden Jobs per page. `includeHidden` without `kind=Job` gives 400. |
 | `GET /api/v1/clusters/{c}/findings` | `{items: Finding[]}`, the cluster's findings the user may see. The same list is `ClusterInfo.findings`. |
 | `GET /api/v1/clusters/{c}/kinds` | `{items: KindInfo[], projects: Project[], presets: string[]}` for navigation; see [Kinds and projects](#kinds-and-projects). |
@@ -87,16 +88,19 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 
 ### Search and attention
 
-`GET /api/v1/search?q=&scope=fleet|cluster&cluster=&limit=` ranks the rows the user may list
+`GET /api/v1/search?q=&scope=fleet|cluster&cluster=&kind=&limit=` ranks the rows the user may list
 the way the command palette does (`internal/hub/fuzzy.go` ports `web/src/lib/fuzzy.ts`; both
 pass `testdata/search_cases.json`). The name is the primary field; namespace, kind, kind
 abbreviation and cluster are secondary, in that order. Equal tiers are ordered failing first,
 then the `cluster=` cluster first.
 
 - `scope` is `fleet` (the default, every cluster; `cluster` only names the current one for the tiebreak) or `cluster` (needs `cluster`).
+- `kind` keeps only rows of these kinds: comma-separated or repeated, at most 32, case-insensitive for kinds of the table (inventory-only kinds such as `ConfigMap` work too); an invalid kind name is a 400.
+- Every row the user may list is searchable, inventory-only rows included, so the palette finds names in clusters it does not watch.
 - `limit` defaults to 30, at most 100. `q` is at most 128 characters and 8 terms; an empty `q` returns no items.
 - Response: `{items: [{cluster, resource: Resource, match: {score, primary: [[start, end]], secondary: [[[start, end]] ×4]}, stale?}], partial: [cluster]}`. Ranges are byte offsets, which equal the UTF-16 offsets of `fuzzy.ts` for Kubernetes names. `partial` lists clusters that were skipped because their scan took over 150 ms or their access checks failed.
 - At most 2 searches in flight per user, beyond that 429.
+- Cluster scans share the hub replica's scan slots (half its CPUs) with every other search. A search that cannot start scanning a cluster within 300 ms of its start, or whose scan of one cluster takes over 150 ms, lists that cluster in `partial` and returns what it has.
 
 `GET /api/v1/attention?cluster=&limit=` (every cluster when `cluster` is empty): rows that are
 `failed`, or Flux objects that are `reconciling` or `suspended`, that the user may list,
@@ -105,6 +109,69 @@ plus the warning findings they may see.
 - Response: `{items: [{cluster, resource, stale?}], total, findings: [{cluster, finding, stale?}], partial: [cluster]}`.
 - Items are sorted failed, reconciling, suspended, then most recently changed. `limit` defaults to 200, at most 1000; `total` counts before the limit. Findings are not capped.
 
+### Index lists (`view=index`)
+
+`GET /api/v1/clusters/{c}/resources?view=index` returns one page of compact rows (about 200 B
+each) for a list that renders before the cluster's full summaries load (ADR-0006 P2). The full
+summary of a row stays at `GET …/objects/{kind}/{ns}/{name}`.
+
+- **Filters:** `kind` (comma-separated or repeated, at most 32, as for the full list), `status`
+  (comma-separated or repeated), `namespace` (one), `q` (at most 256 characters; an ASCII
+  case-insensitive substring of the kind, namespace, name, message or revision).
+- **Sort:** `sort` is `kind` (the default: kind, namespace, name), `name` (name, namespace,
+  kind), `status` (failed, reconciling, suspended, unknown, ready, completed, inventory-only
+  rows last; then kind, namespace, name) or `age` (most recently changed first; then kind,
+  namespace, name). `order=desc` reverses the whole order.
+- **Paging:** `limit` is 1–1000 (default 200). Either `offset` (0-based, random access for a
+  windowed list) or `cursor` (the `next` of the previous page, keyset, for sequential reads),
+  not both. A cursor belongs to its `sort` and `order` (another gives 400); filters may change
+  between pages.
+- **Response:**
+
+```json
+{
+  "items": [
+    {"id": "helm.toolkit.fluxcd.io/HelmRelease/apps/podinfo", "group": "helm.toolkit.fluxcd.io",
+     "kind": "HelmRelease", "namespace": "apps", "name": "podinfo", "status": "failed",
+     "blocked": true, "message": "≤ 160 characters", "revision": "main@sha1:0123456789ab",
+     "replicas": "2/3", "completions": "1/1",
+     "owner": {"group": "kustomize.toolkit.fluxcd.io", "kind": "Kustomization", "namespace": "flux-system", "name": "apps"},
+     "project": "flux", "inventoryOnly": true, "lastChanged": "2026-10-01T10:00:00Z"}
+  ],
+  "total": 15210,
+  "offset": 0,
+  "next": "eyJzIjoia2luZCIs…",
+  "facets": {
+    "kinds": {"HelmRelease": 120, "Job": 14200},
+    "statuses": {"ready": 15000, "failed": 210},
+    "namespaces": [{"name": "batch", "n": 14000}, {"name": "apps", "n": 300}]
+  },
+  "resourceVersion": "48211",
+  "stale": true
+}
+```
+
+  - Fields marked optional above are left out when empty. `message` is cut to 160
+    characters; `revision` keeps 12 digits of its digest and at most 64 bytes; `lastChanged`
+    is the creation time when the row never changed.
+  - `total` counts the rows that match the filters; `offset` is present unless the page was
+    read by cursor; `next` is absent on the last page.
+  - `facets` count the matching rows while ignoring the facet's own filter: `kinds` ignores
+    `kind`, `statuses` ignores `status`, `namespaces` ignores `namespace` (the 50 largest,
+    largest first; cluster-scoped rows are not in it). `q` applies to all of them.
+- **RBAC:** rows, `total` and every facet cover only the rows the user may list (the same rule
+  as the full list), so a facet never reveals a namespace or kind the user cannot see.
+- **Consistency:** each page is read from the view as it is at that request.
+  - A cursor walk returns exactly once every row that exists for the whole walk and whose sort
+    key does not change. Rows added, deleted or re-keyed meanwhile (a status change under
+    `sort=status`, any change under `sort=age`) may be missed or returned twice; clients key
+    rows by `id` and apply SSE `change` events on top.
+  - `offset` pages shift when rows before them are added or deleted.
+- **Validators:** like the full list, a weak `ETag` per view version, user, query and 45 s
+  bucket; `If-None-Match` gives 304.
+- `includeHidden` does not apply (400); a bad `view`, `sort`, `order`, `status`, `offset`,
+  `limit` or `cursor` is 400.
+
 ### Disconnected clusters (stale views)
 
 When a cluster loses its agent, the hub keeps its last complete view in memory (after the 5 s
@@ -112,9 +179,9 @@ failover grace with several replicas) and serves reads from it, marked stale. A 
 agent replaces it in place once its snapshot is complete, so the rows never blink empty.
 
 - `ClusterInfo` has `connected: false`, `stale: true` and `lastSeen`.
-- `…/resources`, `…/kinds`, `…/findings` and `…/children` bodies say `stale: true`; every read from a stale view, `…/objects/…` included, has the header `X-Eddy-Stale: true`; search and attention items say `stale: true`.
+- `…/resources` (both views), `…/kinds`, `…/findings` and `…/children` bodies say `stale: true`; every read from a stale view, `…/objects/…` included, has the header `X-Eddy-Stale: true`; search and attention items say `stale: true`.
 - Writes, YAML, events and logs return 503 `disconnected`.
-- No agent can answer access checks meanwhile. A cached answer the user already had stays usable for 10 minutes after it expired; any other read fails closed (503 `disconnected`). A change of the user's groups is a new subject and gets nothing.
+- No agent can answer access checks meanwhile. A cached answer the user already had (a SubjectAccessReview or a rules review) stays usable for `auth.staleAccessTTL` (default 2 minutes, at most 10) after the agent disconnected, and only if it expired at most that long ago; `0` fails closed at once. Any other read fails closed (503 `disconnected`). A change of the user's groups is a new subject and gets nothing.
 - Stale views are bounded to 1,000,000 rows per hub replica; the oldest is evicted first. A cluster removed from the registry loses its stale view.
 
 ### Resource fields and inventory-only rows
@@ -382,18 +449,35 @@ Access and limits:
 
 ## Live updates: `GET /api/v1/stream` (SSE)
 
-| Event | Data |
-|---|---|
-| `hello` | `{}` |
-| `clusters` | `{items: ClusterInfo[]}` when connection state, counts or findings change (at most once a second). Items carry `kinds` and `stale` like `GET /api/v1/clusters`. |
-| `change` | `{cluster, upserts: Resource[], deletes: string[]}`, filtered per user |
-| `resync` | `{cluster}`: the client refetches that cluster's resources |
-| `thread` | `{threadId, ref}`: a thread the user can see changed |
-| `connection` | `{cluster}`: that cluster's onboarding or connection state changed. Refetch `…/connection`. |
+`GET /api/v1/stream?watch=<cluster>[,<cluster>…]` opens a **scoped** stream (ADR-0006 P2): full
+`change` events only for the watched clusters, and light `counts` and `attention` events for
+every cluster. To change the watch set, the client reconnects with the new `watch=`; there is no
+subscription request, so it works on any replica.
 
+- `watch` names at most 5 clusters (duplicates count once; repeat the parameter or separate with commas), beyond that 400 `bad_request`. Names are `[A-Za-z0-9._-]`, at most 253 characters, else 400. Unknown names are accepted and ignored until such a cluster exists.
+- `watch=` with no value is a scoped stream that watches nothing: counts, attention and the rest, but no `change` events (the fleet page).
+- There is no `since=`: right after `clusters`, a scoped stream sends `resync {cluster}` for each watched, registered cluster, so changes between the client's fetch and the stream are never lost. Open the stream before (or refetch on `hello`) fetching `/attention`.
+
+| Event | Stream | Data |
+|---|---|---|
+| `hello` | all | `{}` |
+| `clusters` | all | `{items: ClusterInfo[]}` (at most once a second). Items carry `kinds`, `findings` and `stale` like `GET /api/v1/clusters`. Unscoped: when connection state, counts or findings change. Scoped: on connect, and when connection state, the cluster set or a snapshot changes; never for counts or findings alone. |
+| `change` | unscoped: every cluster; scoped: watched clusters | `{cluster, upserts: Resource[], deletes: string[]}`, filtered per user |
+| `counts` | scoped | `{cluster, counts: {status: n}, kinds: {Kind: {status: n}}}`: the user's counts for one cluster, the same values as that cluster's `ClusterInfo.counts` and `kinds` (both replace the client's copy). At most one per cluster per second, and only when they differ from what the stream last sent (including in `clusters`). |
+| `attention` | scoped | `{cluster, upserts: Resource[], deletes: string[], findings?: Finding[]}`, filtered per user with the list rule. `upserts` are rows that now need attention (new, or changed while still in the set), `deletes` are ids that left it (healed or deleted). `findings`, when present, replaces the cluster's visible findings (all severities, like `ClusterInfo.findings`); such an event has empty `upserts` and `deletes`, comes at most once per cluster per second and only on change. Sent for watched clusters too. |
+| `resync` | all | `{cluster}`: the client refetches what it holds of that cluster: its resources when watched (or always, unscoped), and on a scoped stream `GET /api/v1/attention?cluster=` for an unwatched one. |
+| `thread` | all | `{threadId, ref}`: a thread the user can see changed |
+| `connection` | all | `{cluster}`: that cluster's onboarding or connection state changed. Refetch `…/connection`. |
+
+"Needs attention" is the rule of [`GET /api/v1/attention`](#search-and-attention): `failed`, or a
+Flux kind that is `reconciling` or `suspended`; inventory-only rows never are. A scoped client
+keeps the fleet's attention set from one `GET /api/v1/attention` plus `attention` events, and the
+counts from `clusters` plus `counts` events.
+
+- **Deprecated:** without `watch` the stream keeps the pre-P2 behaviour, every cluster's `change` events and no `counts` or `attention`. It stays for one release (v1.1) and then becomes `watch=` with no value. The web UI always sends `watch`.
 - **Keepalive:** the hub sends a comment line every 20 s. Clients treat 45 s without data as a dead stream and reconnect with backoff.
 - **On connect:** a `clusters` event follows `hello` straight away.
-- **Slow clients** get `resync` for every cluster instead of the missed deltas.
+- **Slow clients** get `resync` for every cluster instead of the missed events.
 - **Disconnects:** when an agent disconnects, clients get `resync {cluster}`; the refetch returns the stale view while the hub keeps one.
 - **Snapshots:** `resync {cluster}` for a (re)connected agent is sent only once its whole snapshot has arrived, never after the first chunk.
 - **Compression:** the stream is gzipped (level 1, flushed per event) when the request accepts gzip.

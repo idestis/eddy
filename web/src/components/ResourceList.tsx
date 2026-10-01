@@ -15,7 +15,7 @@ import type { Resource } from "../api/types";
 import { age, listMessage, revisionOf, revisionTitle } from "../lib/format";
 import { kindHeading, kindInfo } from "../lib/kinds";
 import { type ClusterMotion, NO_MOTION, type Requested } from "../lib/liveMotion";
-import type { Row } from "../lib/resourceRows";
+import type { ListRow } from "../lib/resourceRows";
 import { Icon } from "./Icon";
 import { RequestedBadge, StatusPill } from "./Status";
 
@@ -49,19 +49,27 @@ export interface Columns {
 
 /**
  * Picks the columns for the rows on screen and the list's width. Kind is dropped when
- * rows are grouped by kind (the group header says it); Replicas appears only for
- * workloads; the version column is "Image" for workloads and "Revision" for Flux objects.
+ * rows are grouped by kind (the group header says it). The ready column appears for
+ * workloads, Pods and Jobs and is labelled for what it counts: "Replicas" for workloads,
+ * "Containers" for Pods (ready containers, as kubectl's READY), "Done" for Jobs, and
+ * "Ready" when kinds are mixed. The version column is "Image" for workloads and
+ * "Revision" for Flux objects.
  */
-export function pickColumns(rows: readonly Row[], grouped: boolean, width: number): Columns {
+export function pickColumns(rows: readonly ListRow[], grouped: boolean, width: number): Columns {
   let replicas = false;
   let completions = false;
+  let podReady = false;
+  let workloadReady = false;
   let workloads = 0;
   let flux = 0;
   for (const row of rows) {
     if (row.type !== "resource") continue;
     const r = row.resource;
-    if (r.replicas) replicas = true;
-    else if (r.completions) completions = true;
+    if (r.replicas) {
+      replicas = true;
+      if (r.kind === "Pod") podReady = true;
+      else workloadReady = true;
+    } else if (r.completions) completions = true;
     const info = kindInfo(r.kind);
     if (info.workload) workloads++;
     else if (info.flux) flux++;
@@ -74,7 +82,13 @@ export function pickColumns(rows: readonly Row[], grouped: boolean, width: numbe
   if (width >= 820) ids.push("version");
   if (width >= 460) ids.push("age");
   const versionLabel = workloads && !flux ? "Image" : flux && !workloads ? "Revision" : "Version";
-  const replicasLabel = replicas ? "Replicas" : "Done";
+  const replicasLabel = !replicas
+    ? "Done"
+    : completions || (podReady && workloadReady)
+      ? "Ready"
+      : podReady
+        ? "Containers"
+        : "Replicas";
   return { ids, template: ids.map((id) => TRACKS[id]).join(" "), versionLabel, replicasLabel };
 }
 
@@ -89,7 +103,7 @@ const HEADER: Record<ColumnId, string> = {
 };
 
 interface ResourceListProps {
-  rows: Row[];
+  rows: ListRow[];
   grouped: boolean;
   selectedId: string | undefined;
   onSelect: (r: Resource) => void;
@@ -102,6 +116,8 @@ interface ResourceListProps {
   requested?: ReadonlyMap<string, Requested>;
   /** The cluster is disconnected: the rows are its last known state. */
   stale?: boolean;
+  /** The rows on screen (first and last index) changed: a windowed list loads their pages. */
+  onRange?: (start: number, end: number) => void;
 }
 
 export interface ResourceListHandle {
@@ -269,6 +285,7 @@ export function ResourceList({
   motion = NO_MOTION,
   requested,
   stale = false,
+  onRange,
 }: ResourceListProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -287,6 +304,13 @@ export function ResourceList({
   // Rows glide to new places only around live inserts, removals and re-sorts, never
   // when a filter or a scroll moves them.
   const settling = motion.settleUntil > Date.now();
+
+  const items = virtualizer.getVirtualItems();
+  const first = items[0]?.index ?? 0;
+  const last = items[items.length - 1]?.index ?? 0;
+  useEffect(() => {
+    onRange?.(first, last);
+  }, [onRange, first, last]);
 
   const selectedIndex = selectedId ? rows.findIndex((r) => r.key === selectedId) : -1;
   useEffect(() => {
@@ -319,7 +343,7 @@ export function ResourceList({
         aria-activedescendant={selectedId && selectedIndex >= 0 ? rowDomId(selectedId) : undefined}
       >
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-          {virtualizer.getVirtualItems().map((v) => {
+          {items.map((v) => {
             const row = rows[v.index];
             if (!row) return null;
             return (
@@ -328,7 +352,13 @@ export function ResourceList({
                 className={`absolute top-0 left-0 w-full px-1 ${settling ? "glide" : ""}`}
                 style={{ height: v.size, transform: `translateY(${v.start}px)` }}
               >
-                {row.type === "group" ? (
+                {row.type === "placeholder" ? (
+                  <div className="flex h-full items-center gap-3 px-3" aria-hidden="true">
+                    <span className="skeleton size-4 shrink-0 rounded-full" />
+                    <span className="skeleton h-3 w-[40%] rounded" />
+                    <span className="skeleton ml-auto h-3 w-14 rounded" />
+                  </div>
+                ) : row.type === "group" ? (
                   <div
                     className="flex h-full items-center gap-2 px-3 pt-2.5 pb-1 text-12 font-semibold text-ink-3"
                     role="presentation"

@@ -3,7 +3,16 @@
 // - LineageGraph: the detail page's "Manages" graph: upstream on the left, the object in
 //   the middle, dependents and owned inventory (collapsed per kind) on the right.
 
-import { type Ref, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ClusterInfo, GraphResponse, Resource } from "../../api/types";
 import {
   collapseOwned,
@@ -14,7 +23,6 @@ import {
   MAX_HOPS,
   SUGGEST_FOCUS_OVER,
 } from "../../lib/graph";
-import { kindInfo } from "../../lib/kinds";
 import { filterResources, type StatusFilter } from "../../lib/resourceRows";
 import { useGraph } from "../../lib/useGraph";
 import type { useResourceActions } from "../../lib/useResourceActions";
@@ -24,7 +32,7 @@ import { Icon } from "../Icon";
 import { SEG, SEG_BTN } from "../SidePanel";
 import { KeyHint } from "../Status";
 import type { GraphHandle } from "./GraphCanvas";
-import { GraphView } from "./GraphView";
+import { type GraphMeta, GraphView, metaText } from "./GraphView";
 
 type Actions = ReturnType<typeof useResourceActions>;
 
@@ -67,10 +75,13 @@ export function ClusterGraph({
   onOpen,
   onEscape,
   actions,
+  outline = false,
   ref,
 }: {
   cluster: ClusterInfo;
   items: readonly Resource[];
+  /** The Outline view of the list page: the same graph as steps. */
+  outline?: boolean;
   namespace?: string;
   status?: StatusFilter;
   text: string;
@@ -180,6 +191,54 @@ export function ClusterGraph({
   const selected = selectedId ? byId.get(selectedId) : undefined;
   const big = !focus && graph.nodes.length > SUGGEST_FOCUS_OVER;
 
+  const graphToolbar = focus ? (
+    <>
+      <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-c/50 bg-c-soft px-[11px] text-12-5 text-ink">
+        <Icon name="focus" className="size-3.5 text-c" />
+        Focus <span className="font-mono font-medium">{focusName}</span>
+        <button
+          type="button"
+          className="-mr-1 inline-flex size-5 items-center justify-center rounded-full text-ink-3 hover:bg-surface-sunken hover:text-ink"
+          aria-label="Show the whole graph"
+          title="Show the whole graph (Esc)"
+          onClick={() => setFocus(undefined)}
+        >
+          <Icon name="x" className="size-3" />
+        </button>
+      </span>
+      <Hops hops={hops} onChange={(n) => setViewPrefs({ graphHops: n })} />
+    </>
+  ) : (
+    <button
+      type="button"
+      className={CHIP}
+      disabled={!selected}
+      onClick={() => selected && toggleFocus(selected.id)}
+      title="Show the selected object and its neighbours only"
+    >
+      <Icon name="focus" className="size-3.5" />
+      Focus
+      <KeyHint id="graphFocus" />
+    </button>
+  );
+  const notice = big ? (
+    <div className="flex shrink-0 items-center gap-2.5 rounded-tile border border-attn/40 bg-attn/8 px-3 py-2 text-12-5 text-ink-2">
+      <Icon name="info" className="size-4 text-attn" />
+      <span className="flex-1">
+        {graph.nodes.length} objects is a lot to read at once. Focus on one to see it and its {hops}-hop
+        neighbourhood.
+      </span>
+      <button
+        type="button"
+        className={CHIP}
+        disabled={!selected}
+        onClick={() => selected && toggleFocus(selected.id)}
+      >
+        {selected ? `Focus on ${selected.name}` : "Select a node to focus"}
+      </button>
+    </div>
+  ) : undefined;
+
   return (
     <GraphView
       ref={view}
@@ -204,57 +263,23 @@ export function ClusterGraph({
         return onEscape?.() ?? false;
       }}
       dimmed={dimmed}
-      toolbar={
-        focus ? (
-          <>
-            <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-c/50 bg-c-soft px-[11px] text-12-5 text-ink">
-              <Icon name="focus" className="size-3.5 text-c" />
-              Focus <span className="font-mono font-medium">{focusName}</span>
-              <button
-                type="button"
-                className="-mr-1 inline-flex size-5 items-center justify-center rounded-full text-ink-3 hover:bg-surface-sunken hover:text-ink"
-                aria-label="Show the whole graph"
-                title="Show the whole graph (Esc)"
-                onClick={() => setFocus(undefined)}
-              >
-                <Icon name="x" className="size-3" />
-              </button>
-            </span>
-            <Hops hops={hops} onChange={(n) => setViewPrefs({ graphHops: n })} />
-          </>
-        ) : (
-          <button
-            type="button"
-            className={CHIP}
-            disabled={!selected}
-            onClick={() => selected && toggleFocus(selected.id)}
-            title="Show the selected object and its neighbours only"
+      outline={outline}
+      header={(meta) => (
+        // One line: Focus controls on the left, the graph's size on the right (into the
+        // Focus chip's tooltip once the bar is narrow). The view switch is in the list toolbar.
+        <div className="@container shrink-0">
+          <div
+            className="flex min-h-8 min-w-0 items-center gap-2 text-12-5 text-ink-3"
+            title={metaText(meta)}
           >
-            <Icon name="focus" className="size-3.5" />
-            Focus
-            <KeyHint id="graphFocus" />
-          </button>
-        )
-      }
-      notice={
-        big ? (
-          <div className="flex shrink-0 items-center gap-2.5 rounded-tile border border-attn/40 bg-attn/8 px-3 py-2 text-12-5 text-ink-2">
-            <Icon name="info" className="size-4 text-attn" />
-            <span className="flex-1">
-              {graph.nodes.length} objects is a lot to read at once. Focus on one to see it and its {hops}-hop
-              neighbourhood.
+            {graphToolbar}
+            <span className="ml-auto whitespace-nowrap tabular-nums @max-md:hidden" aria-live="polite">
+              {metaText(meta)}
             </span>
-            <button
-              type="button"
-              className={CHIP}
-              disabled={!selected}
-              onClick={() => selected && toggleFocus(selected.id)}
-            >
-              {selected ? `Focus on ${selected.name}` : "Select a node to focus"}
-            </button>
           </div>
-        ) : undefined
-      }
+        </div>
+      )}
+      notice={notice}
     />
   );
 }
@@ -267,6 +292,8 @@ export function LineageGraph({
   onSelect,
   onOpen,
   actions,
+  outline = false,
+  header,
 }: {
   cluster: ClusterInfo;
   root: Resource;
@@ -275,6 +302,12 @@ export function LineageGraph({
   onSelect: (id: string) => void;
   onOpen: (r: Pick<Resource, "kind" | "namespace" | "name" | "group">) => void;
   actions: Actions;
+  outline?: boolean;
+  /**
+   * The section's one-line header (the page owns its title and view switch), given the
+   * graph's size once known and this graph's extra controls.
+   */
+  header: (meta: GraphMeta | undefined, extra: ReactNode) => ReactNode;
 }) {
   const {
     graph: full,
@@ -301,20 +334,47 @@ export function LineageGraph({
 
   if (error && !graph) {
     return (
-      <Empty title="Couldn't load the graph" alert>
-        {error.message}
-      </Empty>
+      <>
+        {header(undefined, null)}
+        <Empty title="Couldn't load the graph" alert>
+          {error.message}
+        </Empty>
+      </>
     );
   }
-  if (!graph) return <Empty>{loading ? "Loading the graph…" : "No graph"}</Empty>;
+  if (!graph) {
+    return (
+      <>
+        {header(undefined, null)}
+        <Empty>{loading ? "Loading the graph…" : "No graph"}</Empty>
+      </>
+    );
+  }
   if (graph.nodes.length <= 1) {
     return (
-      <p className="text-ink-3">
-        {root.name} has no dependencies, sources or managed objects that Eddy knows about.
-      </p>
+      <>
+        {header(undefined, null)}
+        <p className="text-ink-3">
+          {root.name} has no dependencies, sources or managed objects that Eddy knows about.
+        </p>
+      </>
     );
   }
-  const flux = kindInfo(root.kind).flux;
+  const collapse =
+    expanded.size > 0 ? (
+      <button
+        type="button"
+        className={CHIP}
+        onClick={() => setExpanded(new Set())}
+        aria-label="Collapse groups"
+        title="Collapse groups"
+      >
+        <Icon name="layers" className="size-3.5" />
+        <span className="@max-lg:sr-only" aria-hidden="true">
+          Collapse groups
+        </span>
+      </button>
+    ) : null;
   return (
     <GraphView
       className="h-[480px] flex-none"
@@ -333,19 +393,8 @@ export function LineageGraph({
         if (n?.name && !n.missing)
           onOpen({ kind: n.kind, namespace: n.namespace, name: n.name, group: n.group });
       }}
-      toolbar={
-        <>
-          <span>
-            {flux ? "Upstream ← this object → downstream" : "Owners ← this object → what it manages"}
-          </span>
-          {expanded.size > 0 && (
-            <button type="button" className={CHIP} onClick={() => setExpanded(new Set())}>
-              <Icon name="layers" className="size-3.5" />
-              Collapse groups
-            </button>
-          )}
-        </>
-      }
+      outline={outline}
+      header={(meta) => header(meta, collapse)}
     />
   );
 }

@@ -1,7 +1,7 @@
 /*
  * The web app's stylesheet. Components style themselves with Tailwind utilities; this
  * file holds only the shared tokens, the app's own theme additions, base element styles
- * and the few components that read better as CSS (buttons, keycaps, Markdown, cmdk).
+ * and the few components that read better as CSS (buttons, keycaps, Markdown, the palette).
  * Tailwind compiles it to one static file, so it is safe under the strict CSP.
  */
 @import "tailwindcss";
@@ -417,30 +417,25 @@
     }
   }
 
-  /* cmdk renders these parts; they have no className hooks of their own. */
-  .palette [cmdk-root] {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-  .palette [cmdk-list] {
+  /* The command palette's listbox (components/CommandPalette.tsx). */
+  .palette-list {
     overflow: auto;
     padding: 6px;
     max-height: calc(74vh - 120px);
     overscroll-behavior: contain;
   }
-  .palette [cmdk-group-heading] {
+  .palette-heading {
     font-size: var(--text-12);
     color: var(--color-ink-3);
     padding: 10px 10px 4px;
     font-weight: 550;
   }
-  .palette [cmdk-empty] {
+  .palette-empty {
     padding: 28px 16px;
     text-align: center;
     color: var(--color-ink-3);
   }
-  .palette [cmdk-item][data-selected="true"] {
+  .palette [role="option"][aria-selected="true"] {
     background: var(--c-soft);
   }
   .palette mark {
@@ -701,6 +696,30 @@
     &[data-stale="true"] {
       opacity: 0.55;
       filter: grayscale(0.85);
+    }
+  }
+  /* Loading placeholders (components/Skeleton.tsx): a soft shimmer, static under reduced motion. */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-surface-sunken) 0%,
+      color-mix(in oklab, var(--color-line) 70%, var(--color-surface-sunken)) 50%,
+      var(--color-surface-sunken) 100%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes skeleton-shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -100% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
     }
   }
   /* A pending action: the dot breathes until the next status arrives. */

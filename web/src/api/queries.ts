@@ -11,7 +11,16 @@ import {
 import { useCallback, useMemo } from "react";
 import { isApiError, setCsrfToken } from "./client";
 import * as api from "./endpoints";
-import type { ClusterInfo, ConnectionInfo, KindsResponse, Ref, Resource, ResourceSnapshot } from "./types";
+import type {
+  AttentionResponse,
+  ClusterInfo,
+  ConnectionInfo,
+  KindsResponse,
+  Ref,
+  Resource,
+  ResourceSnapshot,
+  SearchResponse,
+} from "./types";
 
 export const keys = {
   me: ["me"] as const,
@@ -27,6 +36,15 @@ export const keys = {
     ["resources", cluster, "hiddenJobs", namespace ?? ""] as const,
   // Under the cluster's resources key, so a `resync` refetches it too.
   kinds: (cluster: string) => ["resources", cluster, "kinds"] as const,
+  /** The paged list (`view=index`): the probe that tells a paging hub, and windowed pages. */
+  index: (cluster: string) => ["index", cluster] as const,
+  indexProbe: (cluster: string) => ["index", cluster, "probe"] as const,
+  indexPages: (cluster: string) => ["index", cluster, "page"] as const,
+  indexPage: (cluster: string, q: api.IndexQuery) => ["index", cluster, "page", q] as const,
+  attentionAll: ["attention"] as const,
+  /** "" is the whole fleet. */
+  attention: (cluster: string) => ["attention", cluster] as const,
+  search: (q: api.SearchQuery) => ["search", q.scope, q.cluster ?? "", q.kind ?? "", q.q] as const,
   yaml: (cluster: string, id: string) => ["yaml", cluster, id] as const,
   events: (cluster: string, id: string) => ["events", cluster, id] as const,
   threadsAll: ["threads"] as const,
@@ -117,6 +135,58 @@ export const kindsQuery = (cluster: string) =>
     retry: 1,
   });
 
+/** True when the hub does not serve an endpoint (an older hub): the caller falls back. */
+const missing = (err: unknown) => isApiError(err, "not_found");
+
+/**
+ * Rows that need attention (GET /attention), fleet-wide for "". Kept fresh by the stream's
+ * `attention` and `change` events. Resolves to `null` on a hub without the endpoint.
+ */
+export const attentionQuery = (cluster = "") =>
+  queryOptions({
+    queryKey: keys.attention(cluster),
+    queryFn: async ({ signal }): Promise<AttentionResponse | null> => {
+      try {
+        return await api.getAttention(cluster, signal);
+      } catch (err) {
+        if (missing(err)) return null;
+        throw err;
+      }
+    },
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+/** GET …/objects/…: one full summary, for a row known only from the paged list. */
+export const objectQuery = (cluster: string, r: Ref) =>
+  queryOptions({
+    queryKey: ["object", cluster, refId(r)] as const,
+    queryFn: () => api.getObject(cluster, r),
+    staleTime: 15_000,
+  });
+
+/**
+ * Server-side palette search (GET /search). Resolves to `null` on a hub without the
+ * endpoint, so the palette falls back to ranking snapshots itself. A newer key aborts the
+ * request in flight: TanStack Query aborts a query's signal once nothing observes it.
+ */
+export const searchQuery = (q: api.SearchQuery) =>
+  queryOptions({
+    queryKey: keys.search(q),
+    queryFn: async ({ signal }): Promise<SearchResponse | null> => {
+      try {
+        return await api.search(q, signal);
+      } catch (err) {
+        if (isApiError(err, "not_found")) return null;
+        throw err;
+      }
+    },
+    staleTime: 10_000,
+    gcTime: 30_000,
+    retry: (count, err) => isApiError(err, "rate_limited") && count < 2,
+    retryDelay: 150,
+  });
+
 /**
  * Jobs with the finished ones the agent hides, fetched on demand a page at a time. SSE deltas
  * keep patching the normal list (resourcesQuery); this only adds the hidden rows.
@@ -205,11 +275,15 @@ export interface FleetResource {
   resource: Resource;
 }
 
-/** Resources of every connected cluster, flattened. Used by the palette and the fleet view. */
-export function useFleetResources(): { items: FleetResource[]; loading: boolean } {
+/**
+ * Resources of every connected cluster, flattened: every cluster's full snapshot. Only a
+ * fallback for hubs without GET /search or GET /attention (ADR-0006); pass `enabled` false
+ * otherwise so nothing is fetched.
+ */
+export function useFleetResources(enabled = true): { items: FleetResource[]; loading: boolean } {
   const { data } = useClusters();
   // Key on the names only: counts change every second, the set of clusters rarely.
-  const joined = (data ?? [])
+  const joined = (enabled ? (data ?? []) : [])
     .filter((c) => c.connected)
     .map((c) => c.name)
     .join("\n");

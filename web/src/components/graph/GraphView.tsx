@@ -32,13 +32,25 @@ export interface GraphViewProps {
   /** Focus mode on a node; undefined hides the Focus actions. */
   onFocusMode?: (id: string) => void;
   onEscape?: () => boolean;
-  /** Extra controls on the left of the bar above the canvas. */
-  toolbar?: ReactNode;
+  /** The one-line bar above the canvas, given the graph's size (callers own the view switch). */
+  header?: (meta: GraphMeta) => ReactNode;
+  /** Show the graph as an outline (steps in order) instead of the canvas. */
+  outline?: boolean;
   /** Shown above the canvas, under the bar (callouts). */
   notice?: ReactNode;
   className?: string;
   ref?: Ref<GraphHandle>;
 }
+
+export interface GraphMeta {
+  nodes: number;
+  edges: number;
+  truncated: boolean;
+}
+
+/** "18 nodes · 32 edges", for headers and tooltips. */
+export const metaText = (m: GraphMeta): string =>
+  `${m.nodes} nodes · ${m.edges} edges${m.truncated ? " · truncated" : ""}`;
 
 const CTRL =
   "inline-flex size-8 items-center justify-center rounded-lg text-ink-2 hover:bg-surface-sunken hover:text-ink disabled:opacity-40";
@@ -284,7 +296,8 @@ export function GraphView({
   dimmed,
   onFocusMode,
   onEscape,
-  toolbar,
+  header,
+  outline = false,
   notice,
   className = "",
   ref,
@@ -296,7 +309,6 @@ export function GraphView({
   const { marching, requested } = useWaves(cluster.name, layout);
   const canvas = useRef<GraphHandle>(null);
   const [menu, setMenu] = useState<Menu | undefined>();
-  const [outline, setOutline] = useState(false);
   useImperativeHandle(
     ref,
     () => ({
@@ -318,23 +330,11 @@ export function GraphView({
 
   return (
     <div className={`flex min-h-0 flex-1 flex-col gap-2 ${className}`}>
-      <div className="flex shrink-0 flex-wrap items-center gap-2 text-12-5 text-ink-3">
-        {toolbar}
-        <span className="ml-auto tabular-nums" aria-live="polite">
-          {layout.index.nodes.size} nodes · {layout.edges.length + layout.hidden.length} edges
-          {graph.truncated ? " · truncated" : ""}
-        </span>
-        <button
-          type="button"
-          className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-surface px-[11px] text-12-5 text-ink-2 hover:border-line-strong aria-pressed:border-c/60 aria-pressed:bg-c-soft aria-pressed:text-ink"
-          aria-pressed={outline}
-          onClick={() => setOutline(!outline)}
-          title="The graph as a list, step by step"
-        >
-          <Icon name="list" className="size-3.5" />
-          Outline
-        </button>
-      </div>
+      {header?.({
+        nodes: layout.index.nodes.size,
+        edges: layout.edges.length + layout.hidden.length,
+        truncated: Boolean(graph.truncated),
+      })}
       {notice}
       {outline ? (
         <Outline layout={layout} selectedId={selectedId} onSelect={onSelect} onOpen={onOpen} />

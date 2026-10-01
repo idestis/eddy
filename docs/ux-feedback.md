@@ -42,7 +42,9 @@ change lands at once.
 | Pin / unpin | The star fills or empties at once (optimistic, local first). | Saved to prefs after 5 s (debounced) | The cluster order changes. |
 | Ask AI | The question appears in the transcript. "Thinking…" shows and Send is disabled. | None | The answer appears in the transcript. Errors show inline. |
 | Ask AI from logs (toolbar, or a selection's "Ask AI about selection" / "Ask AI with context") | Opens a new chat. The composer shows a lines chip and the pre-filled question, selected. | The sent message keeps an "attached" chip. | The answer appears. |
-| Tab, segment, grouped/flat, palette scope | The indicator slides (260 ms). A detail tab panel slides in from the side of the new tab. | None | Grouped/flat, the log format, follow, tail/since, panel width, panel tab, nav groups and the theme are saved per user (`view` prefs). The URL wins when it names a view. |
+| Tab, segment, list view, palette scope | The indicator slides (260 ms). A detail tab panel slides in from the side of the new tab. | None | Saved per user (`view` prefs): the list view (`listView`: `grouped`, `flat`, or on Flux pages `graph` and `outline`), the detail page's Manages view (`managesView`: `tree`, `graph` or `outline`), the graph's focus hops (`graphHops`, 1–3), the log format, follow, tail/since, panel width, panel tab, nav groups and the theme. The URL wins when it names a view (`?view=`). A saved `graph` or `outline` reads as `grouped` on a page without Flux kinds, and every view reads as `flat` on a windowed list (more than 25k rows). |
+| View switch (Tree \| Graph \| Outline, Grouped \| Flat \| Graph \| Outline) | One segmented control; Outline is a view, not a separate button. Focus rings are inset, so they never touch a neighbour. | None | The section header stays on one line. As it narrows, the caption hides first, then the "18 nodes · 32 edges" meta moves into the control's tooltip, then the control shows icons only (each button keeps its aria-label). |
+| ⌘K, This cluster / All clusters | This cluster ranks the list the page already loaded, at once. All clusters asks the hub (`GET /search`) after 120 ms without typing; a spinner replaces the search icon and the group reads "searching…". | None | The newer query aborts the one in flight. Earlier results stay, dimmed, while they can still match. ↑ ↓ and Enter keep working on what is shown. A hub without `/search` gets the old way (every snapshot, ranked in the browser). |
 | Filters, status chips | Instant. Rows do not glide on filter changes (speed first). | None | None |
 | Cluster switch | The identity colour cross-fades (0.7 s). | None | None |
 | Modal, popover, Select | Fade and scale in from 0.98 (180 ms). | None | None |
@@ -59,14 +61,26 @@ change lands at once.
 | Row deleted | It stays for 180 ms as a leaving row: it fades and collapses, cannot be selected, and is not counted. Then the rows below glide up. On a detail page the object stays until deleted, then reads "Kind/name was deleted" instead of "not found". |
 | Re-sort after a status change | The moved row glides to its new place during the settle window. |
 | Bulk delta (more than 20 rows) or `resync` refetch | No per-row motion, only the update. |
-| First load | No motion. |
+| First load | Counts first: the sidebar, the status chips and the total come from `ClusterInfo.counts` and `kinds` (skeleton digits while `countsPending`). Then 12 skeleton rows (40 px, static under reduced motion) until the first page of names. No motion. |
+| Large cluster (paged hub) | Up to 25k rows: the first 200 rows show at once and the full list loads behind them. Above 25k the list stays windowed: rows on screen load 500 at a time as skeleton rows turn into names, the hub filters and sorts, and live changes refetch the pages on screen at most every 2 s instead of animating rows. |
+| Graph (list Graph view, detail Manages graph) | Live like the list: a node's status swaps in and its box flashes in the new colour; a node waiting on a dependency gets the amber "waiting" outline and message. A reconcile marches the edges downstream of the object (animated dashes) until the wave settles: 4 s quiet after the root has its result, at most 45 s. Under reduced motion the dashes and flashes are off and changes are instant. |
 | Cluster disconnects | The last known rows and details stay, greyed (grayscale and 55% opacity, 260 ms). The banner reads "Stale · last seen 2m ago…". Actions are disabled, and keys explain why. |
 | Cluster reconnects | The greying fades out. The refetch lands without per-row flashes. |
-| Findings (`clusters` event) | The callout above the Jobs list and the "Needs attention" card update in place. They are calm: an amber outline, no animation. |
+| Findings (`clusters` event, or `attention` with `findings`) | The callout above the Jobs list and the "Needs attention" card update in place. They are calm: an amber outline, no animation. |
 | Completed | A muted green outline check and a quiet green box outline on the detail header. Distinct from Ready (a filled check). |
+
+### Live updates across clusters (ADR-0006)
+
+- **Full live updates only for what is on screen.** The stream watches the route's cluster and the side panel's cluster when it differs (`watch=`, at most 5; recent clusters stay watched so going back does not reconnect). Rows, details and the graph of those clusters move live as above.
+- **Every other cluster is live in summary.** Its counts (sidebar, fleet cards, status chips) and its "Needs attention" rows (fleet table, ⌘K empty state) update from `counts` and `attention` events, without row motion. Its names are found through ⌘K → All clusters (`GET /search`), never by loading its list.
+- **Changing what is watched reconnects the stream**, 300 ms after the route settles. The hub then sends `resync` for each watched cluster, so nothing is missed; a cluster that leaves the set keeps its rows in the cache, marked stale, and refetches when it is shown again.
+- **The fleet page watches nothing**: counts and attention only.
+- **Disconnected clusters** keep their last view, greyed and labelled "Stale · last seen 12m ago", in the list, the fleet cards and search results.
 
 Implementation:
 
+- `web/src/api/stream.tsx`: the watch set and the stream; `web/src/api/delta.ts`: applying `change`, `counts` and `attention`.
+- `web/src/lib/useClusterList.ts`: first page, background fill and windowed pages.
 - `web/src/lib/liveMotion.ts`: detection from SSE deltas, the bulk limit, leaving rows and requested badges.
 - `web/src/components/ResourceList.tsx`: the row classes.
 - `web/src/components/TabIndicator.tsx`: the indicator.
@@ -103,6 +117,11 @@ two actions.
 | `t` | Threads tab only, with no side effects | Selection |
 | `c` | New thread | Threads tab only (the button shows the hint) |
 | `f` | Toggle follow | Logs |
+| `0` | Fit the graph to the screen | In the graph |
+| `+` / `=` | Zoom in | In the graph |
+| `-` | Zoom out | In the graph |
+| `⇧F` | Focus on the selected node and its neighbours (again: the whole graph). `esc` also leaves focus. | In the graph (list Graph view) |
+| `←` `↓` `↑` `→` / `h` `j` `k` `l` | Move along edges: left to what goes first, right to what follows, up and down within a step. `↵` opens; `l` and `→` move instead. | In the graph, while it has focus |
 | `⇧↑` `⇧↓` | Extend the line selection | Focused log list |
 
 Audit notes:
@@ -113,3 +132,5 @@ Audit notes:
 - `f` does not clash with `g f`: sequences are matched first.
 - `[` `]` are page keys and `{` `}` (Shift) are cluster keys.
 - `n` is bound on the fleet page only.
+- The graph keys reuse the Move around keys while the graph has focus. `0`, `+` `=` and `-` are off in the Outline view.
+- Inside ⌘K, `↑` `↓` (and `Ctrl N` / `Ctrl P`, `Ctrl J` / `Ctrl K`) move and wrap, `↵` runs, `Tab` switches This cluster / All clusters, and `1`…`9` switch cluster while the input is empty. These are the combobox's own keys, not global bindings.

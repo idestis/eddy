@@ -91,8 +91,8 @@ flowchart LR
   socket:
   - **Agent to hub:** it sends a snapshot on connect, then deltas batched every 250 ms.
   - **Hub to agent:** it sends requests down the same socket (reverse RPC), such as yaml,
-    events, logs, reconcile, suspend and access checks. Each request carries the user's
-    identity.
+    events, logs, reconcile, suspend, access checks and rules reviews. Each request carries
+    the user's identity.
 - **Pull or push?** Neither polling nor inbound push. It is an outbound tunnel, which is
   why it works behind NAT, firewalls and corporate proxies.
 - **Keepalive and reconnect:** a ping every 20 s keeps load balancers with idle timeouts
@@ -216,7 +216,16 @@ Finished Jobs are kept out of the lists so clusters that never clean them up sta
 
 Hidden Jobs are served on demand from the agent's cache (the `hiddenJobs` request), for the namespaces where the hub's SubjectAccessReview says the user may list Jobs.
 
-A request also carries at most 100 access checks. The hub adds its own limits on top
+A request also carries at most 100 access checks, or at most 50 namespaces for a `rules`
+request. A `rules` request creates one `SelfSubjectRulesReview` per namespace through the
+impersonating client (so it needs no permission of the agent's own; the user needs
+`create selfsubjectrulesreviews`, which the default `system:basic-user` role grants), under
+the same `limits.sarConcurrency`, and returns at most 2,000 rules per namespace. The hub
+also asks for the rules of `eddy:rules-baseline`, a user with no bindings, so audit logs
+show it impersonated. An agent that predates `rules` answers 400 and the hub asks
+SubjectAccessReviews instead.
+
+The hub adds its own limits on top
 (per-user rates, SSE and log-stream caps, the 45 s access-check cache).
 
 Agent replicas need a hub that understands `instance` and `seq`. An older agent sends

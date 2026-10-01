@@ -6,14 +6,14 @@
 
 import { useSyncExternalStore } from "react";
 
-/** "graph" is offered on Flux pages only; elsewhere it reads as "grouped". */
-export type ListView = "grouped" | "flat" | "graph";
-export type ManagesView = "tree" | "graph";
+/** "graph" and "outline" (the graph as steps) are offered on Flux pages only; elsewhere they read as "grouped". */
+export type ListView = "grouped" | "flat" | "graph" | "outline";
+export type ManagesView = "tree" | "graph" | "outline";
 export type LogFormat = "structured" | "raw";
 
 export interface ViewPrefs {
   listView?: ListView;
-  /** The detail page's "Manages" section: the ownership tree or the dependency graph. */
+  /** The detail page's "Manages" section: the ownership tree, the dependency graph or its outline. */
   managesView?: ManagesView;
   /** Focus-mode hops in the graph (1–3). */
   graphHops?: number;
@@ -42,9 +42,9 @@ export function parseViewPrefs(raw: unknown): ViewPrefs {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const r = raw as Record<string, unknown>;
   const out: ViewPrefs = {};
-  const listView = oneOf(r.listView, ["grouped", "flat", "graph"] as const);
+  const listView = oneOf(r.listView, ["grouped", "flat", "graph", "outline"] as const);
   if (listView) out.listView = listView;
-  const managesView = oneOf(r.managesView, ["tree", "graph"] as const);
+  const managesView = oneOf(r.managesView, ["tree", "graph", "outline"] as const);
   if (managesView) out.managesView = managesView;
   if (typeof r.graphHops === "number" && [1, 2, 3].includes(r.graphHops)) out.graphHops = r.graphHops;
   const logFormat = oneOf(r.logFormat, ["structured", "raw"] as const);
