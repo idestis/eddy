@@ -1,7 +1,8 @@
 // The Flux dependency graph: who goes first and who second. The hub serves it from
 // GET …/graph (internal/hub/fleet_graph.go); an older hub answers 404, and then
 // buildGraph() makes the same shape from the resources list, with the same edge
-// directions, collapsing and focus rules. Everything here is pure, so the list page, the
+// directions, collapsing, expanding and focus rules. Flux objects are never collapsed:
+// their dependsOn and source edges are the graph. Everything here is pure, so the list page, the
 // detail page and the tests share it. Layout lives in graphLayout.ts.
 //
 // Wire edges follow the spec fields: `dependsOn` and `source` point from the dependent to
@@ -12,8 +13,10 @@ import type { GraphEdge, GraphEdgeType, GraphNode, GraphResponse, Ref, Resource,
 import { STATUS_RANK } from "./format";
 import { kindInfo } from "./kinds";
 
-/** Siblings of one kind under one owner collapse into a group node above this many (as the hub). */
+/** Non-Flux siblings of one kind under one owner collapse into a group node above this many (as the hub). */
 export const COLLAPSE_OVER = 20;
+/** The hub expands at most this many groups per request. */
+export const MAX_EXPAND = 20;
 /** The hub's node cap; beyond it the response is truncated. */
 export const MAX_NODES = 2000;
 export const DEFAULT_HOPS = 2;
@@ -85,6 +88,8 @@ export interface GraphQueryOptions {
   kinds: "flux" | "all";
   focus?: string;
   hops?: number;
+  /** Group ids returned as their members (at most MAX_EXPAND go to the hub). */
+  expand?: readonly string[];
 }
 
 const TYPE_ORDER: Record<GraphEdgeType, number> = { dependsOn: 0, source: 1, owns: 2 };
@@ -113,6 +118,8 @@ export function buildGraph(items: readonly Resource[], opts: GraphQueryOptions):
       const o = refKey(r.owner);
       if (o !== r.id && rows.has(o)) {
         raw.push({ from: o, to: r.id, type: "owns" });
+        // Flux objects are never collapsed, nor hidden under a collapsed row.
+        if (isFluxResource(r)) continue;
         const byKind = children.get(o) ?? new Map<string, string[]>();
         byKind.set(r.kind, [...(byKind.get(r.kind) ?? []), r.id]);
         children.set(o, byKind);
@@ -128,13 +135,19 @@ export function buildGraph(items: readonly Resource[], opts: GraphQueryOptions):
     id = owner && rows.has(refKey(owner)) ? refKey(owner) : undefined;
   }
 
+  const expand = new Set(opts.expand ?? []);
+  const expandedMembers = new Set<string>();
   const nodes = new Map<string, GraphNode>();
   const rep = new Map<string, string>(); // row → group id, or "" when hidden under a collapsed row
   const collapsed: string[] = [];
   for (const [owner, byKind] of children) {
     for (const [kind, ids] of byKind) {
-      if (ids.length <= COLLAPSE_OVER || ids.some((id) => keep.has(id))) continue;
       const gid = groupId(owner, kind);
+      if (expand.has(gid) && ids.length > COLLAPSE_OVER) {
+        for (const id of ids) expandedMembers.add(id);
+        continue;
+      }
+      if (ids.length <= COLLAPSE_OVER || ids.some((id) => keep.has(id))) continue;
       const first = rows.get(ids[0] ?? "");
       const n: GraphNode = {
         id: gid,
@@ -196,7 +209,8 @@ export function buildGraph(items: readonly Resource[], opts: GraphQueryOptions):
       truncated = true;
     }
   } else if (order.length > MAX_NODES) {
-    order.sort((a, b) => rankForCut(nodes.get(a)) - rankForCut(nodes.get(b)) || a.localeCompare(b));
+    const rank = (id: string) => (expandedMembers.has(id) ? 1 : rankForCut(nodes.get(id)));
+    order.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
     order = order.slice(0, MAX_NODES);
     truncated = true;
   }
@@ -216,9 +230,10 @@ export function buildGraph(items: readonly Resource[], opts: GraphQueryOptions):
   };
 }
 
+/** Flux kinds first, then (expanded members, ranked by the caller) watched kinds, then inventory-only rows. */
 function rankForCut(n: GraphNode | undefined): number {
-  if (!n || n.inventoryOnly) return 2;
-  return kindInfo(n.kind).flux ? 0 : 1;
+  if (!n || n.inventoryOnly) return 3;
+  return kindInfo(n.kind).flux ? 0 : 2;
 }
 
 /** Ids within `hops` edges of `focus`, in either direction, nearest first. */
@@ -374,37 +389,46 @@ export function lineage(g: GraphResponse, root: string): GraphResponse {
 }
 
 /**
- * Collapses `owner`'s owned non-Flux rows into one group node per kind ("Deployments 3")
- * when there are at least two, unless the group's id is in `expanded`. A group node the
- * hub already collapsed is expanded from `items` (the resources list), which has every
- * member. Status breakdowns come from the rows, so they stay live.
+ * The fallback for a hub that ignored `expand` (older hubs): group nodes whose id is in
+ * `expanded` are replaced by their members from `items` (the resources list), with an
+ * `owns` edge from the group's owner. Other edges of the group are dropped. Returns `g`
+ * itself when nothing is expanded this way.
  */
-export function collapseOwned(
+export function expandFromItems(
   g: GraphResponse,
-  owner: string,
   expanded: ReadonlySet<string>,
   items: readonly Resource[],
 ): GraphResponse {
+  const groups = g.nodes.filter((n) => isGroupId(n.id) && n.owner && expanded.has(n.id));
+  if (!groups.length) return g;
+  const gone = new Set(groups.map((n) => n.id));
+  const nodes = new Map(g.nodes.filter((n) => !gone.has(n.id)).map((n) => [n.id, n]));
+  const edges = g.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to));
+  const want = new Map(groups.map((n) => [groupId(n.owner as string, n.kind), n.owner as string]));
+  for (const r of items) {
+    if (!r.owner) continue;
+    const owner = want.get(groupId(refKey(r.owner), r.kind));
+    if (!owner || nodes.has(r.id)) continue;
+    nodes.set(r.id, nodeOf(r));
+    edges.push({ from: owner, to: r.id, type: "owns" });
+  }
+  return { ...g, nodes: [...nodes.values()], edges };
+}
+
+/**
+ * Collapses `owner`'s owned non-Flux rows into one group node per kind ("Deployments 3")
+ * when there are at least two, unless the group's id is in `expanded`. Flux objects stay
+ * nodes of their own. Status breakdowns come from the rows, so they stay live. Groups the
+ * hub collapsed are expanded by the hub (expand=), or by expandFromItems beforehand.
+ */
+export function collapseOwned(g: GraphResponse, owner: string, expanded: ReadonlySet<string>): GraphResponse {
   const byId = new Map(g.nodes.map((n) => [n.id, n]));
   const nodes = new Map(byId);
-  const extra: GraphEdge[] = [];
   const kids = new Map<string, string[]>();
   for (const e of g.edges) {
     const n = byId.get(e.to);
     if (e.type === "owns" && e.from === owner && n && !isGroupId(n.id) && !kindInfo(n.kind).flux) {
       kids.set(n.kind, [...(kids.get(n.kind) ?? []), n.id]);
-    }
-  }
-  // Server-collapsed groups the user expanded: the members come from the list.
-  const fromServer = new Set<string>();
-  for (const n of g.nodes) {
-    if (n.owner !== owner || !isGroupId(n.id) || !expanded.has(n.id)) continue;
-    fromServer.add(n.id);
-    nodes.delete(n.id);
-    for (const r of items) {
-      if (r.kind !== n.kind || !r.owner || refKey(r.owner) !== owner) continue;
-      nodes.set(r.id, nodeOf(r));
-      extra.push({ from: owner, to: r.id, type: "owns" });
     }
   }
   const replaced = new Map<string, string>();
@@ -437,8 +461,7 @@ export function collapseOwned(
   }
   const seen = new Set<string>();
   const edges: GraphEdge[] = [];
-  for (const e of [...g.edges, ...extra]) {
-    if (fromServer.has(e.to) || fromServer.has(e.from)) continue;
+  for (const e of g.edges) {
     const from = replaced.get(e.from) ?? e.from;
     const to = replaced.get(e.to) ?? e.to;
     const key = `${from}\n${to}\n${e.type}`;
@@ -596,7 +619,7 @@ function rootCause(index: GraphIndex, id: string): string | undefined {
 }
 
 /** "Kustomization apps, failed, depends on infra-configs" for screen readers. */
-export function nodeLabel(index: GraphIndex, n: GraphNode, waitingOn?: string): string {
+export function nodeLabel(index: GraphIndex, n: GraphNode, waitingOn?: string, expanding = false): string {
   const name = n.name ?? n.id;
   const parts: string[] = [];
   if (isGroupId(n.id)) {
@@ -606,6 +629,7 @@ export function nodeLabel(index: GraphIndex, n: GraphNode, waitingOn?: string): 
       .map(([st, c]) => `${c} ${st}`)
       .join(", ");
     if (s) parts.push(s);
+    parts.push(expanding ? "expanding" : "group, press Enter or double-click to expand");
   } else {
     parts.push(`${n.kind} ${name}`);
     parts.push(

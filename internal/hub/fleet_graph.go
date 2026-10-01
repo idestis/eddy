@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/idestis/eddy/internal/fleet"
@@ -18,9 +19,12 @@ const (
 	// graphMaxNodes caps the nodes of one response; the rest is cut and
 	// the response says truncated.
 	graphMaxNodes = 2000
-	// graphCollapseOver: when an owner has more children of one kind than
-	// this, they become one group node.
+	// graphCollapseOver: when an owner has more non-Flux children of one
+	// kind than this, they become one group node. Flux objects are never
+	// collapsed: their dependsOn and source edges are the graph.
 	graphCollapseOver = 20
+	// graphMaxExpand caps the group ids of one expand parameter.
+	graphMaxExpand = 20
 	graphDefaultHops  = 2
 	graphMaxHops      = 6
 )
@@ -40,6 +44,9 @@ type graphOptions struct {
 	// (in either direction) are returned.
 	Focus string
 	Hops  int
+	// Expand lists group ids (group:<owner id>/<Kind>) returned as their
+	// member nodes instead of one group node. Unknown ids are ignored.
+	Expand map[string]bool
 }
 
 // graphNode is one node of the graph: a resource row, a group of
@@ -86,10 +93,10 @@ type graphResponse struct {
 // Nodes are rows p may list (the same SAR filter as the resource list), so
 // an edge never points at a row p could not see: owns and source edges are
 // drawn only between visible rows, and DependsOn entries in namespaces p
-// may not list are already removed by the filter. Siblings of one kind
-// under one owner are collapsed into a group node when there are more
-// than graphCollapseOver of them, unless the focus is among them or below
-// them.
+// may not list are already removed by the filter. Non-Flux siblings of
+// one kind under one owner are collapsed into a group node when there are
+// more than graphCollapseOver of them, unless the focus is among them or
+// below them, or the group is in o.Expand.
 func (f *fleetService) Graph(ctx context.Context, p identity.Principal, cluster string, o graphOptions) (graphResponse, error) {
 	if err := f.validPrincipal(p); err != nil {
 		return graphResponse{}, err
@@ -109,7 +116,7 @@ func (f *fleetService) Graph(ctx context.Context, p identity.Principal, cluster 
 	if err != nil {
 		return graphResponse{}, err
 	}
-	g := buildGraph(visible, o.Focus)
+	g := buildGraph(visible, o.Focus, o.Expand)
 	if o.Focus != "" && g.rows[o.Focus] == nil {
 		return graphResponse{}, fmt.Errorf("%w: %s", fleet.ErrNotFound, o.Focus)
 	}
@@ -131,10 +138,28 @@ func canonicalFocus(id string) (string, error) {
 	return ref.ID(), nil
 }
 
+// parseGroupID validates a group node id, group:<owner id>/<Kind>.
+func parseGroupID(id string) (string, error) {
+	bad := badRequest("expand must list group ids group:<group>/<Kind>/<namespace>/<name>/<Kind>")
+	rest, ok := strings.CutPrefix(id, groupPrefix)
+	i := strings.LastIndexByte(rest, '/')
+	if !ok || i < 0 {
+		return "", bad
+	}
+	owner, kind := rest[:i], rest[i+1:]
+	if _, err := model.ParseRef(owner); err != nil || !flux.ValidKindName(kind) {
+		return "", bad
+	}
+	return id, nil
+}
+
 func isFluxRow(r model.Resource) bool {
 	k, ok := flux.KindByName(r.Kind)
 	return ok && k.Flux && !r.InventoryOnly && k.Group == r.Group
 }
+
+// groupPrefix starts the id of a group node: group:<owner id>/<Kind>.
+const groupPrefix = "group:"
 
 // graph is the collapsed graph before focus and the node cap apply.
 type graph struct {
@@ -142,10 +167,16 @@ type graph struct {
 	nodes map[string]*graphNode
 	edges []graphEdge
 	adj   map[string][]string // undirected
+	// expanded holds the members of the groups the request expanded;
+	// they are cut after Flux kinds when the graph is over the cap.
+	expanded map[string]bool
 }
 
-func buildGraph(rows []model.Resource, focus string) *graph {
-	g := &graph{rows: make(map[string]*model.Resource, len(rows)), nodes: map[string]*graphNode{}, adj: map[string][]string{}}
+func buildGraph(rows []model.Resource, focus string, expand map[string]bool) *graph {
+	g := &graph{
+		rows: make(map[string]*model.Resource, len(rows)), nodes: map[string]*graphNode{},
+		adj: map[string][]string{}, expanded: map[string]bool{},
+	}
 	for i := range rows {
 		g.rows[rows[i].ID] = &rows[i]
 	}
@@ -153,7 +184,7 @@ func buildGraph(rows []model.Resource, focus string) *graph {
 	// Raw edges between visible rows, plus missing dependencies.
 	var raw []graphEdge
 	missing := map[string]model.Ref{}
-	children := map[string]map[string][]string{} // owner id -> kind -> child ids
+	children := map[string]map[string][]string{} // owner id -> kind -> non-Flux child ids
 	for i := range rows {
 		r := &rows[i]
 		for _, d := range r.DependsOn {
@@ -169,6 +200,9 @@ func buildGraph(rows []model.Resource, focus string) *graph {
 		if r.Owner != nil && r.Owner.ID() != r.ID && g.rows[r.Owner.ID()] != nil {
 			o := r.Owner.ID()
 			raw = append(raw, graphEdge{From: o, To: r.ID, Type: edgeOwns})
+			if isFluxKind(r.Group, r.Kind) {
+				continue // never collapsed, never hidden
+			}
 			if children[o] == nil {
 				children[o] = map[string][]string{}
 			}
@@ -194,10 +228,16 @@ func buildGraph(rows []model.Resource, focus string) *graph {
 	var collapsed []string
 	for owner, byKind := range children {
 		for kind, ids := range byKind {
+			gid := groupPrefix + owner + "/" + kind
+			if expand[gid] && len(ids) > graphCollapseOver {
+				for _, id := range ids {
+					g.expanded[id] = true
+				}
+				continue
+			}
 			if len(ids) <= graphCollapseOver || slices.ContainsFunc(ids, func(id string) bool { return keep[id] }) {
 				continue
 			}
-			gid := "group:" + owner + "/" + kind
 			n := &graphNode{ID: gid, Kind: kind, Owner: owner, Count: len(ids), Statuses: map[model.Status]int{}}
 			for i, id := range ids {
 				r := g.rows[id]
@@ -281,8 +321,11 @@ func (g *graph) response(o graphOptions) graphResponse {
 			if dist[id] == o.Hops {
 				continue
 			}
+			// Flux kinds first at each distance, so a cut keeps them.
 			next := slices.Clone(g.adj[id])
-			slices.Sort(next)
+			slices.SortFunc(next, func(a, b string) int {
+				return cmp.Or(cmp.Compare(g.rank(g.nodes[a]), g.rank(g.nodes[b])), cmp.Compare(a, b))
+			})
 			for _, n := range next {
 				if _, ok := dist[n]; ok {
 					continue
@@ -302,7 +345,7 @@ func (g *graph) response(o graphOptions) graphResponse {
 		}
 		slices.SortFunc(order, func(a, b string) int {
 			na, nb := g.nodes[a], g.nodes[b]
-			return cmp.Or(cmp.Compare(graphRank(na), graphRank(nb)), cmp.Compare(na.Kind, nb.Kind),
+			return cmp.Or(cmp.Compare(g.rank(na), g.rank(nb)), cmp.Compare(na.Kind, nb.Kind),
 				cmp.Compare(na.Namespace, nb.Namespace), cmp.Compare(na.Name, nb.Name), cmp.Compare(a, b))
 		})
 		if len(order) > graphMaxNodes {
@@ -327,16 +370,21 @@ func (g *graph) response(o graphOptions) graphResponse {
 	return res
 }
 
-// graphRank orders nodes when the graph is cut without a focus: Flux kinds
-// first, then watched kinds, then inventory-only rows.
-func graphRank(n *graphNode) int {
+// rank orders nodes when the graph is cut without a focus: Flux kinds
+// first, then the members of expanded groups, then watched kinds, then
+// inventory-only rows.
+func (g *graph) rank(n *graphNode) int {
 	switch {
-	case n.InventoryOnly:
-		return 2
-	case isFluxKind(n.Group, n.Kind):
+	case n == nil:
+		return 3
+	case isFluxKind(n.Group, n.Kind) && !n.InventoryOnly:
 		return 0
+	case g.expanded[n.ID]:
+		return 1
+	case n.InventoryOnly:
+		return 3
 	}
-	return 1
+	return 2
 }
 
 func isFluxKind(group, kind string) bool {

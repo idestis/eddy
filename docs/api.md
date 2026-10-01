@@ -75,7 +75,7 @@ There is no separate login step. A trusted proxy that sends an invalid or denied
 | `GET …/resources?kind=Job&includeHidden=1&namespace=&limit=&cursor=` | `{items, resourceVersion, hidden: {total, next?}}`. Without `cursor`: the listed Jobs plus the first page of hidden ones. With `cursor=hidden.next`: hidden Jobs only (`resourceVersion` is `""`). `limit` is 1–1000 (default 500) hidden Jobs per page. `includeHidden` without `kind=Job` gives 400. |
 | `GET /api/v1/clusters/{c}/findings` | `{items: Finding[]}`, the cluster's findings the user may see. The same list is `ClusterInfo.findings`. |
 | `GET /api/v1/clusters/{c}/kinds` | `{items: KindInfo[], projects: Project[], presets: string[]}` for navigation; see [Kinds and projects](#kinds-and-projects). |
-| `GET /api/v1/clusters/{c}/graph?kinds=flux\|all&focus=<id>&hops=N` | `{nodes, edges, truncated, stale?}`: the dependency graph of the user's RBAC-filtered view; see [Dependency graph](#dependency-graph). |
+| `GET /api/v1/clusters/{c}/graph?kinds=flux\|all&focus=<id>&hops=N&expand=<group id>,…` | `{nodes, edges, truncated, stale?}`: the dependency graph of the user's RBAC-filtered view; see [Dependency graph](#dependency-graph). |
 | `GET /api/v1/clusters/{c}/objects/{kind}/{ns}/{name}?group=` | `Resource`. Every `…/objects/…` path takes an optional `group` (the API group; `core` for the core group) to pick between kinds of the same name in several groups. Without it the group comes from the kind table, or from the one visible inventory-only row that matches (several groups give 400). `ns` is `_` for cluster-scoped objects. |
 | `GET …/objects/{kind}/{ns}/{name}/children` | `{items: Resource[]}`. Mainly for MCP. The UI builds trees from each summary's `owner`, which is filled from ownerReferences, Flux labels and inventory when known. |
 | `GET …/objects/{kind}/{ns}/{name}/yaml` | `{yaml}`, sanitized by the agent and redacted by the hub; see [YAML and events](#yaml-and-events). Secrets: always 403. |
@@ -221,8 +221,8 @@ agent replaces it in place once its snapshot is complete, so the rows never blin
 
 ### Dependency graph
 
-`GET /api/v1/clusters/{c}/graph?kinds=flux|all&focus=<id>&hops=N`, computed from the
-user's SAR-filtered view of the cluster:
+`GET /api/v1/clusters/{c}/graph?kinds=flux|all&focus=<id>&hops=N&expand=<group id>,…`,
+computed from the user's SAR-filtered view of the cluster:
 
 - `kinds`: `flux` (default) for Flux kinds only, `all` for every row (inventory-only rows too).
 - `focus`: a resource id (`<group>/<Kind>/<namespace>/<name>`, kind case-insensitive for kinds
@@ -231,9 +231,18 @@ user's SAR-filtered view of the cluster:
   see, or outside `kinds`, is 404.
 - Without `focus`, all nodes, Flux kinds first, then watched kinds, then inventory-only rows.
 - At most 2000 nodes; `truncated: true` says some were cut. Edges join returned nodes only.
-- An owner with more than 20 children of one kind gets one group node instead of them, with an
-  `owns` edge to it; everything owned by the collapsed children is left out, and their other
-  edges move to the group. The focus and its owners are never collapsed.
+- An owner with more than 20 non-Flux children of one kind gets one group node instead of them,
+  with an `owns` edge to it; everything owned by the collapsed children is left out, and their
+  other edges move to the group. Flux objects (Kustomization, HelmRelease, GitRepository,
+  OCIRepository, HelmRepository, HelmChart, Bucket) are never collapsed or left out this way:
+  their `dependsOn` and `source` edges are the graph. The focus and its owners are never
+  collapsed.
+- `expand`: up to 20 group ids (`group:<owner id>/<Kind>`), comma-separated or repeated. Each
+  listed group is returned as its member nodes (and what they own, collapsed by the same rule)
+  instead of one group node. Members are still only rows the user may list, and still count
+  towards the node cap: without `focus` they are cut after Flux kinds and before other rows;
+  with `focus` they keep their distance. A malformed id, or more than 20, is 400; an id that
+  names no group in the current view is ignored.
 
 ```json
 {

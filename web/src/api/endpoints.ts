@@ -106,6 +106,8 @@ export interface GraphQuery {
   kinds: "flux" | "all";
   focus?: string;
   hops?: number;
+  /** Comma-separated group ids returned as their members (at most 20). */
+  expand?: string;
 }
 /** The dependency graph of a cluster (docs/api.md "Graph"). */
 export const getGraph = (cluster: string, q: GraphQuery, signal?: AbortSignal) =>

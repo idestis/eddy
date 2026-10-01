@@ -2,6 +2,8 @@
 // - ClusterGraph: the Graph view of the Flux list pages, with Focus mode for big clusters;
 // - LineageGraph: the detail page's "Manages" graph: upstream on the left, the object in
 //   the middle, dependents and owned inventory (collapsed per kind) on the right.
+// Both expand group nodes in place (double click, Enter, the menu): a group the hub
+// collapsed is refetched with expand=, and its members appear where it was.
 
 import {
   type ReactNode,
@@ -17,6 +19,7 @@ import type { ClusterInfo, GraphResponse, Resource } from "../../api/types";
 import {
   collapseOwned,
   DEFAULT_HOPS,
+  expandFromItems,
   focusGraph,
   isGroupId,
   lineage,
@@ -25,6 +28,7 @@ import {
 } from "../../lib/graph";
 import { filterResources, type StatusFilter } from "../../lib/resourceRows";
 import { useGraph } from "../../lib/useGraph";
+import { type GraphExpansion, useGraphExpansion } from "../../lib/useGraphExpansion";
 import type { useResourceActions } from "../../lib/useResourceActions";
 import { setViewPrefs, useViewPrefs } from "../../lib/viewPrefs";
 import { Empty } from "../Empty";
@@ -35,6 +39,50 @@ import type { GraphHandle } from "./GraphCanvas";
 import { type GraphMeta, GraphView, metaText } from "./GraphView";
 
 type Actions = ReturnType<typeof useResourceActions>;
+
+/**
+ * The group nodes still waiting for the hub's expanded graph. While that request is in
+ * flight the previous graph is shown; afterwards a group the hub did not expand (an older
+ * hub) is expanded from the resources list instead.
+ */
+function useExpandedGraph(
+  full: GraphResponse | undefined,
+  expanding: boolean,
+  exp: GraphExpansion,
+  items: readonly Resource[],
+): { graph: GraphResponse | undefined; pending: ReadonlySet<string> | undefined } {
+  return useMemo(() => {
+    if (!full) return { graph: undefined, pending: undefined };
+    if (!expanding) return { graph: expandFromItems(full, exp.expanded, items), pending: undefined };
+    const groups = new Set(full.nodes.filter((n) => isGroupId(n.id)).map((n) => n.id));
+    const pending = new Set(exp.hub.filter((id) => groups.has(id)));
+    return { graph: full, pending: pending.size ? pending : undefined };
+  }, [full, expanding, exp.expanded, exp.hub, items]);
+}
+
+/** Expands a group node: one the hub collapsed (in `full`) refetches with expand=. */
+function expandGroup(exp: GraphExpansion, full: GraphResponse | undefined, id: string): void {
+  if (exp.expanded.has(id)) return;
+  exp.expand(id, Boolean(full?.nodes.some((n) => n.id === id)));
+}
+
+function CollapseGroups({ exp }: { exp: GraphExpansion }) {
+  if (!exp.expanded.size) return null;
+  return (
+    <button
+      type="button"
+      className={CHIP}
+      onClick={exp.clear}
+      aria-label="Collapse groups"
+      title="Collapse groups"
+    >
+      <Icon name="layers" className="size-3.5" />
+      <span className="@max-lg:sr-only" aria-hidden="true">
+        Collapse groups
+      </span>
+    </button>
+  );
+}
 
 export interface ClusterGraphHandle extends GraphHandle {
   /** Selects and focuses the first node the find text matches. */
@@ -95,15 +143,20 @@ export function ClusterGraph({
   const saved = useViewPrefs().graphHops;
   const [focus, setFocus] = useState<string | undefined>();
   const hops = Math.min(saved ?? DEFAULT_HOPS, MAX_HOPS);
+  // Flux objects are never grouped, so the Flux graph has groups only from an older hub.
+  const exp = useGraphExpansion(`${cluster.name}|flux`);
   const {
-    graph: full,
+    graph: fetched,
     loading,
+    expanding,
     error,
   } = useGraph(cluster.name, items, {
     kinds: "flux",
     focus,
     hops: focus ? hops : undefined,
+    expand: exp.hub,
   });
+  const { graph: full, pending } = useExpandedGraph(fetched, expanding, exp, items);
   const byId = useMemo(() => new Map(items.map((r) => [r.id, r])), [items]);
 
   // The namespace filter narrows the graph; status and text dim what does not match.
@@ -163,6 +216,8 @@ export function ClusterGraph({
 
   const toggleFocus = useCallback(
     (id: string) => {
+      // A group is not an object to focus on.
+      if (isGroupId(id)) return;
       setFocus((cur) => (cur === id ? undefined : id));
       onSelect(id);
     },
@@ -191,6 +246,7 @@ export function ClusterGraph({
   const selected = selectedId ? byId.get(selectedId) : undefined;
   const big = !focus && graph.nodes.length > SUGGEST_FOCUS_OVER;
 
+  const collapse = <CollapseGroups exp={exp} />;
   const graphToolbar = focus ? (
     <>
       <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-c/50 bg-c-soft px-[11px] text-12-5 text-ink">
@@ -207,19 +263,23 @@ export function ClusterGraph({
         </button>
       </span>
       <Hops hops={hops} onChange={(n) => setViewPrefs({ graphHops: n })} />
+      {collapse}
     </>
   ) : (
-    <button
-      type="button"
-      className={CHIP}
-      disabled={!selected}
-      onClick={() => selected && toggleFocus(selected.id)}
-      title="Show the selected object and its neighbours only"
-    >
-      <Icon name="focus" className="size-3.5" />
-      Focus
-      <KeyHint id="graphFocus" />
-    </button>
+    <>
+      <button
+        type="button"
+        className={CHIP}
+        disabled={!selected}
+        onClick={() => selected && toggleFocus(selected.id)}
+        title="Show the selected object and its neighbours only"
+      >
+        <Icon name="focus" className="size-3.5" />
+        Focus
+        <KeyHint id="graphFocus" />
+      </button>
+      {collapse}
+    </>
   );
   const notice = big ? (
     <div className="flex shrink-0 items-center gap-2.5 rounded-tile border border-attn/40 bg-attn/8 px-3 py-2 text-12-5 text-ink-2">
@@ -252,7 +312,7 @@ export function ClusterGraph({
       onOpen={(id) => {
         const r = byId.get(id);
         if (r) onOpen(r);
-        else if (isGroupId(id)) toggleFocus(id);
+        else if (isGroupId(id)) expandGroup(exp, fetched, id);
       }}
       onFocusMode={toggleFocus}
       onEscape={() => {
@@ -263,6 +323,7 @@ export function ClusterGraph({
         return onEscape?.() ?? false;
       }}
       dimmed={dimmed}
+      pending={pending}
       outline={outline}
       header={(meta) => (
         // One line: Focus controls on the left, the graph's size on the right (into the
@@ -309,28 +370,24 @@ export function LineageGraph({
    */
   header: (meta: GraphMeta | undefined, extra: ReactNode) => ReactNode;
 }) {
+  const exp = useGraphExpansion(`${cluster.name}|lineage|${root.id}`);
   const {
-    graph: full,
+    graph: fetched,
     loading,
+    expanding,
     error,
   } = useGraph(cluster.name, items, {
     kinds: "all",
     focus: root.id,
     hops: MAX_HOPS,
+    expand: exp.hub,
   });
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const { graph: full, pending } = useExpandedGraph(fetched, expanding, exp, items);
   const byId = useMemo(() => new Map(items.map((r) => [r.id, r])), [items]);
   const graph = useMemo(
-    () => (full ? collapseOwned(lineage(full, root.id), root.id, expanded, items) : undefined),
-    [full, root.id, expanded, items],
+    () => (full ? collapseOwned(lineage(full, root.id), root.id, exp.expanded) : undefined),
+    [full, root.id, exp.expanded],
   );
-  const toggle = (id: string) =>
-    setExpanded((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   if (error && !graph) {
     return (
@@ -360,21 +417,7 @@ export function LineageGraph({
       </>
     );
   }
-  const collapse =
-    expanded.size > 0 ? (
-      <button
-        type="button"
-        className={CHIP}
-        onClick={() => setExpanded(new Set())}
-        aria-label="Collapse groups"
-        title="Collapse groups"
-      >
-        <Icon name="layers" className="size-3.5" />
-        <span className="@max-lg:sr-only" aria-hidden="true">
-          Collapse groups
-        </span>
-      </button>
-    ) : null;
+  const collapse = exp.expanded.size > 0 ? <CollapseGroups exp={exp} /> : null;
   return (
     <GraphView
       className="h-[480px] flex-none"
@@ -387,13 +430,14 @@ export function LineageGraph({
       selectedId={selectedId ?? root.id}
       onSelect={onSelect}
       onOpen={(id) => {
-        if (isGroupId(id)) return toggle(id);
+        if (isGroupId(id)) return expandGroup(exp, fetched, id);
         if (id === root.id) return;
         const n = graph.nodes.find((x) => x.id === id);
         if (n?.name && !n.missing)
           onOpen({ kind: n.kind, namespace: n.namespace, name: n.name, group: n.group });
       }}
       outline={outline}
+      pending={pending}
       header={(meta) => header(meta, collapse)}
     />
   );

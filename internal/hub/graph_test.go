@@ -3,6 +3,7 @@ package hub
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -224,8 +225,190 @@ func TestGraphTruncates(t *testing.T) {
 	for i := range graphMaxNodes + 10 {
 		rows = append(rows, res("Kustomization", "a", fmt.Sprintf("k%04d", i), model.StatusReady))
 	}
-	g := buildGraph(rows, "").response(graphOptions{Hops: graphDefaultHops})
+	g := buildGraph(rows, "", nil).response(graphOptions{Hops: graphDefaultHops})
 	if !g.Truncated || len(g.Nodes) != graphMaxNodes {
 		t.Fatalf("truncated %v, %d nodes", g.Truncated, len(g.Nodes))
+	}
+}
+
+// expandRows: the bootstrap Kustomization in team-a applies 26 Kustomizations
+// (a dependsOn chain) and 25 Deployments with a Pod each; three more
+// Deployments it applies live in team-b, which alice cannot list.
+func expandRows() []model.Resource {
+	root := res("Kustomization", "team-a", "flux-system", model.StatusReady)
+	rows := []model.Resource{root}
+	for i := range 26 {
+		k := res("Kustomization", "team-a", fmt.Sprintf("ks%02d", i), model.StatusReady)
+		k.Owner = &root.Ref
+		if i > 0 {
+			k.DependsOn = []model.Ref{ksRef("team-a", fmt.Sprintf("ks%02d", i-1))}
+		}
+		rows = append(rows, k)
+	}
+	for i := range 25 {
+		d := res("Deployment", "team-a", fmt.Sprintf("d%02d", i), model.StatusReady)
+		d.Owner = &root.Ref
+		p := res("Pod", "team-a", fmt.Sprintf("p%02d", i), model.StatusReady)
+		p.Owner = &d.Ref
+		rows = append(rows, d, p)
+	}
+	for i := range 3 {
+		d := res("Deployment", "team-b", fmt.Sprintf("hidden%d", i), model.StatusReady)
+		d.Owner = &root.Ref
+		rows = append(rows, d)
+	}
+	return rows
+}
+
+func TestGraphExpand(t *testing.T) {
+	e := newEnv(t, "")
+	e.connectAgent("dev", testToken, expandRows())
+	alice := e.login("alice")
+	rootID := ksRef("team-a", "flux-system").ID()
+	deployGroup := "group:" + rootID + "/Deployment"
+
+	t.Run("flux objects are never collapsed", func(t *testing.T) {
+		for _, path := range []string{
+			"/api/v1/clusters/dev/graph",
+			"/api/v1/clusters/dev/graph?kinds=all",
+			"/api/v1/clusters/dev/graph?kinds=all&focus=" + rootID,
+		} {
+			var g graphResponse
+			alice.do("GET", path, nil, &g, 200)
+			nodes, edges := graphIDs(g)
+			for i := range 26 {
+				id := ksRef("team-a", fmt.Sprintf("ks%02d", i)).ID()
+				if _, ok := nodes[id]; !ok {
+					t.Fatalf("%s: %s is not a node", path, id)
+				}
+				if !edges["owns "+rootID+" -> "+id] {
+					t.Errorf("%s: no owns edge to %s", path, id)
+				}
+			}
+			if !edges["dependsOn "+ksRef("team-a", "ks25").ID()+" -> "+ksRef("team-a", "ks24").ID()] {
+				t.Errorf("%s: dependsOn chain missing", path)
+			}
+			if _, ok := nodes["group:"+rootID+"/Kustomization"]; ok {
+				t.Errorf("%s: Kustomizations collapsed", path)
+			}
+		}
+	})
+
+	t.Run("non-flux rows still collapse, without hidden members", func(t *testing.T) {
+		var g graphResponse
+		alice.do("GET", "/api/v1/clusters/dev/graph?kinds=all", nil, &g, 200)
+		nodes, _ := graphIDs(g)
+		if n := nodes[deployGroup]; n.Count != 25 || n.Namespace != "team-a" {
+			t.Fatalf("group %+v", n)
+		}
+		if len(nodes) != 1+26+1 {
+			t.Fatalf("%d nodes", len(nodes))
+		}
+	})
+
+	t.Run("expand returns the members", func(t *testing.T) {
+		for _, path := range []string{
+			"/api/v1/clusters/dev/graph?kinds=all&expand=" + deployGroup,
+			"/api/v1/clusters/dev/graph?kinds=all&hops=2&focus=" + rootID + "&expand=" + deployGroup + ",group:" + rootID + "/Service",
+		} {
+			resp := alice.request("GET", path, nil)
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("%s: status %d: %s", path, resp.StatusCode, body)
+			}
+			if strings.Contains(string(body), "team-b") {
+				t.Fatalf("%s: names a hidden object: %s", path, body)
+			}
+			var g graphResponse
+			alice.do("GET", path, nil, &g, 200)
+			nodes, edges := graphIDs(g)
+			if _, ok := nodes[deployGroup]; ok {
+				t.Fatalf("%s: group still collapsed", path)
+			}
+			for i := range 25 {
+				d := "apps/Deployment/team-a/" + fmt.Sprintf("d%02d", i)
+				if !edges["owns "+rootID+" -> "+d] {
+					t.Fatalf("%s: no owns edge to %s", path, d)
+				}
+				if !edges["owns "+d+" -> /Pod/team-a/"+fmt.Sprintf("p%02d", i)] {
+					t.Fatalf("%s: the pod of %s is missing", path, d)
+				}
+			}
+			if len(nodes) != 1+26+50 || g.Truncated {
+				t.Fatalf("%s: %d nodes, truncated %v", path, len(nodes), g.Truncated)
+			}
+		}
+	})
+
+	t.Run("invalid expand", func(t *testing.T) {
+		many := make([]string, graphMaxExpand+1)
+		for i := range many {
+			many[i] = fmt.Sprintf("group:%s/Kind%d", rootID, i)
+		}
+		for _, q := range []string{
+			"nope",
+			"group:nope",
+			"group:" + rootID,
+			"group:" + rootID + "/",
+			"group:" + rootID + "/Bad Kind",
+			strings.Join(many, ","),
+		} {
+			if st, _ := alice.errorCode("GET", "/api/v1/clusters/dev/graph?kinds=all&expand="+url.QueryEscape(q), nil); st != 400 {
+				t.Errorf("expand=%q: %d, want 400", q, st)
+			}
+		}
+		ok := strings.Join(many[:graphMaxExpand], ",")
+		var g graphResponse
+		alice.do("GET", "/api/v1/clusters/dev/graph?kinds=all&expand="+url.QueryEscape(ok), nil, &g, 200)
+	})
+}
+
+func TestGraphExpandRespectsTheCap(t *testing.T) {
+	root := res("Kustomization", "a", "root", model.StatusReady)
+	rows := []model.Resource{root}
+	for i := range 10 {
+		k := res("Kustomization", "a", fmt.Sprintf("k%02d", i), model.StatusReady)
+		k.Owner = &root.Ref
+		rows = append(rows, k)
+	}
+	for i := range graphMaxNodes + 50 {
+		d := res("Deployment", "a", fmt.Sprintf("d%04d", i), model.StatusReady)
+		d.Owner = &root.Ref
+		rows = append(rows, d)
+	}
+	// Watched rows outside the group are cut before its members.
+	for i := range 30 {
+		rows = append(rows, res("Pod", "a", fmt.Sprintf("p%02d", i), model.StatusReady))
+	}
+	gid := "group:" + root.ID + "/Deployment"
+	collapsed := buildGraph(rows, "", nil).response(graphOptions{Hops: graphDefaultHops})
+	if collapsed.Truncated || len(collapsed.Nodes) != 1+10+1+30 {
+		t.Fatalf("collapsed: %d nodes, truncated %v", len(collapsed.Nodes), collapsed.Truncated)
+	}
+	for _, o := range []graphOptions{
+		{Hops: graphDefaultHops, Expand: map[string]bool{gid: true}},
+		{Hops: 1, Focus: root.ID, Expand: map[string]bool{gid: true}},
+	} {
+		g := buildGraph(rows, o.Focus, o.Expand).response(o)
+		nodes, _ := graphIDs(g)
+		if !g.Truncated || len(g.Nodes) != graphMaxNodes {
+			t.Fatalf("focus %q: %d nodes, truncated %v", o.Focus, len(g.Nodes), g.Truncated)
+		}
+		if _, ok := nodes[gid]; ok {
+			t.Fatalf("focus %q: group node in an expanded graph", o.Focus)
+		}
+		for _, id := range []string{root.ID, ksRef("a", "k09").ID()} {
+			if _, ok := nodes[id]; !ok {
+				t.Errorf("focus %q: flux node %s cut", o.Focus, id)
+			}
+		}
+		if o.Focus == "" {
+			for id := range nodes {
+				if strings.Contains(id, "/Pod/") {
+					t.Errorf("pod %s kept before the expanded members", id)
+				}
+			}
+		}
 	}
 }

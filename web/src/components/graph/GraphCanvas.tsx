@@ -30,7 +30,7 @@ import { kindInfo } from "../../lib/kinds";
 import type { ClusterMotion, Requested } from "../../lib/liveMotion";
 import { DURATION, prefersReducedMotion } from "../../lib/motion";
 import { Icon } from "../Icon";
-import { AttentionIcon, StatusIcon } from "../Status";
+import { AttentionIcon, Spinner, StatusIcon } from "../Status";
 
 const PAD = 40;
 const MIN_ZOOM = 0.12;
@@ -68,6 +68,8 @@ export interface GraphCanvasProps {
   /** Flow edge keys of a reconcile wave in progress. */
   marching: ReadonlySet<string>;
   blockage: Blockage;
+  /** Group nodes being expanded: a spinner until the members arrive. */
+  pending?: ReadonlySet<string>;
   className?: string;
   ref?: Ref<GraphHandle>;
 }
@@ -103,6 +105,7 @@ interface CardProps {
   flashAt: number | undefined;
   requested: Requested | undefined;
   waiting: string | undefined;
+  busy: boolean;
   onSelect: (id: string) => void;
   onOpen: (id: string) => void;
   onHover: (id: string | undefined) => void;
@@ -123,6 +126,7 @@ const NodeCard = memo(function NodeCard({
   flashAt,
   requested,
   waiting,
+  busy,
   onSelect,
   onOpen,
   onHover,
@@ -142,14 +146,16 @@ const NodeCard = memo(function NodeCard({
   if (flashAt !== undefined) style["--flash-delay"] = `${flashAt - Date.now()}ms`;
   const second = n.missing
     ? "not found or not visible"
-    : group
-      ? Object.entries(n.statuses ?? {})
-          .filter(([s, c]) => (c ?? 0) > 0 && s !== "ready")
-          .map(([s, c]) => `${c} ${s}`)
-          .join(" · ") || "all ready"
-      : waiting
-        ? `waiting on ${waiting}`
-        : [n.namespace, shortRevision(n.revision)].filter(Boolean).join(" · ");
+    : busy
+      ? "expanding…"
+      : group
+        ? Object.entries(n.statuses ?? {})
+            .filter(([s, c]) => (c ?? 0) > 0 && s !== "ready")
+            .map(([s, c]) => `${c} ${s}`)
+            .join(" · ") || "all ready"
+        : waiting
+          ? `waiting on ${waiting}`
+          : [n.namespace, shortRevision(n.revision)].filter(Boolean).join(" · ");
   return (
     <button
       type="button"
@@ -157,6 +163,7 @@ const NodeCard = memo(function NodeCard({
       tabIndex={tabStop ? 0 : -1}
       aria-label={label}
       aria-pressed={selected}
+      aria-busy={busy || undefined}
       data-status={n.missing ? undefined : status}
       data-blocked={n.blocked || undefined}
       data-flash={flash}
@@ -164,7 +171,7 @@ const NodeCard = memo(function NodeCard({
       data-dim={dim || undefined}
       data-root={root || undefined}
       title={n.message || undefined}
-      className={`gnode flex flex-col items-stretch text-left justify-center gap-1 rounded-[12px] border border-line bg-surface px-2.5 shadow-control select-none outline-none hover:border-line-strong aria-pressed:border-c aria-pressed:shadow-[0_0_0_3px_color-mix(in_oklab,var(--c)_22%,transparent)] focus-visible:shadow-[0_0_0_3px_color-mix(in_oklab,var(--c)_40%,transparent)] ${CARD_TONE[tone] ?? ""} ${n.inventoryOnly ? "opacity-70" : ""}`}
+      className={`gnode group/gnode flex flex-col items-stretch text-left justify-center gap-1 rounded-[12px] border border-line bg-surface px-2.5 shadow-control select-none outline-none hover:border-line-strong aria-pressed:border-c aria-pressed:shadow-[0_0_0_3px_color-mix(in_oklab,var(--c)_22%,transparent)] focus-visible:shadow-[0_0_0_3px_color-mix(in_oklab,var(--c)_40%,transparent)] ${CARD_TONE[tone] ?? ""} ${n.inventoryOnly ? "opacity-70" : ""}`}
       style={{ width: NODE_W, height: NODE_H, ...style } as CSSProperties}
       onClick={() => onSelect(n.id)}
       onDoubleClick={() => onOpen(n.id)}
@@ -179,7 +186,9 @@ const NodeCard = memo(function NodeCard({
     >
       <span className="flex min-w-0 items-center gap-1.5">
         <span key={`${status}:${n.blocked ? 1 : 0}`} className={`inline-flex ${flash ? "swap-in" : ""}`}>
-          {n.missing ? (
+          {busy ? (
+            <Spinner className="text-c" />
+          ) : n.missing ? (
             <Icon name="alert" className="size-4 shrink-0 text-ink-3" />
           ) : n.blocked ? (
             <AttentionIcon />
@@ -210,6 +219,15 @@ const NodeCard = memo(function NodeCard({
         >
           {second}
         </span>
+        {group && !busy && (
+          <span
+            aria-hidden="true"
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-c-soft px-1 text-10-5 font-semibold text-c opacity-0 transition-opacity group-hover/gnode:opacity-100 group-focus-visible/gnode:opacity-100 group-aria-pressed/gnode:opacity-100"
+          >
+            <Icon name="plus" className="size-2.5" />
+            Expand
+          </span>
+        )}
         {requested && (
           <span
             className="anim-fade-in inline-flex shrink-0 items-center gap-1 rounded-md bg-c-soft px-1 text-10-5 font-semibold text-c"
@@ -288,6 +306,7 @@ export function GraphCanvas({
   requested,
   marching,
   blockage,
+  pending,
   className = "",
   ref,
 }: GraphCanvasProps) {
@@ -408,15 +427,18 @@ export function GraphCanvas({
       fitView(false, true);
       return;
     }
+    // Expanded in place: the old nodes stay put, so the view does too.
+    const keepView = Boolean(layout.anchored);
     if (prefersReducedMotion()) {
+      if (keepView) return;
       if (!userMoved.current) fitView(false, fitMode.current === "readable");
       return;
     }
     setRelayout(true);
-    if (!userMoved.current) fitView(true, fitMode.current === "readable");
+    if (!userMoved.current && !keepView) fitView(true, fitMode.current === "readable");
     const t = setTimeout(() => setRelayout(false), DURATION.slow + 80);
     return () => clearTimeout(t);
-  }, [layout.key, fitView]);
+  }, [layout.key, layout.anchored, fitView]);
 
   // Refit when the viewport changes size (side panel drag, window resize) and the user has not moved.
   useEffect(() => {
@@ -678,7 +700,7 @@ export function GraphCanvas({
               n={n}
               x={pos.x}
               y={pos.y}
-              label={nodeLabel(layout.index, n, waitingId)}
+              label={nodeLabel(layout.index, n, waitingId, Boolean(pending?.has(id)))}
               selected={id === selectedId}
               root={id === rootId}
               tabStop={id === tabStop}
@@ -688,6 +710,7 @@ export function GraphCanvas({
               flashAt={change && change.at > now - DURATION.flash ? change.at : undefined}
               requested={requested.get(id)}
               waiting={waiting}
+              busy={Boolean(pending?.has(id))}
               onSelect={onSelect}
               onOpen={onOpen}
               onHover={setHovered}

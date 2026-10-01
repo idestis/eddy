@@ -3,11 +3,12 @@ package hub
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/idestis/eddy/internal/identity"
 )
 
-// handleGraph serves GET /api/v1/clusters/{cluster}/graph?kinds=flux|all&focus=<id>&hops=N.
+// handleGraph serves GET /api/v1/clusters/{cluster}/graph?kinds=flux|all&focus=<id>&hops=N&expand=<group id>,….
 func (a *api) handleGraph(w http.ResponseWriter, r *http.Request) {
 	p, _ := identity.From(r.Context())
 	cluster := r.PathValue("cluster")
@@ -54,6 +55,24 @@ func parseGraphOptions(r *http.Request) (graphOptions, error) {
 			return o, err
 		}
 		o.Focus = id
+	}
+	for _, v := range q["expand"] {
+		for id := range strings.SplitSeq(v, ",") {
+			if id == "" {
+				continue
+			}
+			id, err := parseGroupID(id)
+			if err != nil {
+				return o, err
+			}
+			if o.Expand == nil {
+				o.Expand = map[string]bool{}
+			}
+			o.Expand[id] = true
+			if len(o.Expand) > graphMaxExpand {
+				return o, badRequest("expand takes at most %d group ids", graphMaxExpand)
+			}
+		}
 	}
 	return o, nil
 }

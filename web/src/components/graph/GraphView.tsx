@@ -38,6 +38,8 @@ export interface GraphViewProps {
   outline?: boolean;
   /** Shown above the canvas, under the bar (callouts). */
   notice?: ReactNode;
+  /** Group nodes being expanded (a spinner on each). */
+  pending?: ReadonlySet<string>;
   className?: string;
   ref?: Ref<GraphHandle>;
 }
@@ -299,6 +301,7 @@ export function GraphView({
   header,
   outline = false,
   notice,
+  pending,
   className = "",
   ref,
 }: GraphViewProps) {
@@ -355,6 +358,7 @@ export function GraphView({
             requested={requested}
             marching={marching}
             blockage={block}
+            pending={pending}
           />
           <Legend />
           <div className="absolute right-2.5 bottom-2.5 flex flex-col rounded-lg border border-line bg-surface shadow-control">

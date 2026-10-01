@@ -5,6 +5,7 @@ import {
   buildGraph,
   COLLAPSE_OVER,
   collapseOwned,
+  expandFromItems,
   focusGraph,
   groupId,
   indexGraph,
@@ -130,6 +131,40 @@ describe("buildGraph (browser fallback)", () => {
     expect(focused.nodes.some((n) => n.count)).toBe(false);
   });
 
+  it("never collapses Flux objects: 26 Kustomizations stay nodes, laid out by dependsOn depth", () => {
+    const root = res("Kustomization", "flux-system", "flux-system");
+    const kss = Array.from({ length: COLLAPSE_OVER + 6 }, (_, i) =>
+      res("Kustomization", "flux-system", `ks${i}`, { owner: ref(root) }),
+    );
+    kss.forEach((k, i) => {
+      if (i > 0) k.dependsOn = [ref(kss[i - 1] as Resource)];
+    });
+    for (const kinds of ["flux", "all"] as const) {
+      const g = buildGraph([root, ...kss], { kinds });
+      expect(g.nodes).toHaveLength(kss.length + 1);
+      expect(g.nodes.some((n) => n.count)).toBe(false);
+      const layout = layoutGraph(g);
+      for (let i = 1; i < kss.length; i++) {
+        expect(layout.nodes.get((kss[i] as Resource).id)?.layer).toBeGreaterThan(
+          layout.nodes.get((kss[i - 1] as Resource).id)?.layer ?? 0,
+        );
+      }
+    }
+  });
+
+  it("expands the groups in opts.expand, members cut after Flux kinds", () => {
+    const root = res("Kustomization", "flux-system", "flux-system");
+    const deploys = Array.from({ length: COLLAPSE_OVER + 5 }, (_, i) =>
+      res("Deployment", "apps", `d${i}`, { owner: ref(root) }),
+    );
+    const gid = groupId(root.id, "Deployment");
+    expect(buildGraph([root, ...deploys], { kinds: "all" }).nodes.map((n) => n.id)).toContain(gid);
+    const g = buildGraph([root, ...deploys], { kinds: "all", expand: [gid] });
+    expect(g.nodes.map((n) => n.id)).not.toContain(gid);
+    expect(g.nodes).toHaveLength(deploys.length + 1);
+    expect(g.edges.filter((e) => e.type === "owns" && e.from === root.id)).toHaveLength(deploys.length);
+  });
+
   it("focus keeps the nodes within N hops in either direction", () => {
     const t = topology();
     const one = buildGraph(t.items, { kinds: "flux", focus: t.configs.id, hops: 1 });
@@ -215,6 +250,45 @@ describe("layout", () => {
     expect(third.nodes.size).toBe(first.nodes.size + 1);
   });
 
+  it("keeps the old positions when a group is expanded, members where the group was", () => {
+    const root = res("Kustomization", "flux-system", "flux-system");
+    const other = res("Kustomization", "flux-system", "other", { dependsOn: [ref(root)] });
+    const deploys = Array.from({ length: COLLAPSE_OVER + 3 }, (_, i) =>
+      res("Deployment", "apps", `d${String(i).padStart(2, "0")}`, { owner: ref(root) }),
+    );
+    const pods = deploys.map((d, i) => res("Pod", "apps", `p${i}`, { owner: ref(d) }));
+    const rows = [root, other, ...deploys, ...pods];
+    const gid = groupId(root.id, "Deployment");
+    const cache = createLayoutCache();
+    const before = cache(buildGraph(rows, { kinds: "all" }));
+    const at = before.nodes.get(gid);
+    expect(at).toBeDefined();
+    const after = cache(buildGraph(rows, { kinds: "all", expand: [gid] }));
+    expect(after.anchored).toBe(true);
+    for (const id of [root.id, other.id]) {
+      expect(after.nodes.get(id)).toMatchObject({ x: before.nodes.get(id)?.x, y: before.nodes.get(id)?.y });
+    }
+    expect(after.nodes.get((deploys[0] as Resource).id)).toMatchObject({ x: at?.x, y: at?.y });
+    // Members stack down, their pods one column right; nothing overlaps.
+    const d1 = after.nodes.get((deploys[1] as Resource).id);
+    expect(d1?.x).toBe(at?.x);
+    expect(d1?.y).toBeGreaterThan(at?.y ?? 0);
+    expect(after.nodes.get((pods[0] as Resource).id)?.x).toBeGreaterThan(at?.x ?? 0);
+    const seen = new Set<string>();
+    for (const n of after.nodes.values()) {
+      for (const m of after.nodes.values()) {
+        if (n.id === m.id || n.x !== m.x || seen.has(m.id)) continue;
+        expect(Math.abs(n.y - m.y)).toBeGreaterThanOrEqual(62);
+      }
+      seen.add(n.id);
+    }
+    expect(after.layers.flat()).toHaveLength(after.nodes.size);
+    // Collapsing again lays out afresh.
+    const again = cache(buildGraph(rows, { kinds: "all" }));
+    expect(again.anchored).toBeUndefined();
+    expect(again.nodes.get(gid)).toMatchObject({ x: at?.x, y: at?.y });
+  });
+
   it("draws smooth paths through bends", () => {
     expect(
       edgePath([
@@ -262,13 +336,13 @@ describe("lineage and collapsing (detail page)", () => {
     expect(names.has("alchemic-worker")).toBe(true); // dependent
     expect(names.has("alchemic-api-1")).toBe(false); // a pod of an owned Deployment
     expect(names.has("cert-manager")).toBe(false); // a sibling via the shared source
-    const collapsed = collapseOwned(g, t.alchemic.id, new Set(), t.items);
+    const collapsed = collapseOwned(g, t.alchemic.id, new Set());
     const deployments = collapsed.nodes.find((n) => n.id === groupId(t.alchemic.id, "Deployment"));
     expect(deployments).toMatchObject({ count: 3, status: "ready", namespace: "apps" });
     expect(collapsed.edges).toContainEqual({ from: t.alchemic.id, to: deployments?.id, type: "owns" });
     // A single Service stays a node of its own.
     expect(collapsed.nodes.some((n) => n.id === t.svc.id)).toBe(true);
-    const open = collapseOwned(g, t.alchemic.id, new Set([groupId(t.alchemic.id, "Deployment")]), t.items);
+    const open = collapseOwned(g, t.alchemic.id, new Set([groupId(t.alchemic.id, "Deployment")]));
     expect(open.nodes.filter((n) => n.kind === "Deployment")).toHaveLength(3);
   });
 
@@ -297,7 +371,11 @@ describe("lineage and collapsing (detail page)", () => {
       ],
       edges: [{ from: t.alchemic.id, to: gid, type: "owns" }],
     };
-    const open = collapseOwned(server, t.alchemic.id, new Set([gid]), t.items);
+    const open = collapseOwned(
+      expandFromItems(server, new Set([gid]), t.items),
+      t.alchemic.id,
+      new Set([gid]),
+    );
     expect(
       open.nodes
         .filter((n) => n.kind === "Deployment")

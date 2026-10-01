@@ -8,7 +8,15 @@
 // crossings, then vertical placement that pulls each node towards its neighbours.
 
 import type { GraphEdgeType, GraphResponse } from "../api/types";
-import { type FlowEdge, type GraphIndex, indexGraph, isPureSource, topologyKey } from "./graph";
+import {
+  type FlowEdge,
+  type GraphIndex,
+  indexGraph,
+  isGroupId,
+  isPureSource,
+  nodeOrder,
+  topologyKey,
+} from "./graph";
 
 export const NODE_W = 236;
 export const NODE_H = 62;
@@ -46,6 +54,11 @@ export interface Layout {
   layers: readonly (readonly string[])[];
   width: number;
   height: number;
+  /**
+   * Set when the layout kept the previous one's positions (a group was expanded in place):
+   * the canvas glides the new nodes in and keeps the view where it is.
+   */
+  anchored?: boolean;
 }
 
 const PRIORITY: Record<GraphEdgeType, number> = { dependsOn: 0, source: 1, owns: 2 };
@@ -303,9 +316,123 @@ export function layoutGraph(g: GraphResponse): Layout {
   };
 }
 
+const STEP_X = NODE_W + GAP_X;
+const STEP_Y = NODE_H + GAP_Y;
+
+/**
+ * Lays out `g` keeping `prev`'s positions, when `g` is `prev` with group nodes expanded:
+ * every node that left is a group, and every new node is a member of one of them or sits
+ * downstream of a new node. Members stack where their group was; what they own goes one
+ * column right of them; nodes below them in a column move down to make room. Anything
+ * else (a collapse, a topology change) returns undefined, and the caller lays out afresh.
+ * Exported for tests.
+ */
+export function anchoredLayout(prev: Layout, g: GraphResponse): Layout | undefined {
+  const fresh = layoutGraph(g);
+  const { index } = fresh;
+  const removed = [...prev.nodes.keys()].filter((id) => !index.nodes.has(id));
+  const added = index.ids.filter((id) => !prev.nodes.has(id));
+  if (!added.length || !removed.length || !removed.every(isGroupId)) return undefined;
+
+  const pos = new Map<string, { x: number; y: number }>();
+  const isNew = new Set(added);
+  for (const [id, n] of prev.nodes) if (index.nodes.has(id)) pos.set(id, { x: n.x, y: n.y });
+  // Members of each expanded group, in the group's place.
+  for (const gid of removed) {
+    const group = prev.index.nodes.get(gid);
+    const at = prev.nodes.get(gid);
+    if (!group?.owner || !at) continue;
+    const members = added
+      .filter(
+        (id) =>
+          !pos.has(id) &&
+          index.nodes.get(id)?.kind === group.kind &&
+          (index.up.get(id) ?? []).some((e) => e.type === "owns" && e.from === group.owner),
+      )
+      .map((id) => index.nodes.get(id))
+      .filter((n) => n !== undefined)
+      .sort(nodeOrder);
+    members.forEach((n, i) => {
+      pos.set(n.id, { x: at.x, y: at.y + i * STEP_Y });
+    });
+  }
+  // What the new nodes lead to: one column right of the first placed upstream.
+  const below = new Map<string, number>();
+  for (let progress = true; progress; ) {
+    progress = false;
+    for (const id of added) {
+      if (pos.has(id)) continue;
+      const parent = (index.up.get(id) ?? []).find((e) => isNew.has(e.from) && pos.has(e.from))?.from;
+      const p = parent ? pos.get(parent) : undefined;
+      if (!parent || !p) continue;
+      const k = below.get(parent) ?? 0;
+      below.set(parent, k + 1);
+      pos.set(id, { x: p.x + STEP_X, y: p.y + k * STEP_Y });
+      progress = true;
+    }
+  }
+  if (added.some((id) => !pos.has(id))) return undefined;
+
+  // Columns: nodes only move down, and old ones keep their place over new ones.
+  const columns = new Map<number, string[]>();
+  for (const [id, p] of pos) {
+    const l = Math.max(0, Math.round(p.x / STEP_X));
+    columns.set(l, [...(columns.get(l) ?? []), id]);
+  }
+  const nodes = new Map<string, LayoutNode>();
+  const depth = Math.max(0, ...columns.keys()) + 1;
+  const layers: string[][] = Array.from({ length: depth }, () => []);
+  let height = 0;
+  for (const [l, ids] of columns) {
+    ids.sort((a, b) => {
+      const pa = pos.get(a) as { y: number };
+      const pb = pos.get(b) as { y: number };
+      return pa.y - pb.y || Number(isNew.has(a)) - Number(isNew.has(b)) || a.localeCompare(b);
+    });
+    let floor = Number.NEGATIVE_INFINITY;
+    ids.forEach((id, order) => {
+      const p = pos.get(id) as { x: number; y: number };
+      const y = Math.max(p.y, floor);
+      floor = y + STEP_Y;
+      height = Math.max(height, y + NODE_H);
+      nodes.set(id, { id, x: l * STEP_X, y, layer: l, order });
+    });
+    layers[l] = ids;
+  }
+
+  const old = new Map(prev.edges.map((e) => [e.key, e]));
+  const edges: LayoutEdge[] = fresh.edges.map((e) => {
+    const a = nodes.get(e.from) as LayoutNode;
+    const b = nodes.get(e.to) as LayoutNode;
+    const was = old.get(e.key);
+    const pa = prev.nodes.get(e.from);
+    const pb = prev.nodes.get(e.to);
+    if (was && pa && pb && pa.x === a.x && pa.y === a.y && pb.x === b.x && pb.y === b.y) return was;
+    return {
+      ...e,
+      points: [
+        [a.x + NODE_W, a.y + NODE_H / 2],
+        [b.x, b.y + NODE_H / 2],
+      ],
+    };
+  });
+  return {
+    key: fresh.key,
+    index,
+    nodes,
+    edges,
+    hidden: fresh.hidden,
+    layers,
+    width: (depth - 1) * STEP_X + NODE_W,
+    height,
+    anchored: true,
+  };
+}
+
 /**
  * Remembers the last layout and reuses it while the topology is the same, so a status
- * change re-renders nodes in place. The index is refreshed so nodes carry live data.
+ * change re-renders nodes in place. The index is refreshed so nodes carry live data. When
+ * groups are expanded, the existing nodes keep their positions (anchoredLayout).
  */
 export function createLayoutCache(): (g: GraphResponse) => Layout {
   let last: Layout | undefined;
@@ -315,7 +442,7 @@ export function createLayoutCache(): (g: GraphResponse) => Layout {
       last = { ...last, index: indexGraph(g) };
       return last;
     }
-    last = layoutGraph(g);
+    last = (last && anchoredLayout(last, g)) || layoutGraph(g);
     return last;
   };
 }
