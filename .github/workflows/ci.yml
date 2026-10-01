@@ -53,10 +53,37 @@ jobs:
           out image   "^(Dockerfile|\.dockerignore|cmd/|internal/|go\.mod|go\.sum|web/|$wf)"
           out landing "^(landing/|\.github/workflows/pages\.yml|$wf)"
 
-  go:
+  go-lint:
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    name: Go (vet, staticcheck, test)
+    name: Go (gofmt, vet, staticcheck)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: false
+      # setup-go never re-saves its cache on an exact key hit, so the build cache would stay as
+      # old as go.sum. This one is saved on every run (keyed by run id) and restored from the
+      # newest match.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-
+      - run: hack/ci.sh go-lint
+
+  go-test:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    name: Go (test -race)
     runs-on: ubuntu-24.04
     # The store conformance suite runs against this server (internal/store/postgres).
     # Each test creates and drops its own schema.
@@ -81,7 +108,20 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
-      - run: hack/ci.sh go
+          cache: false
+      # setup-go never re-saves its cache on an exact key hit, so the build cache would stay as
+      # old as go.sum. This one is saved on every run (keyed by run id) and restored from the
+      # newest match.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-test-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            go-test-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-test-${{ runner.os }}-
+      - run: hack/ci.sh go-test
 
   govulncheck:
     needs: changes
@@ -175,12 +215,12 @@ jobs:
   ci-ok:
     name: CI
     if: always()
-    needs: [changes, go, govulncheck, web, helm, docker, landing]
+    needs: [changes, go-lint, go-test, govulncheck, web, helm, docker, landing]
     runs-on: ubuntu-24.04
     steps:
       - name: Decide whether the CI passed
         run: |
-          statuses=("${{ needs.changes.result }}" "${{ needs.go.result }}" "${{ needs.govulncheck.result }}" "${{ needs.web.result }}" "${{ needs.helm.result }}" "${{ needs.docker.result }}" "${{ needs.landing.result }}")
+          statuses=("${{ needs.changes.result }}" "${{ needs.go-lint.result }}" "${{ needs.go-test.result }}" "${{ needs.govulncheck.result }}" "${{ needs.web.result }}" "${{ needs.helm.result }}" "${{ needs.docker.result }}" "${{ needs.landing.result }}")
           for status in "${statuses[@]}"; do
             if [[ "$status" != "success" && "$status" != "skipped" ]]; then
               exit 1

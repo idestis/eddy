@@ -37,6 +37,11 @@ start_pg() {
 }
 
 job_go() {
+  job_go_lint
+  job_go_test
+}
+
+job_go_lint() {
   step "go: gofmt"
   if [ -n "$(gofmt -l cmd internal)" ]; then gofmt -l cmd internal; exit 1; fi
   step "go: vet"
@@ -45,6 +50,9 @@ job_go() {
   step "go: staticcheck"
   go run "$STATICCHECK" ./...
   go run "$STATICCHECK" -tags dev ./...
+}
+
+job_go_test() {
   start_pg
   step "go: test -race${EDDY_TEST_POSTGRES_DSN:+ (with Postgres)}"
   go test -race -count=1 ./...
@@ -122,6 +130,8 @@ job_docker() {
 
 case "${1:-all}" in
   go) job_go ;;
+  go-lint) job_go_lint ;;
+  go-test) job_go_test ;;
   vuln) job_vuln ;;
   web) job_web ;;
   landing) job_landing ;;
@@ -136,5 +146,5 @@ case "${1:-all}" in
     if [ "${DOCKER:-1}" != "0" ]; then job_docker; fi
     step "ci: all checks passed"
     ;;
-  *) echo "usage: $0 [all|go|vuln|web|landing|charts|docker]" >&2; exit 2 ;;
+  *) echo "usage: $0 [all|go|go-lint|go-test|vuln|web|landing|charts|docker]" >&2; exit 2 ;;
 esac
