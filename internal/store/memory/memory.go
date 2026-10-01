@@ -766,8 +766,16 @@ func (x joinTokens) List(_ context.Context, cluster string) ([]store.JoinToken, 
 			out = append(out, t)
 		}
 	}
+	// Newest first. Create revokes every live predecessor, so of two tokens
+	// created in the same millisecond the unrevoked one is the newer.
+	revoked := func(t store.JoinToken) int {
+		if t.RevokedAt != nil {
+			return 1
+		}
+		return 0
+	}
 	slices.SortFunc(out, func(a, b store.JoinToken) int {
-		return cmp.Or(b.CreatedAt.Compare(a.CreatedAt), cmp.Compare(b.ID, a.ID))
+		return cmp.Or(b.CreatedAt.Compare(a.CreatedAt), cmp.Compare(revoked(a), revoked(b)), cmp.Compare(b.ID, a.ID))
 	})
 	return out, nil
 }

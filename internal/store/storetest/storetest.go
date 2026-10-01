@@ -1637,6 +1637,15 @@ func testJoinCreateGetList(t *testing.T, s store.Store) {
 	if len(list) != 2 || list[0].ID != b.ID || list[1].ID != a.ID || list[0].Hash != nil {
 		t.Fatalf("List = %+v", list)
 	}
+	// A successor created in the same millisecond still lists first, even
+	// when its id sorts before its predecessor's.
+	c := joinToken("000000000000", "prod", b.CreatedAt)
+	if err := j.Create(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := j.List(ctx, "prod"); len(list) != 3 || list[0].ID != c.ID || list[1].ID != b.ID || list[0].RevokedAt != nil {
+		t.Fatalf("List after a same-millisecond successor = %+v", list)
+	}
 	if _, err := j.Get(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Get unknown: %v", err)
 	}

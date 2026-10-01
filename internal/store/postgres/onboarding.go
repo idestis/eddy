@@ -82,9 +82,11 @@ RETURNING `+joinCols, nowMs, id))
 	return t, nil
 }
 
+// List orders newest first. Create revokes every live predecessor, so of two
+// tokens created in the same millisecond the unrevoked one is the newer.
 func (x joinTokens) List(ctx context.Context, cluster string) ([]store.JoinToken, error) {
 	rows, err := x.s.db.QueryContext(ctx, `SELECT `+joinCols+` FROM join_tokens WHERE cluster = $1
-ORDER BY created_at DESC, id DESC`, cluster)
+ORDER BY created_at DESC, (revoked_at IS NULL) DESC, id DESC`, cluster)
 	if err != nil {
 		return nil, mapErr("list join tokens", err)
 	}

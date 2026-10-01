@@ -442,7 +442,8 @@ type JoinTokens interface {
 	// concurrent Consume calls for a token succeeds, on every replica; the
 	// others get ErrNotFound (as do calls for an unusable or unknown id).
 	Consume(ctx context.Context, id string, now time.Time) (JoinToken, error)
-	// List returns the tokens of cluster without hashes, newest first.
+	// List returns the tokens of cluster without hashes, newest first; of tokens
+	// created in the same millisecond, the unrevoked one comes first.
 	List(ctx context.Context, cluster string) ([]JoinToken, error)
 	// RevokeByCluster revokes every live token of cluster, for example when
 	// the cluster is deleted. Idempotent.
