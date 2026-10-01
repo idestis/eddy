@@ -26,7 +26,7 @@ Store: PostgreSQL from Secret {{ .Values.store.postgres.dsnSecret.name }} (key {
 {{- if and .Values.config.auth.local.enabled (not .Values.users.existingSecret) (not .Values.users.list) }}
 
 WARNING: local sign-in is enabled but no users are defined. Set users.list or
-  users.existingSecret (hash passwords with: eddy-hub hash-password).
+  users.existingSecret (hash passwords with: docker run --rm -i ghcr.io/idestis/eddy-hub:{{ .Chart.AppVersion }} hash-password).
 {{- end }}
 {{- $base := trimSuffix "/" .Values.publicURL }}
 {{- $gh := default dict .Values.config.auth.github }}
@@ -68,8 +68,9 @@ authenticate with a personal access token), so do not add a second auth layer in
 
 Agent endpoint: {{ $agentsURL }}
 {{- if not (or .Values.agentsPublicURL .Values.ingress.agents.hosts) }}
-  (in-cluster address only. For agents in other clusters set agentsPublicURL or
-   ingress.agents.hosts, and terminate TLS there.)
+  WARNING: this is the in-cluster address, which only agents in this cluster can reach.
+  Set agentsPublicURL or ingress.agents.hosts for agents in other clusters. Until then the
+  Add cluster wizard shows a placeholder hub URL instead of a working command.
 {{- end }}
 {{ if .Values.clusters }}
 Register each workload cluster by running this against THAT cluster:
@@ -88,4 +89,6 @@ No clusters registered yet. Add entries to `clusters:` and upgrade. NOTES will t
 exact `helm install eddy-agent` command for each one.
 {{- end }}
 
-Next: apply deploy/rbac/eddy-user-rbac.yaml in each workload cluster so users can see something.
+Each agent install also creates the user RBAC (userRBAC in the eddy-agent values): eddy-viewer for
+every signed-in user (eddy:authenticated) and eddy-operator for the groups you list in
+userRBAC.operator.groups, so set those per cluster.

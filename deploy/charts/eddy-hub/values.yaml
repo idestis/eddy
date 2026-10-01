@@ -6,7 +6,8 @@ publicURL: https://eddy.internal.example.com
 
 # URL that agents in workload clusters use to reach the hub's agent listener. Used in the
 # `helm install eddy-agent` command in NOTES.txt and in the UI's install guide. If empty, the
-# first ingress.agents host is used, then the in-cluster Service address.
+# first ingress.agents host is used. With neither, the install guide shows a placeholder and a
+# warning, because the in-cluster Service address only reaches agents in this cluster.
 agentsPublicURL: ""
 
 # Add clusters from the UI (ADR-0005): "Add cluster" creates the Cluster resource, a token
@@ -208,7 +209,7 @@ store:
 
 # ---------------------------------------------------------------------------
 # Local users (auth.local). Either point at your own Secret, or list users inline.
-# Create hashes with: docker run --rm -i ghcr.io/idestis/eddy-hub hash-password
+# Create hashes with: docker run --rm -i ghcr.io/idestis/eddy-hub:1.0.0 hash-password
 # ---------------------------------------------------------------------------
 users:
   existingSecret: ""               # Secret with key users.yaml

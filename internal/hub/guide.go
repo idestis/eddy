@@ -399,7 +399,7 @@ func renderGuide(cfg *config.Hub, spec ClusterSpec, token string, expires time.T
 	g := installGuide{Namespace: d.Namespace, NetworkDocs: guideNetworkDocs}
 	if d.HubURL == "" {
 		d.HubURL = guideHubURLHolder
-		g.Warnings = append(g.Warnings, "agentsPublicURL is not set on the hub: replace the placeholder hub URL with your agent endpoint.")
+		g.Warnings = append(g.Warnings, "The hub has no agent endpoint for other clusters: set agentsPublicURL or ingress.agents.hosts in the eddy-hub chart, or replace the placeholder hub URL below with it.")
 	}
 	d.Insecure = strings.HasPrefix(d.HubURL, "ws://")
 	if d.Insecure {
