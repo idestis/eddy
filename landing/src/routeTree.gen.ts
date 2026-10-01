@@ -12,11 +12,17 @@ import { Route as rootRouteImport } from "./routes/__root";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as DocsRouteImport } from "./routes/docs";
 import { Route as DocsIndexRouteImport } from "./routes/docs/index";
+import { Route as DocsAccessRouteImport } from "./routes/docs/access";
+import { Route as DocsAskAiRouteImport } from "./routes/docs/ask-ai";
+import { Route as DocsClustersRouteImport } from "./routes/docs/clusters";
 import { Route as DocsInstallRouteImport } from "./routes/docs/install";
 import { Route as DocsMcpRouteImport } from "./routes/docs/mcp";
+import { Route as DocsOperationsRouteImport } from "./routes/docs/operations";
 import { Route as DocsQuickstartRouteImport } from "./routes/docs/quickstart";
 import { Route as DocsRoadmapFaqRouteImport } from "./routes/docs/roadmap-faq";
 import { Route as DocsSecurityRouteImport } from "./routes/docs/security";
+import { Route as DocsSignInRouteImport } from "./routes/docs/sign-in";
+import { Route as DocsUsingRouteImport } from "./routes/docs/using";
 
 const IndexRoute = IndexRouteImport.update({
   id: "/",
@@ -33,6 +39,21 @@ const DocsIndexRoute = DocsIndexRouteImport.update({
   path: "/",
   getParentRoute: () => DocsRoute,
 } as any);
+const DocsAccessRoute = DocsAccessRouteImport.update({
+  id: "/access",
+  path: "/access",
+  getParentRoute: () => DocsRoute,
+} as any);
+const DocsAskAiRoute = DocsAskAiRouteImport.update({
+  id: "/ask-ai",
+  path: "/ask-ai",
+  getParentRoute: () => DocsRoute,
+} as any);
+const DocsClustersRoute = DocsClustersRouteImport.update({
+  id: "/clusters",
+  path: "/clusters",
+  getParentRoute: () => DocsRoute,
+} as any);
 const DocsInstallRoute = DocsInstallRouteImport.update({
   id: "/install",
   path: "/install",
@@ -41,6 +62,11 @@ const DocsInstallRoute = DocsInstallRouteImport.update({
 const DocsMcpRoute = DocsMcpRouteImport.update({
   id: "/mcp",
   path: "/mcp",
+  getParentRoute: () => DocsRoute,
+} as any);
+const DocsOperationsRoute = DocsOperationsRouteImport.update({
+  id: "/operations",
+  path: "/operations",
   getParentRoute: () => DocsRoute,
 } as any);
 const DocsQuickstartRoute = DocsQuickstartRouteImport.update({
@@ -58,35 +84,63 @@ const DocsSecurityRoute = DocsSecurityRouteImport.update({
   path: "/security",
   getParentRoute: () => DocsRoute,
 } as any);
+const DocsSignInRoute = DocsSignInRouteImport.update({
+  id: "/sign-in",
+  path: "/sign-in",
+  getParentRoute: () => DocsRoute,
+} as any);
+const DocsUsingRoute = DocsUsingRouteImport.update({
+  id: "/using",
+  path: "/using",
+  getParentRoute: () => DocsRoute,
+} as any);
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
   "/docs": typeof DocsRouteWithChildren;
+  "/docs/access": typeof DocsAccessRoute;
+  "/docs/ask-ai": typeof DocsAskAiRoute;
+  "/docs/clusters": typeof DocsClustersRoute;
   "/docs/install": typeof DocsInstallRoute;
   "/docs/mcp": typeof DocsMcpRoute;
+  "/docs/operations": typeof DocsOperationsRoute;
   "/docs/quickstart": typeof DocsQuickstartRoute;
   "/docs/roadmap-faq": typeof DocsRoadmapFaqRoute;
   "/docs/security": typeof DocsSecurityRoute;
+  "/docs/sign-in": typeof DocsSignInRoute;
+  "/docs/using": typeof DocsUsingRoute;
   "/docs/": typeof DocsIndexRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
+  "/docs/access": typeof DocsAccessRoute;
+  "/docs/ask-ai": typeof DocsAskAiRoute;
+  "/docs/clusters": typeof DocsClustersRoute;
   "/docs/install": typeof DocsInstallRoute;
   "/docs/mcp": typeof DocsMcpRoute;
+  "/docs/operations": typeof DocsOperationsRoute;
   "/docs/quickstart": typeof DocsQuickstartRoute;
   "/docs/roadmap-faq": typeof DocsRoadmapFaqRoute;
   "/docs/security": typeof DocsSecurityRoute;
+  "/docs/sign-in": typeof DocsSignInRoute;
+  "/docs/using": typeof DocsUsingRoute;
   "/docs": typeof DocsIndexRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof IndexRoute;
   "/docs": typeof DocsRouteWithChildren;
+  "/docs/access": typeof DocsAccessRoute;
+  "/docs/ask-ai": typeof DocsAskAiRoute;
+  "/docs/clusters": typeof DocsClustersRoute;
   "/docs/install": typeof DocsInstallRoute;
   "/docs/mcp": typeof DocsMcpRoute;
+  "/docs/operations": typeof DocsOperationsRoute;
   "/docs/quickstart": typeof DocsQuickstartRoute;
   "/docs/roadmap-faq": typeof DocsRoadmapFaqRoute;
   "/docs/security": typeof DocsSecurityRoute;
+  "/docs/sign-in": typeof DocsSignInRoute;
+  "/docs/using": typeof DocsUsingRoute;
   "/docs/": typeof DocsIndexRoute;
 }
 export interface FileRouteTypes {
@@ -94,30 +148,48 @@ export interface FileRouteTypes {
   fullPaths:
     | "/"
     | "/docs"
+    | "/docs/access"
+    | "/docs/ask-ai"
+    | "/docs/clusters"
     | "/docs/install"
     | "/docs/mcp"
+    | "/docs/operations"
     | "/docs/quickstart"
     | "/docs/roadmap-faq"
     | "/docs/security"
+    | "/docs/sign-in"
+    | "/docs/using"
     | "/docs/";
   fileRoutesByTo: FileRoutesByTo;
   to:
     | "/"
+    | "/docs/access"
+    | "/docs/ask-ai"
+    | "/docs/clusters"
     | "/docs/install"
     | "/docs/mcp"
+    | "/docs/operations"
     | "/docs/quickstart"
     | "/docs/roadmap-faq"
     | "/docs/security"
+    | "/docs/sign-in"
+    | "/docs/using"
     | "/docs";
   id:
     | "__root__"
     | "/"
     | "/docs"
+    | "/docs/access"
+    | "/docs/ask-ai"
+    | "/docs/clusters"
     | "/docs/install"
     | "/docs/mcp"
+    | "/docs/operations"
     | "/docs/quickstart"
     | "/docs/roadmap-faq"
     | "/docs/security"
+    | "/docs/sign-in"
+    | "/docs/using"
     | "/docs/";
   fileRoutesById: FileRoutesById;
 }
@@ -149,6 +221,27 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof DocsIndexRouteImport;
       parentRoute: typeof DocsRoute;
     };
+    "/docs/access": {
+      id: "/docs/access";
+      path: "/access";
+      fullPath: "/docs/access";
+      preLoaderRoute: typeof DocsAccessRouteImport;
+      parentRoute: typeof DocsRoute;
+    };
+    "/docs/ask-ai": {
+      id: "/docs/ask-ai";
+      path: "/ask-ai";
+      fullPath: "/docs/ask-ai";
+      preLoaderRoute: typeof DocsAskAiRouteImport;
+      parentRoute: typeof DocsRoute;
+    };
+    "/docs/clusters": {
+      id: "/docs/clusters";
+      path: "/clusters";
+      fullPath: "/docs/clusters";
+      preLoaderRoute: typeof DocsClustersRouteImport;
+      parentRoute: typeof DocsRoute;
+    };
     "/docs/install": {
       id: "/docs/install";
       path: "/install";
@@ -161,6 +254,13 @@ declare module "@tanstack/react-router" {
       path: "/mcp";
       fullPath: "/docs/mcp";
       preLoaderRoute: typeof DocsMcpRouteImport;
+      parentRoute: typeof DocsRoute;
+    };
+    "/docs/operations": {
+      id: "/docs/operations";
+      path: "/operations";
+      fullPath: "/docs/operations";
+      preLoaderRoute: typeof DocsOperationsRouteImport;
       parentRoute: typeof DocsRoute;
     };
     "/docs/quickstart": {
@@ -184,24 +284,50 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof DocsSecurityRouteImport;
       parentRoute: typeof DocsRoute;
     };
+    "/docs/sign-in": {
+      id: "/docs/sign-in";
+      path: "/sign-in";
+      fullPath: "/docs/sign-in";
+      preLoaderRoute: typeof DocsSignInRouteImport;
+      parentRoute: typeof DocsRoute;
+    };
+    "/docs/using": {
+      id: "/docs/using";
+      path: "/using";
+      fullPath: "/docs/using";
+      preLoaderRoute: typeof DocsUsingRouteImport;
+      parentRoute: typeof DocsRoute;
+    };
   }
 }
 
 interface DocsRouteChildren {
+  DocsAccessRoute: typeof DocsAccessRoute;
+  DocsAskAiRoute: typeof DocsAskAiRoute;
+  DocsClustersRoute: typeof DocsClustersRoute;
   DocsInstallRoute: typeof DocsInstallRoute;
   DocsMcpRoute: typeof DocsMcpRoute;
+  DocsOperationsRoute: typeof DocsOperationsRoute;
   DocsQuickstartRoute: typeof DocsQuickstartRoute;
   DocsRoadmapFaqRoute: typeof DocsRoadmapFaqRoute;
   DocsSecurityRoute: typeof DocsSecurityRoute;
+  DocsSignInRoute: typeof DocsSignInRoute;
+  DocsUsingRoute: typeof DocsUsingRoute;
   DocsIndexRoute: typeof DocsIndexRoute;
 }
 
 const DocsRouteChildren: DocsRouteChildren = {
+  DocsAccessRoute: DocsAccessRoute,
+  DocsAskAiRoute: DocsAskAiRoute,
+  DocsClustersRoute: DocsClustersRoute,
   DocsInstallRoute: DocsInstallRoute,
   DocsMcpRoute: DocsMcpRoute,
+  DocsOperationsRoute: DocsOperationsRoute,
   DocsQuickstartRoute: DocsQuickstartRoute,
   DocsRoadmapFaqRoute: DocsRoadmapFaqRoute,
   DocsSecurityRoute: DocsSecurityRoute,
+  DocsSignInRoute: DocsSignInRoute,
+  DocsUsingRoute: DocsUsingRoute,
   DocsIndexRoute: DocsIndexRoute,
 };
 

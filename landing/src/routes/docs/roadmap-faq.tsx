@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { FullRef } from "../../components/FullRef";
 import { Kbd } from "../../components/Kbd";
 import { Pager } from "../../components/Pager";
 import { pageHead } from "../../lib/head";
@@ -17,6 +18,7 @@ function Page() {
   return (
     <>
       <h1>Roadmap &amp; FAQ</h1>
+      <FullRef path="README.md#whats-in-v10-and-whats-next" label="README, what's in v1.0 and what's next" />
       <h2 id="roadmap">Roadmap</h2>
       <div className="tbl">
         <table>

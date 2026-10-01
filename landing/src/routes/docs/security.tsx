@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { FullRef } from "../../components/FullRef";
 import { Pager } from "../../components/Pager";
 import { pageHead } from "../../lib/head";
 
@@ -22,6 +23,7 @@ function Page() {
         <a href="https://github.com/idestis/eddy/tree/HEAD/docs/adr">ADRs</a>. To report a vulnerability, see{" "}
         <a href="https://github.com/idestis/eddy/blob/HEAD/SECURITY.md">SECURITY.md</a>.
       </p>
+      <FullRef path="docs/security.md" />
       <h2 id="short">The short version</h2>
       <ul>
         <li>
@@ -88,7 +90,13 @@ function Page() {
           Set <code>publicURL</code> to the real https origin.
         </li>
         <li>Keep the UI and agent ingress internal and restrict source CIDRs.</li>
-        <li>Use an encrypted persistent volume.</li>
+        <li>Encrypt the PostgreSQL storage and its backups.</li>
+        <li>
+          Pin agent impersonation with <code>impersonation.groups</code> and keep the agent NetworkPolicy on.
+        </li>
+        <li>
+          Keep <code>mcp.allowLogs</code> and <code>ai.allowLogs</code> off unless you need them.
+        </li>
         <li>
           Mark production clusters <code>protected: true</code>.
         </li>

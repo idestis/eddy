@@ -1,4 +1,9 @@
-const keys: Array<{ keys: string[]; label: string }> = [
+export interface KeyItem {
+  keys: string[];
+  label: string;
+}
+
+const keys: KeyItem[] = [
   { keys: ["j"], label: "move down" },
   { keys: ["k"], label: "move up" },
   { keys: ["l"], label: "open" },
@@ -17,13 +22,13 @@ const keys: Array<{ keys: string[]; label: string }> = [
  * the columns line up whatever the label length. On phones it becomes a two-column list where the
  * keys sit above the label.
  */
-export function Keymap() {
+export function Keymap({ items = keys, label = "Key bindings" }: { items?: KeyItem[]; label?: string }) {
   return (
     <ul
-      aria-label="Key bindings"
+      aria-label={label}
       className="keys m-0 mt-4 grid list-none grid-cols-2 gap-x-5 p-0 sm:grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] sm:gap-x-8"
     >
-      {keys.map((k) => (
+      {items.map((k) => (
         <li
           key={k.label}
           className="flex flex-col items-start gap-1.5 border-b border-dashed border-line py-3 text-[0.93rem] text-ink-2 sm:min-h-12 sm:flex-row sm:items-center sm:gap-3 sm:py-2"
