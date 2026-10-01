@@ -61,6 +61,24 @@ tasks:
   ci:charts:
     cmds: [hack/ci.sh charts]
 
+  changelog:preview:
+    desc: Preview the next release notes (unreleased commits)
+    cmds: [git cliff --unreleased --strip all]
+
+  release:preview:
+    desc: Print the version the next release would get from the commits
+    cmds:
+      - |
+        echo "current: $(sed -n 's/^version: //p' deploy/charts/eddy-hub/Chart.yaml)"
+        echo "next:    $(git cliff --bumped-version 2>/dev/null | sed 's/^v//')"
+    silent: true
+
+  release:
+    desc: "Cut a release for the hub, the agent and both charts: bump, CHANGELOG.md, commit, tag vX.Y.Z, push. Pin with: task release -- 1.1.0. DRY_RUN=1 stops before the commit"
+    env:
+      DRY_RUN: '{{.DRY_RUN | default "0"}}'
+    cmds: ["hack/release.sh {{.CLI_ARGS}}"]
+
   ui:install:
     dir: web
     sources: [package.json, pnpm-lock.yaml]

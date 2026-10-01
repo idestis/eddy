@@ -252,3 +252,21 @@ context matches `PROTECT`. Give your dev user RBAC in the cluster with the examp
 ## Watch presets in local mode
 
 Local mode turns on both agent watch presets, `karpenter` and `externalSecrets`, so their kinds show real status. Set `EDDY_AGENT_PRESETS=karpenter` (or `none`) in `.env` to change that. Installed agents use the chart value `watch.presets`.
+
+## Releasing
+
+The hub, the agent and both charts share one version and one tag, `vX.Y.Z`. They ship together
+because the hub and the agent speak one protocol, and the charts pin the matching images. The
+landing site is not versioned: it deploys from `main`.
+
+1. `task changelog:preview` and `task release:preview` show the notes and the version git-cliff
+   picks from the Conventional Commits since the last tag (`feat` bumps the minor, `fix` the
+   patch, a breaking change the major).
+2. `task release` (or `task release -- 1.1.0` to pin it) checks that `main` is clean, matches
+   `origin/main` and has a green CI run. It then bumps both `Chart.yaml` files and the pinned
+   versions in the install docs, writes `CHANGELOG.md`, commits `chore(release): vX.Y.Z`, tags it
+   and pushes `main` and the tag together. `DRY_RUN=1 task release` stops before the commit.
+3. The tag runs `.github/workflows/release.yml`: the GitHub release with git-cliff notes, the
+   multi-arch images `ghcr.io/idestis/eddy-{hub,agent}:X.Y.Z` and `:X.Y` with SBOM and provenance,
+   and the charts in `oci://ghcr.io/idestis/charts`. Images and charts are signed with cosign
+   (keyless).
