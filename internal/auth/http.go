@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/idestis/eddy/internal/config"
 	"github.com/idestis/eddy/internal/identity"
 	"github.com/idestis/eddy/internal/store"
 )
@@ -68,6 +69,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST "+loginPath, s.handleLogin)
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
+	s.oauthRoutes(mux)
 	s.devRoutes(mux)
 }
 
@@ -124,9 +126,23 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logName := truncate(req.Username, 64)
+	breakglass := s.cfg.Auth.Local.Mode == config.LocalModeBreakglass
+	detail := func(extra ...string) map[string]string {
+		d := map[string]string{"provider": ProviderLocal, "username": logName}
+		if breakglass {
+			d["mode"] = config.LocalModeBreakglass
+		}
+		for i := 0; i+1 < len(extra); i += 2 {
+			d[extra[i]] = extra[i+1]
+		}
+		return d
+	}
+	if breakglass {
+		s.log.Warn("break-glass local sign-in attempt", "username", logName, "peer", peerIP(r))
+	}
 	deny := func(reason string) {
 		s.rec.Record(ctx, identity.Principal{Via: identity.ViaWeb, Provider: ProviderLocal}, "login", store.ResourceRef{},
-			store.AuditDenied, map[string]string{"provider": ProviderLocal, "username": logName, "reason": reason})
+			store.AuditDenied, detail("reason", reason))
 		writeError(w, http.StatusUnauthorized, "unauthorized", genericLogin)
 	}
 	if locked, err := s.limiter.locked(ctx, req.Username); err != nil {
@@ -147,7 +163,9 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 			u = us.byName[req.Username]
 		}
 	}
-	if u != nil && !u.Disabled && len(pw) <= maxPasswordBytes {
+	// A user outside auth.local.allowedUsers is checked against the dummy
+	// hash like an unknown one, so the answer and its timing do not differ.
+	if u != nil && !u.Disabled && s.localAllowed(u.Username) && len(pw) <= maxPasswordBytes {
 		ph = &u.hash
 	}
 	if len(pw) > maxPasswordBytes {
@@ -187,7 +205,10 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.setSessionCookie(w, raw)
 	s.clearCookie(w, s.preCookieName)
 	p := identity.Principal{User: u.Subject, Groups: groups, Display: u.Username, Provider: ProviderLocal, Via: identity.ViaWeb}
-	s.rec.Record(ctx, p, "login", store.ResourceRef{}, store.AuditOK, map[string]string{"provider": ProviderLocal, "username": logName})
+	s.rec.Record(ctx, p, "login", store.ResourceRef{}, store.AuditOK, detail())
+	if breakglass {
+		s.log.Warn("break-glass local sign-in succeeded", "user", u.Subject, "peer", peerIP(r))
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
 }

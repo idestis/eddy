@@ -212,10 +212,24 @@ export interface Me {
   version: string;
 }
 
+export type LocalMode = "normal" | "breakglass";
+
+/** A GitHub or OIDC sign-in provider from GET /auth/providers. */
+export interface SignInProvider {
+  id: string;
+  name: string;
+  kind: "github" | "oidc";
+  /** A mark the SPA ships ("github"); absent means a neutral icon. */
+  icon?: "github";
+  /** GET this (with ?returnTo=) to start the browser flow. */
+  loginURL: string;
+}
+
 export interface Providers {
-  local: boolean;
+  local: { enabled: boolean; mode: LocalMode };
   proxy: boolean;
   dev: boolean;
+  providers: SignInProvider[];
 }
 
 export interface List<T> {

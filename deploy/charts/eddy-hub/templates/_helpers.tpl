@@ -86,6 +86,34 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.config.auth.proxy.enabled (not .Values.oauth2Proxy.enabled) (not .Values.config.auth.proxy.trustedCIDRs) -}}
 {{- fail "config.auth.proxy.enabled needs config.auth.proxy.trustedCIDRs (the TCP peers of your proxy)." -}}
 {{- end -}}
+{{- $a := .Values.config.auth -}}
+{{- $gh := default dict $a.github -}}
+{{- $oidc := default list $a.oidc -}}
+{{- if $gh.enabled -}}
+{{- if not $gh.clientID -}}
+{{- fail "config.auth.github.enabled needs config.auth.github.clientID (from your GitHub App or OAuth App)." -}}
+{{- end -}}
+{{- if and (not $gh.allowedOrganizations) (not $gh.allowAllUsers) -}}
+{{- fail "config.auth.github needs allowedOrganizations: without it any GitHub account could sign in (set allowAllUsers only for GitHub Enterprise Server)." -}}
+{{- end -}}
+{{- if not .Values.credentialsSecret -}}
+{{- fail (printf "config.auth.github needs credentialsSecret with the client secret under %s." (default "GITHUB_CLIENT_SECRET" $gh.clientSecretEnv)) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $oidc (not .Values.credentialsSecret) -}}
+{{- fail "config.auth.oidc needs credentialsSecret with each provider's client secret (OIDC_<ID>_CLIENT_SECRET)." -}}
+{{- end -}}
+{{- range $i, $o := $oidc -}}
+{{- if and (not $o.issuer) (ne (toString $o.preset) "google") -}}
+{{- fail (printf "config.auth.oidc[%d] (%s) needs issuer (only the google preset has a default)." $i (toString $o.id)) -}}
+{{- end -}}
+{{- if and (eq (toString $o.preset) "google") (not $o.allowedDomains) (not $o.allowAllUsers) -}}
+{{- fail (printf "config.auth.oidc[%d] (%s): the google preset needs allowedDomains, or any Google account could sign in." $i (toString $o.id)) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $a.local.enabled (eq (toString $a.local.mode) "breakglass") (not (or $gh.enabled $oidc $a.proxy.enabled .Values.oauth2Proxy.enabled)) -}}
+{{- fail "config.auth.local.mode=breakglass hides the password form, so enable config.auth.github, config.auth.oidc or proxy auth too." -}}
+{{- end -}}
 {{- range $i, $c := .Values.clusters -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $c.name)) -}}
 {{- fail (printf "clusters[%d].name %q must be a DNS-1123 label" $i (toString $c.name)) -}}

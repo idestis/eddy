@@ -65,6 +65,39 @@ config:
     local:
       enabled: true
       userPrefix: "local:"
+      # normal: the password form is on the sign-in page.
+      # breakglass: the form is hidden (reachable at /login?local=1, "Admin sign-in"), still
+      # rate-limited, and every use is logged as a WARN. Needs github, oidc or proxy enabled.
+      mode: normal
+      allowedUsers: []             # optional: only these local usernames may sign in
+    # GitHub sign-in (OAuth App or GitHub App). See docs/auth.md for creating the app.
+    # Callback URL to register: <publicURL>/auth/github/callback
+    github:
+      enabled: false
+      name: GitHub                 # button label: "Continue with GitHub"
+      clientID: ""
+      clientSecretEnv: GITHUB_CLIENT_SECRET  # key in credentialsSecret
+      baseURL: ""                  # GitHub Enterprise Server, e.g. https://github.example.com
+      allowedOrganizations: []     # required (unless allowAllUsers): who may sign in
+      teamsAsGroups: true          # add github:<org>/<team-slug> groups
+      allowedTeams: []             # optional, "org/team-slug": also require one of these teams
+      allowAllUsers: false         # any GitHub account; never on github.com
+      userPrefix: ""               # user is the primary verified email, else github:<login>
+    # OpenID Connect providers. Each gets /auth/<id>/login and the callback
+    # <publicURL>/auth/<id>/callback. The secret comes from credentialsSecret under
+    # clientSecretEnv (default OIDC_<ID>_CLIENT_SECRET, upper case, - becomes _).
+    oidc: []
+    #  - id: google                # ^[a-z0-9][a-z0-9-]{0,30}$
+    #    preset: google            # google | okta | entra | dex: sensible defaults
+    #    clientID: 1234.apps.googleusercontent.com
+    #    allowedDomains: [example.com]   # Google: checked against the hd claim
+    #  - id: okta
+    #    name: Okta
+    #    preset: okta
+    #    issuer: https://example.okta.com/oauth2/default
+    #    clientID: 0oa...
+    #    groupsClaim: groups
+    #    allowedGroups: [eddy-users]
     proxy:             # enabled automatically when oauth2Proxy.enabled is true
       enabled: false
       userHeader: X-Forwarded-Email
@@ -131,8 +164,8 @@ config:
     maxResultBytes: 65536
 
 # Secret (in the release namespace) whose keys become environment variables via envFrom,
-# e.g. ANTHROPIC_API_KEY and EDDY_PROXY_SECRET. Create it yourself; the chart never holds
-# your secrets.
+# e.g. ANTHROPIC_API_KEY, EDDY_PROXY_SECRET, GITHUB_CLIENT_SECRET and OIDC_<ID>_CLIENT_SECRET.
+# Create it yourself; the chart never holds your secrets.
 credentialsSecret: ""
 
 # Extra environment variables for the hub container.

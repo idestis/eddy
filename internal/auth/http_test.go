@@ -483,7 +483,7 @@ func TestInsecureCookieNamesOnHTTP(t *testing.T) {
 func TestProvidersRoute(t *testing.T) {
 	e := newEnv(t, func(c *config.Hub) { enableProxy(t, c) })
 	rr := do(e.handler(), httptest.NewRequest("GET", "/auth/providers", nil), nil)
-	if strings.TrimSpace(rr.Body.String()) != `{"local":true,"proxy":true,"dev":false}` {
+	if strings.TrimSpace(rr.Body.String()) != `{"local":{"enabled":true,"mode":"normal"},"proxy":true,"dev":false,"providers":[]}` {
 		t.Fatalf("providers %s", rr.Body)
 	}
 }

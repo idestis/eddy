@@ -5,31 +5,29 @@ import { z } from "zod";
 import { isApiError } from "../api/client";
 import { getCsrf, login } from "../api/endpoints";
 import { providersQuery } from "../api/queries";
+import { LoginPanel } from "../components/LoginPanel";
 import { EddyMark } from "../components/Sidebar";
 import { safeReturnTo } from "../lib/links";
 import { useTitle } from "../lib/title";
 
 export const Route = createFileRoute("/login")({
-  validateSearch: z.object({ returnTo: z.string().optional().catch(undefined) }),
+  validateSearch: z.object({
+    returnTo: z.string().optional().catch(undefined),
+    // ?local=1 shows the break-glass password form.
+    local: z.coerce.string().optional().catch(undefined),
+    // Set by the hub after a failed GitHub or OIDC callback.
+    error: z
+      .string()
+      .regex(/^[a-z_]{1,32}$/)
+      .optional()
+      .catch(undefined),
+  }),
   component: LoginPage,
 });
 
-function Divider({ children }: { children: string }) {
-  return (
-    <div className="flex items-center gap-2.5 text-12 text-ink-3 before:h-px before:flex-1 before:bg-line after:h-px after:flex-1 after:bg-line">
-      {children}
-    </div>
-  );
-}
-
-function LoginPage() {
-  useTitle("sign in");
-  const { returnTo } = Route.useSearch();
-  const target = safeReturnTo(returnTo);
-  const providers = useQuery(providersQuery);
+function LocalForm({ target, autoFocus }: { target: string; autoFocus: boolean }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [devUser, setDevUser] = useState("dev@example.com");
   const userId = useId();
   const passId = useId();
 
@@ -50,6 +48,53 @@ function LoginPage() {
         : signIn.error.message
     : null;
 
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        signIn.mutate();
+      }}
+    >
+      <div className="field">
+        <label htmlFor={userId}>Username</label>
+        <input
+          id={userId}
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          required
+          // biome-ignore lint/a11y/noAutofocus: the only thing to do on this page
+          autoFocus={autoFocus}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor={passId}>Password</label>
+        <input
+          id={passId}
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+      </div>
+      {errorText && (
+        <p className="text-12-5 text-bad" role="alert">
+          {errorText}
+        </p>
+      )}
+      <button type="submit" className="btn btn-primary" disabled={signIn.isPending || !username || !password}>
+        {signIn.isPending ? "Signing in…" : "Sign in"}
+      </button>
+    </form>
+  );
+}
+
+function LoginPage() {
+  useTitle("sign in");
+  const { returnTo, local, error } = Route.useSearch();
+  const target = safeReturnTo(returnTo);
+  const providers = useQuery(providersQuery);
   const p = providers.data;
 
   return (
@@ -67,83 +112,15 @@ function LoginPage() {
         </div>
         {providers.isPending && <p>Loading sign-in options…</p>}
         {providers.error && <p className="text-12-5 text-bad">The hub could not be reached.</p>}
-        {p?.local && (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              signIn.mutate();
-            }}
-          >
-            <div className="field">
-              <label htmlFor={userId}>Username</label>
-              <input
-                id={userId}
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-                // biome-ignore lint/a11y/noAutofocus: the only thing to do on this page
-                autoFocus
-              />
-            </div>
-            <div className="field">
-              <label htmlFor={passId}>Password</label>
-              <input
-                id={passId}
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-            {errorText && (
-              <p className="text-12-5 text-bad" role="alert">
-                {errorText}
-              </p>
-            )}
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={signIn.isPending || !username || !password}
-            >
-              {signIn.isPending ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
+        {p && (
+          <LoginPanel
+            providers={p}
+            returnTo={target}
+            showLocal={local === "1"}
+            error={error}
+            localForm={<LocalForm target={target} autoFocus={p.providers.length === 0 || local === "1"} />}
+          />
         )}
-        {p?.proxy && (
-          <>
-            {p.local && <Divider>or</Divider>}
-            <p>
-              This hub trusts your organisation's sign-in proxy. If you got here, the proxy did not identify
-              you.
-            </p>
-            <a className="btn" href={target}>
-              Continue through the proxy
-            </a>
-          </>
-        )}
-        {p?.dev && (
-          <>
-            <Divider>development only</Divider>
-            <form method="get" action="/auth/dev/login">
-              <div className="field">
-                <label htmlFor={`${userId}-dev`}>Fake user</label>
-                <input
-                  id={`${userId}-dev`}
-                  name="user"
-                  value={devUser}
-                  onChange={(e) => setDevUser(e.target.value)}
-                />
-              </div>
-              <input type="hidden" name="groups" value="eddy:dev" />
-              <button type="submit" className="btn btn-danger">
-                Dev login (never in production)
-              </button>
-            </form>
-          </>
-        )}
-        {p && !p.local && !p.proxy && !p.dev && <p>No sign-in method is configured on this hub.</p>}
       </div>
     </main>
   );

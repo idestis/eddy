@@ -43,10 +43,14 @@ All JSON uses camelCase. Types come from `internal/model`, `internal/store` and 
 | Method and path | Body / query | Response |
 |---|---|---|
 | `GET /auth/csrf` | | `{csrf}` and sets the `__Host-eddy_pre` cookie (10 min) |
-| `GET /auth/providers` | | `{local: bool, proxy: bool, dev: bool}` |
+| `GET /auth/providers` | | `{local: {enabled, mode: "normal"\|"breakglass"}, proxy: bool, dev: bool, providers: [{id, name, kind: "github"\|"oidc", icon?: "github", loginURL}]}` |
+| `GET /auth/{provider}/login?returnTo=` | browser navigation | 302 to the provider, and sets the `__Host-eddy_oauth` flow cookie (10 min, encrypted). An invalid `returnTo`: 302 to `/login?error=invalid_request`. Unknown provider: 404 |
+| `GET /auth/{provider}/callback?code=&state=` | from the provider | 302 to `returnTo` with a new session cookie. On failure, 302 to `/login?error=<code>[&returnTo=]`, where code is `state`, `denied`, `provider`, `cancelled`, `rate_limited`, `unavailable` or `invalid_request` |
 | `POST /auth/local/login` | `{username, password, returnTo?}` | 204 and sets the session cookie. Bad credentials or lockout: 401 with a generic message. CSRF or Origin failure: 403. Per-IP limit: 429. Invalid `returnTo`: 400. |
 | `POST /auth/logout` | | 204 |
 | `GET /auth/dev/login?user=&groups=&returnTo=` | dev builds only | 302 to `returnTo` or `/` |
+
+`{provider}` is `github` or an `auth.oidc[].id`. Sessions and tokens record the provider as `github` or `oidc:<id>`, and `GET /api/v1/me` returns it as `provider`. The `local` and `dev` routes keep their own paths. Failed callbacks count towards a per-address limit (`auth.loginRateLimit.perIPPerMinute` a minute). See [auth.md](auth.md).
 
 With proxy auth, the first request that carries valid proxy headers creates a session.
 There is no separate login step. A trusted proxy that sends an invalid or denied identity gets 401.

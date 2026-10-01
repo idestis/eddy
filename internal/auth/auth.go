@@ -1,7 +1,8 @@
 // Package auth signs users in and turns them into an identity.Principal.
 //
 // It implements local users (users.yaml with argon2id or bcrypt hashes),
-// trusted reverse-proxy headers, server-side browser sessions, CSRF
+// trusted reverse-proxy headers, GitHub and OpenID Connect sign-in
+// (oauth*.go), server-side browser sessions, CSRF
 // protection, login rate limiting, personal access tokens for MCP and the
 // dev-only fake login. Every sign-in path goes through one mapping function
 // (mapping.go) so user and group rules cannot drift between providers.
@@ -15,9 +16,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,9 +41,17 @@ const (
 
 // Providers reports which sign-in methods are enabled (GET /auth/providers).
 type Providers struct {
-	Local bool `json:"local"`
-	Proxy bool `json:"proxy"`
-	Dev   bool `json:"dev"`
+	Local     LocalProvider  `json:"local"`
+	Proxy     bool           `json:"proxy"`
+	Dev       bool           `json:"dev"`
+	Providers []ProviderInfo `json:"providers"`
+}
+
+// LocalProvider describes password sign-in. In breakglass mode the SPA
+// hides the form behind /login?local=1.
+type LocalProvider struct {
+	Enabled bool   `json:"enabled"`
+	Mode    string `json:"mode"`
 }
 
 // Service is the auth layer of the hub. Create it with New.
@@ -70,11 +81,18 @@ type Service struct {
 	limiter  *loginLimiter
 	sessions *sessionCache
 
+	// GitHub and OIDC providers by route id, and their display order.
+	oauth        map[string]oauthProvider
+	oauthOrder   []string
+	httpClient   *http.Client
+	allowedLocal map[string]bool // auth.local.allowedUsers; empty means everyone
+
 	devActive bool
 
-	cookieName    string
-	preCookieName string
-	secureCookies bool
+	cookieName     string
+	preCookieName  string
+	flowCookieName string
+	secureCookies  bool
 }
 
 // New validates the auth configuration, loads key material and the users
@@ -110,9 +128,15 @@ func New(cfg *config.Hub, st store.Store, rec *audit.Recorder, log *slog.Logger)
 	s.limiter = newLoginLimiter(st.RateLimits(), cfg.Auth.LoginRateLimit, func() time.Time { return s.now() })
 	s.sessions = newSessionCache()
 	if s.secureCookies {
-		s.cookieName, s.preCookieName = "__Host-eddy_session", "__Host-eddy_pre"
+		s.cookieName, s.preCookieName, s.flowCookieName = "__Host-eddy_session", "__Host-eddy_pre", "__Host-eddy_oauth"
 	} else {
-		s.cookieName, s.preCookieName = "eddy_session", "eddy_pre"
+		s.cookieName, s.preCookieName, s.flowCookieName = "eddy_session", "eddy_pre", "eddy_oauth"
+	}
+	// Calls to identity providers (token, API, discovery, JWKS). Redirects
+	// are not followed: none of these endpoints should redirect.
+	s.httpClient = &http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
 	u, err := url.Parse(cfg.PublicURL)
@@ -168,6 +192,18 @@ func New(cfg *config.Hub, st store.Store, rec *audit.Recorder, log *slog.Logger)
 			s.proxySecret = []byte(sec)
 		}
 	}
+	if err := s.setupOAuth(); err != nil {
+		return nil, err
+	}
+	if len(cfg.Auth.Local.AllowedUsers) > 0 {
+		s.allowedLocal = map[string]bool{}
+		for _, u := range cfg.Auth.Local.AllowedUsers {
+			s.allowedLocal[strings.TrimSpace(u)] = true
+		}
+	}
+	if cfg.Auth.Local.Enabled && cfg.Auth.Local.Mode == config.LocalModeBreakglass {
+		log.Info("local sign-in is in break-glass mode: the password form is hidden and every use is logged as a warning")
+	}
 	if s.devActive {
 		log.Warn("DEV FAKE LOGIN IS ENABLED: anyone on this machine can sign in as any user", "route", "/auth/dev/login")
 	}
@@ -203,7 +239,59 @@ func (s *Service) Run(ctx context.Context) {
 
 // Providers reports the enabled sign-in methods.
 func (s *Service) Providers() Providers {
-	return Providers{Local: s.cfg.Auth.Local.Enabled, Proxy: s.cfg.Auth.Proxy.Enabled, Dev: s.devActive}
+	p := Providers{
+		Local:     LocalProvider{Enabled: s.cfg.Auth.Local.Enabled, Mode: s.cfg.Auth.Local.Mode},
+		Proxy:     s.cfg.Auth.Proxy.Enabled,
+		Dev:       s.devActive,
+		Providers: make([]ProviderInfo, 0, len(s.oauthOrder)),
+	}
+	if p.Local.Mode == "" {
+		p.Local.Mode = config.LocalModeNormal
+	}
+	for _, id := range s.oauthOrder {
+		p.Providers = append(p.Providers, s.oauth[id].info())
+	}
+	return p
+}
+
+// setupOAuth builds the GitHub and OIDC providers. Client secrets come from
+// the environment and are never logged.
+func (s *Service) setupOAuth() error {
+	s.oauth = map[string]oauthProvider{}
+	a := s.cfg.Auth
+	if g := a.GitHub; g.Enabled {
+		sec := os.Getenv(g.ClientSecretEnv)
+		if g.ClientID == "" || sec == "" {
+			return fmt.Errorf("auth: auth.github needs clientID and the client secret in %s", g.ClientSecretEnv)
+		}
+		if len(g.AllowedOrganizations) == 0 && !g.AllowAllUsers {
+			return errors.New("auth: auth.github.allowedOrganizations is required (or set allowAllUsers)")
+		}
+		p, err := newGitHubProvider(s, g, sec)
+		if err != nil {
+			return err
+		}
+		s.oauth[ProviderGitHub] = p
+		s.oauthOrder = append(s.oauthOrder, ProviderGitHub)
+	}
+	for _, o := range a.OIDC {
+		if o.ID == "" || slices.Contains(config.ReservedProviderIDs, o.ID) {
+			return fmt.Errorf("auth: auth.oidc id %q is empty or reserved", o.ID)
+		}
+		if _, dup := s.oauth[o.ID]; dup {
+			return fmt.Errorf("auth: auth.oidc id %q is used twice", o.ID)
+		}
+		sec := os.Getenv(o.ClientSecretEnv)
+		if o.ClientID == "" || o.Issuer == "" || sec == "" {
+			return fmt.Errorf("auth: auth.oidc %s needs issuer, clientID and the client secret in %s", o.ID, o.ClientSecretEnv)
+		}
+		s.oauth[o.ID] = newOIDCProvider(s, o, sec)
+		s.oauthOrder = append(s.oauthOrder, o.ID)
+	}
+	for _, id := range s.oauthOrder {
+		s.log.Info("sign-in provider enabled", "provider", s.oauth[id].sessionProvider(), "callback", s.callbackURL(id))
+	}
+	return nil
 }
 
 // DevMode reports whether the dev fake login is active (for /api/v1/me).

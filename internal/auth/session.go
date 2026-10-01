@@ -273,7 +273,12 @@ func (s *Service) sessionPrincipal(ctx context.Context, w http.ResponseWriter, r
 		// identity headers (handled in proxySession).
 		return invalidate("proxy session without trusted proxy identity")
 	default:
-		return invalidate("unknown provider")
+		// GitHub and OIDC: groups were captured at sign-in; the absolute
+		// timeout (default 24h) bounds how stale they can get.
+		if s.oauthBySession(sess.Provider) == nil {
+			return invalidate("unknown or disabled provider")
+		}
+		p.Groups = s.mapper.validPrincipalGroups(sess.Groups)
 	}
 	s.touch(ctx, raw, sess, now)
 	return p, true

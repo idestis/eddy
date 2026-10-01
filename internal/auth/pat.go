@@ -152,7 +152,8 @@ func (s *Service) maxTTL(provider string) time.Duration {
 	if provider == ProviderLocal {
 		return s.cfg.Auth.Tokens.MaxTTLLocal.Duration
 	}
-	// Proxy (and dev) users: Eddy cannot see IdP deprovisioning.
+	// Proxy, GitHub, OIDC (and dev) users: Eddy cannot see IdP
+	// deprovisioning, so the shorter maxTTLProxy applies.
 	return s.cfg.Auth.Tokens.MaxTTLProxy.Duration
 }
 
@@ -219,7 +220,9 @@ func (s *Service) Issue(ctx context.Context, p identity.Principal, name string, 
 //   - proxy users: snapshot ∩ groups of the user's latest browser session.
 //     With no session on record the snapshot is used unchanged (groups can
 //     still only shrink relative to issue time, never grow);
-//   - dev users: the snapshot, and only while dev login is active.
+//   - dev users: the snapshot, and only while dev login is active;
+//   - GitHub and OIDC users: like proxy users, and only while the provider
+//     is still configured.
 //
 // Every failure returns ErrInvalidToken (store outages return a wrapped
 // error so callers can answer 5xx). Tokens are never logged.
@@ -269,8 +272,15 @@ func (s *Service) VerifyPAT(ctx context.Context, token string) (identity.Princip
 			return identity.Principal{}, time.Time{}, ErrInvalidToken
 		}
 		p.Groups = s.mapper.Groups(u.Groups, u.Username, u.Subject)
-	case ProviderProxy:
-		if !s.cfg.Auth.Proxy.Enabled {
+	case ProviderDev:
+		if !s.devActive {
+			return identity.Principal{}, time.Time{}, ErrInvalidToken
+		}
+		p.Groups = s.mapper.validPrincipalGroups(t.Groups)
+	default:
+		external := t.Provider == ProviderProxy && s.cfg.Auth.Proxy.Enabled ||
+			t.Provider != ProviderProxy && s.oauthBySession(t.Provider) != nil
+		if !external {
 			return identity.Principal{}, time.Time{}, ErrInvalidToken
 		}
 		snap := s.mapper.validPrincipalGroups(t.Groups)
@@ -283,13 +293,6 @@ func (s *Service) VerifyPAT(ctx context.Context, token string) (identity.Princip
 		default:
 			return identity.Principal{}, time.Time{}, fmt.Errorf("auth: latest session groups: %w", err)
 		}
-	case ProviderDev:
-		if !s.devActive {
-			return identity.Principal{}, time.Time{}, ErrInvalidToken
-		}
-		p.Groups = s.mapper.validPrincipalGroups(t.Groups)
-	default:
-		return identity.Principal{}, time.Time{}, ErrInvalidToken
 	}
 	if t.LastUsedAt == nil || now.Sub(*t.LastUsedAt) >= markUsedEvery {
 		if err := s.st.Tokens().MarkUsed(context.WithoutCancel(ctx), t.ID, now.UTC()); err != nil {

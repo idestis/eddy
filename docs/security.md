@@ -57,11 +57,15 @@ Only a `Resource` summary per object: kind, name, namespace, status and conditio
 
 | Mode | What it is | Notes |
 |---|---|---|
-| Local users | Users and argon2id hashes in a Kubernetes Secret (bcrypt cost 12 or more is also accepted) | Rate-limited, generic errors, a dummy hash for unknown users. Disabling a user or changing a password ends their sessions and PATs |
+| GitHub | A GitHub App or OAuth App (github.com or Enterprise Server) | Authorization code flow with PKCE. `allowedOrganizations` is required, and only active memberships count. Orgs and teams become `github:<org>` and `github:<org>/<team>` groups |
+| OpenID Connect | Google, Okta, Entra ID, Dex or any OIDC provider | PKCE, and the ID token's signature, `iss`, `aud`/`azp`, `exp` and nonce are verified. `allowedDomains` (Google: the `hd` claim), `allowedGroups`, and a verified email by default |
+| Local users | Users and argon2id hashes in a Kubernetes Secret (bcrypt cost 12 or more is also accepted) | Rate-limited, generic errors, a dummy hash for unknown users. Disabling a user or changing a password ends their sessions and PATs. `mode: breakglass` hides the form behind `/login?local=1` and logs every use as a WARN |
 | Proxy headers | oauth2-proxy (or similar) in front of the hub | Identity headers are trusted only from `trustedCIDRs` **and** with a matching shared secret. The recommended layout is a sidecar with the hub bound to localhost |
 | Dev fake login | Only in `-tags dev` builds, with `EDDY_DEV_MODE=1` and a loopback listener | Not in release images. No Helm value exists for it |
 
-Native OIDC and SAML are planned. Sessions are stored server-side behind a `__Host-` cookie (Secure, HttpOnly, SameSite=Lax), with an 8 hour idle and 24 hour absolute timeout. Unsafe requests need a CSRF header and an Origin check.
+For GitHub and OIDC, the `state`, nonce and PKCE verifier travel in a 10-minute `__Host-eddy_oauth` cookie that is HttpOnly, SameSite=Lax, and encrypted and authenticated (AES-GCM with a key derived from `auth.keyFile`). The cookie is single-use, so a callback the browser did not start fails. `returnTo` must be a local path. Failed callbacks are rate-limited per client address and audited with their reason, while the user sees a generic error. Provider access and ID tokens are used once and never stored or logged. Groups are captured at sign-in, so the absolute session timeout bounds their staleness. Identity providers never connect to the hub: the hub only makes outbound HTTPS calls to them ([docs/auth.md](auth.md)). SAML is planned.
+
+Sessions are stored server-side behind a `__Host-` cookie (Secure, HttpOnly, SameSite=Lax), with an 8 hour idle and 24 hour absolute timeout. The session id rotates at every sign-in. Unsafe requests need a CSRF header and an Origin check.
 
 ## Personal access tokens (PATs)
 

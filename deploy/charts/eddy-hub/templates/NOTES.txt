@@ -28,6 +28,25 @@ Store: PostgreSQL from Secret {{ .Values.store.postgres.dsnSecret.name }} (key {
 WARNING: local sign-in is enabled but no users are defined. Set users.list or
   users.existingSecret (hash passwords with: eddy-hub hash-password).
 {{- end }}
+{{- $base := trimSuffix "/" .Values.publicURL }}
+{{- $gh := default dict .Values.config.auth.github }}
+{{- if or $gh.enabled .Values.config.auth.oidc }}
+
+Sign-in providers. Register these callback (redirect) URLs at your identity provider:
+{{- if $gh.enabled }}
+  GitHub:  {{ $base }}/auth/github/callback   (homepage URL: {{ $base }})
+{{- end }}
+{{- range .Values.config.auth.oidc }}
+  {{ default .id .name }}:  {{ $base }}/auth/{{ .id }}/callback
+{{- end }}
+  Browsers reach the callback; the identity provider never calls the hub. The hub needs
+  outbound HTTPS to the provider's token, API/userinfo and JWKS endpoints. See docs/auth.md.
+{{- end }}
+{{- if and .Values.config.auth.local.enabled (eq (toString .Values.config.auth.local.mode) "breakglass") }}
+
+Local sign-in is break-glass only: the password form is at
+  {{ $base }}/login?local=1 and every use is logged as a WARN audit event.
+{{- end }}
 {{- if .Values.config.ai.enabled }}
 
 Ask AI is enabled with provider "{{ .Values.config.ai.provider }}". Data from the asking user's

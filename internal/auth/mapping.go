@@ -13,7 +13,7 @@ import (
 )
 
 // This file is the single identity mapping used by every provider (local,
-// proxy, dev, and later OIDC). It is a security boundary: its output is
+// proxy, dev, GitHub and OIDC). It is a security boundary: its output is
 // exactly what the agent impersonates.
 
 var (
@@ -169,6 +169,16 @@ func (m *Mapper) ProxyUser(value string) (string, error) {
 		return "", err
 	}
 	return m.checkSubject(m.proxyPrefix + value)
+}
+
+// OAuthUser maps a GitHub or OIDC user name to prefix + value. The value
+// must be an email address or match ^[a-zA-Z0-9._@-]{1,128}$, like a proxy
+// user; the prefix comes from config (and "github:" for GitHub logins).
+func (m *Mapper) OAuthUser(prefix, value string) (string, error) {
+	if err := validateExternalUser(value); err != nil {
+		return "", err
+	}
+	return m.checkSubject(prefix + value)
 }
 
 // DevUser maps a dev fake-login user to "dev:<value>".

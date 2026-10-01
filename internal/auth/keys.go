@@ -22,6 +22,8 @@ type keys struct {
 	preSession []byte
 	// peer authenticates hub replicas to each other (ADR-0004).
 	peer []byte
+	// oauthFlow encrypts the OAuth/OIDC flow cookie (state, nonce, PKCE).
+	oauthFlow []byte
 }
 
 func loadKeys(path string) (keys, error) {
@@ -50,6 +52,7 @@ func deriveKeys(master []byte) (keys, error) {
 		{"pat-pepper", &k.patPepper},
 		{"pre-session", &k.preSession},
 		{"peer", &k.peer},
+		{"oauth-flow", &k.oauthFlow},
 	} {
 		out := make([]byte, 32)
 		if _, err := io.ReadFull(hkdf.New(sha256.New, master, []byte("eddy-auth-v1"), []byte(d.info)), out); err != nil {

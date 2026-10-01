@@ -524,7 +524,14 @@ export class MockHub {
     }
 
     if (path === "/auth/csrf") return json({ csrf: PRE_CSRF });
-    if (path === "/auth/providers") return json({ local: true, proxy: false, dev: true });
+    if (path === "/auth/providers")
+      return json({
+        local: { enabled: true, mode: "normal" },
+        proxy: false,
+        dev: true,
+        // The mock intercepts fetch only, so it cannot play an OAuth redirect.
+        providers: [],
+      });
     if (path === "/auth/local/login" && method === "POST") {
       if (headers.get("X-Eddy-CSRF") !== PRE_CSRF) return error(403, "forbidden", "Missing CSRF token.");
       const { username, password } = (body ?? {}) as { username?: string; password?: string };

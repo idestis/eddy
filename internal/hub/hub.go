@@ -543,7 +543,8 @@ func (h *Hub) logSummary() {
 		"clusters", mode,
 		"store", map[string]any{"driver": c.Store.Driver, "ephemeral": c.EphemeralStore()},
 		"peers", h.peerSummary(),
-		"auth", map[string]bool{"local": c.Auth.Local.Enabled, "proxy": c.Auth.Proxy.Enabled, "dev": h.auth.DevMode()},
+		"auth", map[string]any{"local": c.Auth.Local.Enabled, "localMode": c.Auth.Local.Mode, "proxy": c.Auth.Proxy.Enabled,
+			"github": c.Auth.GitHub.Enabled, "oidc": len(c.Auth.OIDC), "dev": h.auth.DevMode()},
 		"ai", map[string]any{"enabled": c.AI.Enabled, "provider": c.AI.Provider},
 		"mcp", map[string]bool{"enabled": c.MCP.Enabled, "writes": c.MCP.Writes, "allowLogs": c.MCP.AllowLogs},
 	)

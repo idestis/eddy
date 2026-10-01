@@ -583,9 +583,15 @@ func TestEndToEnd(t *testing.T) {
 		res("GitRepository", "team-a", "repo", model.StatusReady),
 	})
 	c := e.newClient()
-	var prov map[string]bool
+	var prov struct {
+		Local struct {
+			Enabled bool
+			Mode    string
+		}
+		Dev bool
+	}
 	c.do("GET", "/auth/providers", nil, &prov, 200)
-	if !prov["local"] || prov["dev"] {
+	if !prov.Local.Enabled || prov.Local.Mode != "normal" || prov.Dev {
 		t.Fatalf("providers %v", prov)
 	}
 	// Wrong password: generic 401.

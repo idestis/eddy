@@ -136,6 +136,11 @@ func (s *Service) loadUsers(ctx context.Context, initial bool) error {
 	return nil
 }
 
+// localAllowed applies auth.local.allowedUsers (empty allows everyone).
+func (s *Service) localAllowed(username string) bool {
+	return len(s.allowedLocal) == 0 || s.allowedLocal[username]
+}
+
 // localUser returns the enabled local user for subject, or nil.
 func (s *Service) localUser(subject string) *User {
 	us := s.users.Load()
@@ -143,7 +148,7 @@ func (s *Service) localUser(subject string) *User {
 		return nil
 	}
 	u := us.bySubject[subject]
-	if u == nil || u.Disabled {
+	if u == nil || u.Disabled || !s.localAllowed(u.Username) {
 		return nil
 	}
 	return u

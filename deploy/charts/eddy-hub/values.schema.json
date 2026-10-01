@@ -107,7 +107,60 @@
         "auth": {
           "type": "object",
           "properties": {
-            "local": {"type": "object", "properties": {"enabled": {"type": "boolean"}}},
+            "local": {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "mode": {"enum": ["normal", "breakglass"]},
+                "allowedUsers": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"}}
+              }
+            },
+            "github": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "name": {"type": "string"},
+                "clientID": {"type": "string"},
+                "clientSecretEnv": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+                "baseURL": {"type": "string", "pattern": "^(https://.+)?$"},
+                "apiURL": {"type": "string", "pattern": "^(https://.+)?$"},
+                "allowedOrganizations": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                "teamsAsGroups": {"type": "boolean"},
+                "allowedTeams": {"type": "array", "items": {"type": "string", "pattern": "^[^/]+/[^/]+$"}},
+                "allowAllUsers": {"type": "boolean"},
+                "userPrefix": {"type": "string"}
+              }
+            },
+            "oidc": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "clientID"],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,30}$",
+                    "not": {"enum": ["local", "proxy", "dev", "github", "csrf", "providers", "logout", "oidc", "saml"]}
+                  },
+                  "name": {"type": "string"},
+                  "preset": {"enum": ["", "google", "okta", "entra", "dex"]},
+                  "issuer": {"type": "string", "pattern": "^(https://.+)?$"},
+                  "clientID": {"type": "string", "minLength": 1},
+                  "clientSecretEnv": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+                  "scopes": {"type": "array", "items": {"type": "string"}},
+                  "groupsClaim": {"type": "string"},
+                  "usernameClaim": {"type": "string"},
+                  "allowedDomains": {"type": "array", "items": {"type": "string"}},
+                  "hostedDomainClaim": {"type": "string"},
+                  "allowedGroups": {"type": "array", "items": {"type": "string"}},
+                  "requireVerifiedEmail": {"type": "boolean"},
+                  "allowAllUsers": {"type": "boolean"},
+                  "userPrefix": {"type": "string"}
+                }
+              }
+            },
             "proxy": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "trustedCIDRs": {"type": "array", "items": {"type": "string"}}}},
             "tokens": {"type": "object", "properties": {"threadWriteScope": {"enum": ["read", "operate"]}}},
             "groups": {"type": "object", "properties": {"prefix": {"type": "string", "pattern": ":$"}}}

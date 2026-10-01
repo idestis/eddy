@@ -349,13 +349,34 @@ Eddy shows what a person's own RBAC allows, so nobody sees anything until you gr
 Objects a Kustomization applied whose kinds Eddy does not watch (ConfigMaps, Secrets, ServiceAccounts, RBAC, CRDs and so on) appear as **inventory-only** rows: kind, namespace and name from the Kustomization's `status.inventory`, never the object itself. A user sees such a row only if they can list its Kustomization and, for kinds Eddy knows (for example `secrets`), list that kind in the row's namespace. HelmReleases keep no inventory in their status, so their unwatched objects do not appear.
 - `eddy-operator` (adds `patch` on Flux kinds, which is what reconcile, suspend and resume need) is bound to `eddy:platform`.
 
-Local user `alice` with `groups: [platform]` is Kubernetes user `local:alice` in group `eddy:platform` (plus `eddy:authenticated`). Namespace-scoped RoleBindings work too.
+Local user `alice` with `groups: [platform]` is Kubernetes user `local:alice` in group `eddy:platform` (plus `eddy:authenticated`). A GitHub user in team `acme/platform` is in `eddy:github:acme/platform`, and an OIDC user's groups claim maps the same way ([docs/auth.md](auth.md#from-identity-to-kubernetes-user-and-groups)). Namespace-scoped RoleBindings work too.
 
 ### 6. Optional: sign in through your identity provider
 
-Local users work everywhere. To reuse your company login, run [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/) as a sidecar (Google, GitHub, Okta, Entra and the rest of its providers). Native OIDC and SAML in Eddy come later and plug into the same user and group mapping.
+Eddy signs people in with **GitHub** (a GitHub App or OAuth App, github.com or Enterprise Server) and any **OpenID Connect** provider (Google, Okta, Entra ID, Dex and others) on its own. [docs/auth.md](auth.md) walks through creating the GitHub App or OIDC client, the callback URL `<publicURL>/auth/<id>/callback`, group mapping and RBAC, and keeping a break-glass admin password. In short:
 
-How it fits together:
+```sh
+kubectl -n eddy create secret generic eddy-credentials \
+  --from-literal=GITHUB_CLIENT_SECRET=...        # merge with the keys you already have
+```
+
+```yaml
+config:
+  auth:
+    github:
+      enabled: true
+      clientID: Iv23li...
+      allowedOrganizations: [acme]      # groups: eddy:github:acme, eddy:github:acme/<team>
+    local:
+      enabled: true
+      mode: breakglass                  # password form only at /login?local=1, every use logged as WARN
+```
+
+The identity provider never connects to the hub (both legs are browser redirects), so this works on a private network or VPN. The hub only needs outbound HTTPS to the provider ([egress list](auth.md#private-networks-vpns-and-egress)).
+
+#### Alternative: a sign-in proxy
+
+If you already run [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/) or Pomerium in front of your tools, Eddy can trust its headers instead. The chart can run oauth2-proxy as a sidecar. How it fits together:
 
 - The sidecar listens on 4180 and forwards to `127.0.0.1:8080`. The hub's UI listener binds to `127.0.0.1` and trusts identity headers only from `127.0.0.1/32` **and** only with a matching shared secret, so nothing can reach the hub except through the proxy.
 - The UI Service then points at the proxy.
