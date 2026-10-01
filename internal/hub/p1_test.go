@@ -106,26 +106,29 @@ func TestGzipResponses(t *testing.T) {
 }
 
 func TestCompressible(t *testing.T) {
-	for path, want := range map[string]bool{
-		"/api/v1/clusters":                                 true,
-		"/api/v1/clusters/dev/resources":                   true,
-		"/api/v1/search":                                   true,
-		"/api/v1/stream":                                   true,
-		"/api/v1/me":                                       false,
-		"/api/v1/tokens":                                   false,
-		"/api/v1/tokens/abc":                               false,
-		"/api/v1/clusters/dev/pods/ns/p/logs":              false,
-		"/api/v1/clusters/dev/workloads/Job/ns/j/logs":     false,
-		"/api/v1/clusters/dev/connection":                  false,
-		"/api/v1/clusters/dev/join-token":                  false,
-		"/api/v1/ai/ask":                                   false,
-		"/auth/csrf":                                       false,
-		"/mcp":                                             false,
-		"/api/v1/clusters/dev/objects/Kustomization/a/b/x": true,
+	for _, tt := range []struct {
+		path string
+		want bool
+	}{
+		{"/api/v1/clusters", true},
+		{"/api/v1/clusters/dev/resources", true},
+		{"/api/v1/search", true},
+		{"/api/v1/stream", true},
+		{"/api/v1/me", false},
+		{"/api/v1/tokens", false},
+		{"/api/v1/tokens/abc", false},
+		{"/api/v1/clusters/dev/pods/ns/p/logs", false},
+		{"/api/v1/clusters/dev/workloads/Job/ns/j/logs", false},
+		{"/api/v1/clusters/dev/connection", false},
+		{"/api/v1/clusters/dev/join-token", false},
+		{"/api/v1/ai/ask", false},
+		{"/auth/csrf", false},
+		{"/mcp", false},
+		{"/api/v1/clusters/dev/objects/Kustomization/a/b/x", true},
 	} {
-		r, _ := http.NewRequest(http.MethodGet, "http://hub"+path, nil)
-		if got := compressible(r); got != want {
-			t.Errorf("compressible(GET %s) = %v, want %v", path, got, want)
+		r, _ := http.NewRequest(http.MethodGet, "http://hub"+tt.path, nil)
+		if got := compressible(r); got != tt.want {
+			t.Errorf("compressible(GET %s) = %v, want %v", tt.path, got, tt.want)
 		}
 	}
 	r, _ := http.NewRequest(http.MethodPost, "http://hub/api/v1/threads", nil)
