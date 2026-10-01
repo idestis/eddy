@@ -1,12 +1,13 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { hiddenJobsQuery, resourcesQuery, useCluster, useMe } from "../../../../api/queries";
 import { type Resource, STATUSES } from "../../../../api/types";
 import { ClusterCards } from "../../../../components/ClusterCards";
 import { Empty } from "../../../../components/Empty";
 import { FindingCallout } from "../../../../components/Findings";
+import type { ClusterGraphHandle } from "../../../../components/graph";
 import { Icon } from "../../../../components/Icon";
 import { OverflowChips, type OverflowItem } from "../../../../components/OverflowChips";
 import { RemovableChip } from "../../../../components/RemovableChip";
@@ -27,14 +28,14 @@ import { useAppState } from "../../../../lib/appState";
 import { hiddenJobCount, warningFindings } from "../../../../lib/findings";
 import { STATUS_LABEL, thousands } from "../../../../lib/format";
 import { useKeys } from "../../../../lib/keys";
-import { filterLabel, type NavNode, navNode } from "../../../../lib/kinds";
+import { filterLabel, isFluxFilter, type NavNode, navNode } from "../../../../lib/kinds";
 import { type DetailView, detailLink } from "../../../../lib/links";
 import { recallList, rememberList } from "../../../../lib/listMemory";
 import { useClusterMotion, useRequested, withLeaving } from "../../../../lib/liveMotion";
 import { buildRows, filterResources, type StatusFilter, statusCounts } from "../../../../lib/resourceRows";
 import { useNav } from "../../../../lib/useNav";
 import { useResourceActions } from "../../../../lib/useResourceActions";
-import { resolvePref, setViewPrefs, useViewPrefs } from "../../../../lib/viewPrefs";
+import { type ListView, resolvePref, setViewPrefs, useViewPrefs } from "../../../../lib/viewPrefs";
 import { WORKLOAD_LOG_KINDS } from "../../../../lib/workloadLogs";
 
 const searchSchema = z.object({
@@ -45,8 +46,19 @@ const searchSchema = z.object({
     .enum([...STATUSES, "attention"])
     .optional()
     .catch(undefined),
-  view: z.enum(["grouped", "flat"]).optional().catch(undefined),
+  view: z.enum(["grouped", "flat", "graph"]).optional().catch(undefined),
 });
+
+// The graph and its layout code load only when a graph is shown.
+const ClusterGraph = lazy(() =>
+  import("../../../../components/graph").then((m) => ({ default: m.ClusterGraph })),
+);
+
+const VIEWS: ReadonlyArray<readonly [ListView, string, "layers" | "list" | "graph", string]> = [
+  ["grouped", "Grouped by kind", "layers", "Grouped"],
+  ["flat", "Flat list", "list", "Flat"],
+  ["graph", "Dependency graph: who goes first", "graph", "Graph"],
+];
 
 export const Route = createFileRoute("/_app/c/$cluster/")({
   validateSearch: searchSchema,
@@ -124,6 +136,7 @@ function ClusterPage() {
   const { setSelection, ask, pane, setPane } = useAppState();
   const actions = useResourceActions(cluster);
   const list = useRef<ResourceListHandle>(null);
+  const graphRef = useRef<ClusterGraphHandle>(null);
   const filterInput = useRef<HTMLInputElement>(null);
 
   const { data, isPending, error } = useQuery({
@@ -166,8 +179,13 @@ function ClusterPage() {
   const text = useDeferredValue(search.filter ?? "");
   // The URL wins when it names a view (shared links); otherwise the saved choice.
   const savedView = useViewPrefs().listView;
-  const grouped = resolvePref(search.view, savedView, "grouped") !== "flat";
-  const viewSeg = useTabIndicator<HTMLFieldSetElement>(grouped);
+  const fluxPage = isFluxFilter(search.kind);
+  const wanted = resolvePref(search.view, savedView, "grouped");
+  // The graph is a view of Flux pages; elsewhere a saved "graph" reads as grouped.
+  const listView: ListView = wanted === "graph" && !fluxPage ? "grouped" : wanted;
+  const graphMode = listView === "graph";
+  const grouped = listView !== "flat";
+  const viewSeg = useTabIndicator<HTMLFieldSetElement>(listView);
   // Rows deleted by a live delta stay for their exit animation; counts never include them.
   const motion = useClusterMotion(name);
   const requested = useRequested(name);
@@ -192,7 +210,10 @@ function ClusterPage() {
   );
 
   const [selectedId, setSelectedId] = useState<string | undefined>(() => recallList(name).selectedId);
-  const selected = resourceRows.find((r) => r.id === selectedId) ?? resourceRows[0];
+  // In the graph, any Flux object (or nothing, for a group node) can be selected.
+  const selected = graphMode
+    ? items.find((r) => r.id === selectedId)
+    : (resourceRows.find((r) => r.id === selectedId) ?? resourceRows[0]);
 
   useEffect(() => {
     setSelection({ cluster: name, resource: selected });
@@ -258,13 +279,14 @@ function ClusterPage() {
   };
 
   useKeys({
-    down: () => move(1),
-    up: () => move(-1),
-    top: () => setSelectedId(resourceRows[0]?.id),
-    bottom: () => setSelectedId(resourceRows[resourceRows.length - 1]?.id),
-    open: () => open(selected),
-    back: () => {
-      if (pane === "ai") setPane("details");
+    down: () => (graphMode ? graphRef.current?.move("down") : move(1)),
+    up: () => (graphMode ? graphRef.current?.move("up") : move(-1)),
+    top: () => !graphMode && setSelectedId(resourceRows[0]?.id),
+    bottom: () => !graphMode && setSelectedId(resourceRows[resourceRows.length - 1]?.id),
+    open: (e) => (graphMode && e.key !== "Enter" ? graphRef.current?.move("right") : open(selected)),
+    back: (e) => {
+      if (graphMode && e.key !== "Escape") graphRef.current?.move("left");
+      else if (pane === "ai") setPane("details");
       else if (search.filter || search.kind || search.status || search.namespace)
         setSearch({ filter: undefined, kind: undefined, status: undefined, namespace: undefined });
     },
@@ -317,7 +339,9 @@ function ClusterPage() {
       <EventsList cluster={name} r={selected} limit={4} />
     </>
   ) : (
-    <Empty title="Nothing selected">Move with j and k.</Empty>
+    <Empty title="Nothing selected">
+      {graphMode ? "Click a node, or move with the arrow keys." : "Move with j and k."}
+    </Empty>
   );
 
   return (
@@ -343,20 +367,22 @@ function ClusterPage() {
           <input
             ref={filterInput}
             type="text"
-            placeholder="Filter this list"
+            placeholder={graphMode ? "Find in the graph" : "Filter this list"}
             autoComplete="off"
             spellCheck={false}
-            aria-label="Filter this list"
+            aria-label={graphMode ? "Find in the graph" : "Filter this list"}
             className="min-w-0 flex-1 border-0 bg-transparent text-14 text-ink outline-none placeholder:text-ink-3"
             value={search.filter ?? ""}
             onChange={(e) => setSearch({ filter: e.target.value || undefined })}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 setSearch({ filter: undefined });
-                list.current?.focus();
+                if (graphMode) graphRef.current?.focus();
+                else list.current?.focus();
               } else if (e.key === "Enter" || e.key === "ArrowDown") {
                 e.preventDefault();
-                list.current?.focus();
+                if (graphMode) graphRef.current?.findFirst();
+                else list.current?.focus();
               }
             }}
           />
@@ -392,16 +418,11 @@ function ClusterPage() {
         <fieldset ref={viewSeg.list} className={`${SEG} m-0 shrink-0`}>
           <legend className="sr-only">View</legend>
           <TabIndicator ref={viewSeg.indicator} variant="pill" />
-          {(
-            [
-              ["grouped", "Grouped by kind", "layers"],
-              ["flat", "Flat list", "list"],
-            ] as const
-          ).map(([v, label, icon]) => (
+          {VIEWS.filter(([v]) => v !== "graph" || fluxPage).map(([v, label, icon, short]) => (
             <button
               type="button"
               key={v}
-              aria-pressed={(v === "grouped") === grouped}
+              aria-pressed={v === listView}
               className={`${SEG_BTN} flex-none`}
               title={label}
               onClick={() => {
@@ -410,7 +431,7 @@ function ClusterPage() {
               }}
             >
               <Icon name={icon} className="size-3.5" />
-              <span className="max-[1600px]:sr-only">{v === "grouped" ? "Grouped" : "Flat"}</span>
+              <span className="max-[1600px]:sr-only">{short}</span>
             </button>
           ))}
         </fieldset>
@@ -460,7 +481,31 @@ function ClusterPage() {
           )}
         </div>
       )}
-      {!cluster.connected && !data ? (
+      {graphMode && data ? (
+        <Suspense fallback={<Empty>Loading the graph…</Empty>}>
+          <div className="stale-able flex min-h-0 flex-1 flex-col" data-stale={!cluster.connected}>
+            <ClusterGraph
+              ref={graphRef}
+              cluster={cluster}
+              items={items}
+              namespace={namespace}
+              status={search.status}
+              text={text}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onOpen={(r) => open(r)}
+              actions={actions}
+              onEscape={() => {
+                if (search.filter || search.status || search.namespace) {
+                  setSearch({ filter: undefined, status: undefined, namespace: undefined });
+                  return true;
+                }
+                return false;
+              }}
+            />
+          </div>
+        </Suspense>
+      ) : !cluster.connected && !data ? (
         <Empty title={`${name} is disconnected`}>Resources appear when its agent reconnects.</Empty>
       ) : isPending ? (
         <Empty>Loading resources…</Empty>

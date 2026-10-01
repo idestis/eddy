@@ -13,6 +13,7 @@ import type {
   CreatedCluster,
   CreatedToken,
   Finding,
+  GraphResponse,
   IssuedJoinToken,
   JobsSnapshot,
   KindsResponse,
@@ -70,6 +71,14 @@ export const putPrefs = (data: Prefs) =>
 export const getClusters = () => request<List<ClusterInfo>>(`${V1}/clusters`);
 export const getResources = (cluster: string, signal?: AbortSignal) =>
   request<ResourceSnapshot>(`${V1}/clusters/${seg(cluster)}/resources`, { signal });
+export interface GraphQuery {
+  kinds: "flux" | "all";
+  focus?: string;
+  hops?: number;
+}
+/** The dependency graph of a cluster (docs/api.md "Graph"). */
+export const getGraph = (cluster: string, q: GraphQuery, signal?: AbortSignal) =>
+  request<GraphResponse>(`${V1}/clusters/${seg(cluster)}/graph`, { query: { ...q }, signal });
 /** Jobs including the hidden finished ones; pass `cursor` (hidden.next) for further pages. */
 export const getJobsWithHidden = (
   cluster: string,

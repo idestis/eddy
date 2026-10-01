@@ -428,3 +428,11 @@ export function kindHeading(kind: string, project: string | undefined, plural?: 
   const label = plural ?? kindInfo(kind).plural;
   return isNotable(project) && project ? `${projectName(project)} · ${label}` : label;
 }
+
+/** True for list filters that show only Flux objects (the Flux section, Sources, a Flux kind): the graph view's pages. */
+export function isFluxFilter(filter: string | undefined): boolean {
+  if (!filter) return false;
+  const at = navNode(filter);
+  const kinds = at ? at.node.kinds : [filter];
+  return kinds.length > 0 && kinds.every((k) => kindInfo(k).flux);
+}

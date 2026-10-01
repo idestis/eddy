@@ -58,6 +58,8 @@ export interface MockResource extends Resource {
   events: KubeEvent[];
   /** Mock-only: extra spec fields rendered into the YAML tab. */
   spec: Record<string, string>;
+  /** Mock-only: a failing release whose next reconcile succeeds (the fix has landed). */
+  recovers?: boolean;
 }
 
 export interface MockCluster {
@@ -872,6 +874,67 @@ export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockClus
       }
     }
   }
+
+  // The dependency graph: who goes first. Drawn without random numbers changing for the
+  // fixtures after it (the seed is restored), so the other clusters stay the same.
+  const savedSeed = seed;
+  kConfigs.dependsOn = [refOf(kInfra)];
+  kApps.dependsOn = [refOf(kConfigs)];
+  hNginx.dependsOn = [refOf(hCert)];
+  const rAcme = helmRepo("acme-charts", "oci://ghcr.io/acme/charts");
+  rAcme.owner = refOf(kRoot);
+  const hAlchemic = hr("apps", "alchemic", "alchemic@1.8.2", rAcme, kApps);
+  const hWorker = hr("apps", "alchemic-worker", "alchemic-worker@1.8.2", rAcme, kApps);
+  hWorker.dependsOn = [refOf(hAlchemic)];
+  for (const name of ["alchemic-api", "alchemic-web", "alchemic-scheduler"]) {
+    workload("Deployment", "apps", name, 1, "alchemic", "ghcr.io/acme/alchemic:1.8.2", hAlchemic);
+  }
+  svc("apps", "alchemic-api", ["8080/TCP"], hAlchemic);
+  svc("apps", "alchemic-web", ["80/TCP → 3000"], hAlchemic);
+  inv("ConfigMap", "", "apps", "alchemic-settings", hAlchemic);
+  workload(
+    "Deployment",
+    "apps",
+    "alchemic-worker",
+    prod ? 2 : 1,
+    "alchemic",
+    "ghcr.io/acme/alchemic:1.8.2",
+    hWorker,
+  );
+  if (prod) {
+    // A failing release and the one waiting on it (DependencyNotReady).
+    const failMsg =
+      "Helm upgrade failed for release apps/alchemic with chart alchemic@1.9.0: timed out waiting for the condition";
+    Object.assign(hAlchemic, {
+      status: "failed",
+      chart: "alchemic@1.9.0",
+      message: failMsg,
+      lastChanged: ago(9),
+      recovers: true,
+    });
+    hAlchemic.conditions = readyCondition("failed", "UpgradeFailed", failMsg);
+    hAlchemic.events = [
+      ev("Warning", "UpgradeFailed", failMsg, 9, 2),
+      ev("Normal", "Progressing", "Reconciliation started", 14),
+    ];
+    Object.assign(hWorker, {
+      status: "reconciling",
+      blocked: true,
+      message: "Waiting for apps/alchemic",
+      lastChanged: ago(9),
+    });
+    hWorker.conditions = [
+      {
+        type: "Ready",
+        status: "False",
+        reason: "DependencyNotReady",
+        message: "dependency 'apps/alchemic' is not ready",
+        lastTransitionTime: ago(9),
+      },
+    ];
+    hWorker.events = [ev("Normal", "DependencyNotReady", "dependency 'apps/alchemic' is not ready", 1, 9)];
+  }
+  seed = savedSeed;
 
   // Default conditions and events for everything not customised above.
   for (const r of out.values()) {

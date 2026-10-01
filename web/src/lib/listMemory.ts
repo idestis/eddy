@@ -7,7 +7,7 @@ export interface ListSearch {
   filter?: string;
   kind?: string;
   status?: StatusFilter;
-  view?: "grouped" | "flat";
+  view?: "grouped" | "flat" | "graph";
 }
 
 interface ListPlace {

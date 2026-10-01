@@ -6,11 +6,17 @@
 
 import { useSyncExternalStore } from "react";
 
-export type ListView = "grouped" | "flat";
+/** "graph" is offered on Flux pages only; elsewhere it reads as "grouped". */
+export type ListView = "grouped" | "flat" | "graph";
+export type ManagesView = "tree" | "graph";
 export type LogFormat = "structured" | "raw";
 
 export interface ViewPrefs {
   listView?: ListView;
+  /** The detail page's "Manages" section: the ownership tree or the dependency graph. */
+  managesView?: ManagesView;
+  /** Focus-mode hops in the graph (1–3). */
+  graphHops?: number;
   logFormat?: LogFormat;
   /** Follow new log lines when a Logs tab opens. */
   logFollow?: boolean;
@@ -36,8 +42,11 @@ export function parseViewPrefs(raw: unknown): ViewPrefs {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const r = raw as Record<string, unknown>;
   const out: ViewPrefs = {};
-  const listView = oneOf(r.listView, ["grouped", "flat"] as const);
+  const listView = oneOf(r.listView, ["grouped", "flat", "graph"] as const);
   if (listView) out.listView = listView;
+  const managesView = oneOf(r.managesView, ["tree", "graph"] as const);
+  if (managesView) out.managesView = managesView;
+  if (typeof r.graphHops === "number" && [1, 2, 3].includes(r.graphHops)) out.graphHops = r.graphHops;
   const logFormat = oneOf(r.logFormat, ["structured", "raw"] as const);
   if (logFormat) out.logFormat = logFormat;
   if (typeof r.logFollow === "boolean") out.logFollow = r.logFollow;

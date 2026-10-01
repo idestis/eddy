@@ -9,7 +9,14 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { createKeybindingsHandler, type KeybindingHandler } from "tinykeys";
 
-export type KeyGroup = "Move around" | "Go to" | "Find and ask" | "Clusters" | "Act on selection" | "In logs";
+export type KeyGroup =
+  | "Move around"
+  | "Go to"
+  | "Find and ask"
+  | "Clusters"
+  | "Act on selection"
+  | "In logs"
+  | "In the graph";
 
 export interface Binding {
   keys: readonly string[];
@@ -71,6 +78,17 @@ export const BINDINGS = {
   tabYaml: { keys: ["y"], label: "YAML tab", group: "Act on selection" },
 
   follow: { keys: ["f"], label: "Toggle follow", group: "In logs" },
+
+  // The dependency graph. Arrows, h j k l and Enter move along edges while it has focus
+  // (they reuse the Move around keys); these act on the view.
+  graphFit: { keys: ["0"], label: "Fit the graph to the screen", group: "In the graph" },
+  graphZoomIn: { keys: ["[Shift]+=", "[Shift]++"], label: "Zoom in", group: "In the graph" },
+  graphZoomOut: { keys: ["-"], label: "Zoom out", group: "In the graph" },
+  graphFocus: {
+    keys: ["Shift+F"],
+    label: "Focus on the selected node and its neighbours (again: whole graph)",
+    group: "In the graph",
+  },
 } as const satisfies Record<string, Binding>;
 
 export type KeyId = keyof typeof BINDINGS;
@@ -82,6 +100,7 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
   "Clusters",
   "Act on selection",
   "In logs",
+  "In the graph",
 ];
 
 const IS_MAC =
@@ -95,6 +114,25 @@ const KEY_LABELS: Record<string, string> = {
   Enter: "↵",
   Escape: "esc",
 };
+
+/**
+ * True when a key event is one of a binding's single-key presses (not sequences). For
+ * widgets that move focus themselves while focused, like the graph and the tree.
+ */
+export function pressMatches(
+  id: KeyId,
+  event: Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey">,
+): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey) return false;
+  return (BINDINGS[id].keys as readonly string[]).some((k) => {
+    if (k.includes(" ")) return false;
+    const parts = k.split(/(?<=\w|\])\+/);
+    const key = parts.pop() ?? k;
+    const shift = parts.includes("Shift");
+    const optional = parts.includes("[Shift]");
+    return event.key === key && (optional || shift === event.shiftKey || key.length === 1);
+  });
+}
 
 /** Turns one tinykeys string into the keycaps to show, e.g. "g f" → ["g", "f"]. */
 export function displayKeys(key: string, mac = IS_MAC): string[] {

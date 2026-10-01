@@ -3,9 +3,11 @@ import type {
   ConnectionInfo,
   CreatedCluster,
   Finding,
+  GraphResponse,
   JobsSnapshot,
   KindsResponse,
   List,
+  Resource,
   ResourceSnapshot,
 } from "../api/types";
 import { MockHub } from "./server";
@@ -193,5 +195,58 @@ describe("mock kinds and inventory reads", () => {
     ).toBe(404);
     expect((await call(hub, "GET", `${base}/Secret/apps/checkout-db/yaml?group=core`)).status).toBe(403);
     expect((await call(hub, "GET", `${base}/Secret/apps/checkout-db/events?group=core`)).status).toBe(200);
+  });
+});
+
+describe("mock dependency graph", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const KS = "kustomize.toolkit.fluxcd.io/Kustomization/flux-system";
+  const HR = "helm.toolkit.fluxcd.io/HelmRelease/apps";
+
+  it("serves GET …/graph like the hub: flux kinds, focus, hops and errors", async () => {
+    const hub = new MockHub();
+    const g = await call<GraphResponse>(hub, "GET", "/api/v1/clusters/prod-eu/graph?kinds=flux");
+    expect(g.status).toBe(200);
+    expect(g.data.truncated).toBe(false);
+    expect(g.data.nodes.every((n) => n.kind !== "Deployment")).toBe(true);
+    expect(g.data.edges).toContainEqual({ from: `${KS}/apps`, to: `${KS}/infra-configs`, type: "dependsOn" });
+    expect(g.data.nodes.find((n) => n.id === `${HR}/alchemic-worker`)).toMatchObject({ blocked: true });
+    const focused = await call<GraphResponse>(
+      hub,
+      "GET",
+      `/api/v1/clusters/prod-eu/graph?kinds=all&focus=${encodeURIComponent(`${HR}/alchemic`)}&hops=1`,
+    );
+    expect(focused.data.nodes[0]?.id).toBe(`${HR}/alchemic`);
+    expect(focused.data.nodes.some((n) => n.kind === "Deployment")).toBe(true);
+    expect((await call(hub, "GET", "/api/v1/clusters/prod-eu/graph?kinds=nope")).status).toBe(400);
+    expect((await call(hub, "GET", "/api/v1/clusters/prod-eu/graph?hops=0")).status).toBe(400);
+    expect((await call(hub, "GET", "/api/v1/clusters/prod-eu/graph?focus=a/B/c/d")).status).toBe(404);
+    hub.noGraph = true;
+    expect((await call(hub, "GET", "/api/v1/clusters/prod-eu/graph")).status).toBe(404);
+  });
+
+  it("a reconcile of the failing release travels downstream and unblocks its dependent", async () => {
+    const hub = new MockHub();
+    const seen: Array<{ id: string; status: string; blocked?: boolean }> = [];
+    hub.subscribe((event, data) => {
+      if (event !== "change") return;
+      for (const r of (data as { upserts: Resource[] }).upserts)
+        seen.push({ id: r.id, status: r.status, blocked: r.blocked });
+    });
+    const res = await call(
+      hub,
+      "POST",
+      "/api/v1/clusters/prod-eu/objects/HelmRelease/apps/alchemic/reconcile",
+      {},
+    );
+    expect(res.status).toBe(202);
+    vi.advanceTimersByTime(6_000);
+    const worker = seen.filter((s) => s.id === `${HR}/alchemic-worker`);
+    expect(seen.find((s) => s.id === `${HR}/alchemic`)?.status).toBe("reconciling");
+    expect(seen.filter((s) => s.id === `${HR}/alchemic`).at(-1)?.status).toBe("ready");
+    expect(worker.map((s) => s.status)).toEqual(["reconciling", "ready"]);
+    expect(worker.at(-1)?.blocked).toBeUndefined();
   });
 });

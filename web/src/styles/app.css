@@ -713,6 +713,199 @@
     }
   }
 
+  /*
+   * The dependency graph (components/graph). Positions and the pan/zoom transform are set
+   * through element.style; everything that moves is a class here, so reduced motion (the
+   * duration tokens are 0ms, and the infinite animations are switched off below) makes
+   * every change instant.
+   */
+  .graph-viewport {
+    touch-action: none;
+    cursor: grab;
+    background-image: radial-gradient(circle, var(--color-line) 1px, transparent 1.2px);
+    background-size: 22px 22px;
+    &[data-panning] {
+      cursor: grabbing;
+    }
+  }
+  .graph-world {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: 0 0;
+    &[data-animate="true"] {
+      transition: transform var(--duration-slow) var(--ease-standard);
+    }
+  }
+  .gnode {
+    position: absolute;
+    left: 0;
+    top: 0;
+    cursor: pointer;
+    transition:
+      opacity var(--duration-base) var(--ease-standard),
+      border-color var(--duration-base) var(--ease-standard),
+      background-color var(--duration-slow) var(--ease-standard),
+      box-shadow var(--duration-base) var(--ease-standard);
+    &[data-dim] {
+      opacity: 0.3;
+    }
+    &[data-root] {
+      border-color: var(--c);
+      box-shadow:
+        0 0 0 3px color-mix(in oklab, var(--c) 18%, transparent),
+        var(--shadow-control);
+    }
+    &[data-hl] {
+      border-color: color-mix(in oklab, var(--c) 55%, var(--color-line));
+    }
+    /* A live status change: a pulse in the new status colour (live rows flash the same way). */
+    &::after {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      pointer-events: none;
+      opacity: 0;
+    }
+    &[data-flash]::after {
+      animation: graph-pulse var(--duration-flash) var(--ease-standard) var(--flash-delay, 0ms) both;
+    }
+    &[data-flash="ready"],
+    &[data-flash="completed"] {
+      --flash: var(--color-ok);
+    }
+    &[data-flash="failed"] {
+      --flash: var(--color-bad);
+    }
+    &[data-flash="reconciling"] {
+      --flash: var(--color-run);
+    }
+    &[data-flash="blocked"] {
+      --flash: var(--color-attn);
+    }
+    &[data-flash="suspended"],
+    &[data-flash="unknown"] {
+      --flash: var(--color-off);
+    }
+    /* Reconciling (and not just waiting): a soft breathing ring. */
+    &[data-status="reconciling"]:not([data-blocked])::before {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      pointer-events: none;
+      animation: graph-ring 1.8s ease-in-out infinite;
+    }
+  }
+  /* After nodes or edges come and go, the nodes glide to their new places. */
+  .graph-world[data-relayout] .gnode {
+    transition:
+      transform var(--duration-slow) var(--ease-standard),
+      opacity var(--duration-base) var(--ease-standard);
+  }
+  .graph-edges[data-enter] {
+    animation: fade-in var(--duration-slow) var(--ease-standard) var(--duration-base) both;
+  }
+  @keyframes graph-pulse {
+    from {
+      opacity: 1;
+      box-shadow:
+        0 0 0 0 color-mix(in oklab, var(--flash, transparent) 50%, transparent),
+        inset 0 0 0 1.5px var(--flash, transparent);
+      background: color-mix(in oklab, var(--flash, transparent) 12%, transparent);
+    }
+    to {
+      opacity: 0;
+      box-shadow:
+        0 0 0 12px color-mix(in oklab, var(--flash, transparent) 0%, transparent),
+        inset 0 0 0 1.5px var(--flash, transparent);
+      background: transparent;
+    }
+  }
+  @keyframes graph-ring {
+    0%,
+    100% {
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-run) 35%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-run) 12%, transparent);
+    }
+  }
+  @keyframes graph-march {
+    to {
+      stroke-dashoffset: -22;
+    }
+  }
+  /* Edges: dependsOn solid with an arrow towards what goes second, source dashed, owns dotted. */
+  .gedge {
+    fill: none;
+    stroke: color-mix(in oklab, var(--color-ink-3) 70%, transparent);
+    stroke-width: 1.6;
+    transition:
+      stroke var(--duration-base) var(--ease-standard),
+      opacity var(--duration-base) var(--ease-standard);
+    &[data-type="dependsOn"],
+    &.gedge-legend-dep {
+      marker-end: url(#gm-dep);
+    }
+    &[data-type="source"],
+    &.gedge-legend-src {
+      stroke: color-mix(in oklab, var(--color-ink-3) 45%, transparent);
+      stroke-dasharray: 5 4;
+    }
+    &[data-type="owns"],
+    &.gedge-legend-own {
+      stroke: color-mix(in oklab, var(--color-ink-3) 45%, transparent);
+      stroke-dasharray: 0.5 4;
+      stroke-linecap: round;
+      stroke-width: 1.8;
+    }
+    &[data-blocked],
+    &.gedge-legend-blk {
+      stroke: color-mix(in oklab, var(--color-attn) 65%, transparent);
+      stroke-width: 2;
+      marker-end: url(#gm-blk);
+    }
+    &[data-hl] {
+      stroke: var(--c);
+      stroke-width: 2;
+      opacity: 1;
+      &[data-type="dependsOn"] {
+        marker-end: url(#gm-hl);
+      }
+    }
+    &[data-dim] {
+      opacity: 0.18;
+    }
+    /* A reconcile wave on its way downstream. */
+    &[data-march] {
+      stroke: var(--c);
+      stroke-width: 2;
+      stroke-dasharray: 7 4;
+      opacity: 1;
+      animation: graph-march 0.9s linear infinite;
+      &[data-type="dependsOn"] {
+        marker-end: url(#gm-hl);
+      }
+    }
+  }
+  #gm-dep path {
+    fill: color-mix(in oklab, var(--color-ink-3) 70%, transparent);
+  }
+  #gm-hl path {
+    fill: var(--c);
+  }
+  #gm-blk path {
+    fill: color-mix(in oklab, var(--color-attn) 75%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .gnode[data-status="reconciling"]::before,
+    .gedge[data-march] {
+      animation: none;
+    }
+  }
+
   /* Pod prefixes in workload logs: a stable hue per pod, readable on the dark log surface. */
   .lg-pod {
     color: oklch(0.8 0.12 var(--pod-h, 250));

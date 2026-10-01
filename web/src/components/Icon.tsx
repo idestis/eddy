@@ -68,6 +68,12 @@ const PATHS = {
   vault:
     "M3 2.5h10a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 5.2a2.3 2.3 0 1 1 0 4.6 2.3 2.3 0 0 1 0-4.6zM5 12.5v1.2M11 12.5v1.2",
   upload: "M8 13V5M4.5 8.5L8 5l3.5 3.5M4 2.5h8",
+  /** A small dependency graph: one node feeding two. */
+  graph:
+    "M2 6.5h3.2v3H2zM10.8 2.5H14v3h-3.2zM10.8 10.5H14v3h-3.2zM5.2 8c2.8 0 2.8-4 5.6-4M5.2 8c2.8 0 2.8 4 5.6 4",
+  minus: "M3 8h10",
+  fit: "M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3",
+  focus: "M8 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2",
 } as const;
 
 export type IconName = keyof typeof PATHS | keyof typeof BRAND;

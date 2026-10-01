@@ -41,6 +41,16 @@ export interface Resource extends Ref {
   revision?: string;
   source?: Ref;
   owner?: Ref;
+  /**
+   * spec.dependsOn of a Kustomization (other Kustomizations) or a HelmRelease (other
+   * HelmReleases), in spec order. A namespace left out in the spec is the object's own.
+   */
+  dependsOn?: Ref[];
+  /**
+   * Waiting for a dependency (Ready=False, reason DependencyNotReady). The status is then
+   * "reconciling" and the message reads "Waiting for ns/name".
+   */
+  blocked?: boolean;
   /** Empty for finished Jobs; see `completions`. */
   replicas?: string;
   /** Jobs only: "succeeded/completions", e.g. "1/1". */
@@ -205,6 +215,48 @@ export interface List<T> {
 
 export interface Page<T> extends List<T> {
   next?: string;
+}
+
+/**
+ * Edge types of GET …/graph. Directions follow the spec fields: `dependsOn` goes from the
+ * dependent to its dependency, `source` from the consumer to its source, `owns` from the
+ * owner to the owned object (or group).
+ */
+export type GraphEdgeType = "dependsOn" | "source" | "owns";
+
+/** A node of GET …/graph: a resource, a group of collapsed siblings, or a missing dependency. */
+export interface GraphNode {
+  /** A resource id, or `group:<ownerId>/<Kind>` for collapsed siblings. */
+  id: string;
+  kind: string;
+  group: string;
+  namespace: string;
+  name?: string;
+  status?: Status;
+  message?: string;
+  blocked?: boolean;
+  revision?: string;
+  lastChanged?: string;
+  inventoryOnly?: boolean;
+  /** A dependsOn target that is not in the view (absent, or not visible to the user). */
+  missing?: boolean;
+  /** Group nodes: how many siblings, by status, under which owner. */
+  count?: number;
+  statuses?: Partial<Record<Status, number>>;
+  owner?: string;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  type: GraphEdgeType;
+}
+
+export interface GraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  truncated?: boolean;
+  stale?: boolean;
 }
 
 export interface ResourceSnapshot {

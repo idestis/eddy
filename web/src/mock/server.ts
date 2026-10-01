@@ -25,6 +25,7 @@ import type {
   TokenItem,
   TokenScope,
 } from "../api/types";
+import { buildGraph, isFluxResource, MAX_HOPS } from "../lib/graph";
 import { KINDS, kindInfo, projectName, projectOf } from "../lib/kinds";
 import {
   buildCluster,
@@ -123,6 +124,9 @@ export class MockHub {
   private audit: AuditEvent[] = [];
   private ids = 100;
   private onboarding = new Map<string, Onboarding>();
+
+  /** Answer GET …/graph with 404, like a hub from before the endpoint (VITE_MOCK_NO_GRAPH=1). */
+  noGraph = false;
 
   constructor(extraPods = 0) {
     this.clusters = buildFleet(extraPods);
@@ -398,6 +402,7 @@ export class MockHub {
       if (!cl.info.connected) return error(503, "disconnected", `${a} is disconnected.`);
       if (b === "resources") return this.resourcesRoute(cl, url.searchParams);
       if (b === "kinds" && !c) return json(kindsOf(cl));
+      if (b === "graph" && !c) return this.graphRoute(cl, url.searchParams);
       if (b === "findings" && !c) return json({ items: cl.info.findings ?? [] });
       if (b === "objects" && c && d && e) {
         const group = url.searchParams.get("group") ?? undefined;
@@ -732,33 +737,100 @@ export class MockHub {
     return json({ cluster: this.onboarded(c) });
   }
 
+  // GET …/graph (docs/api.md "Dependency graph"), built with the browser fallback's code.
+  private graphRoute(cl: MockCluster, q: URLSearchParams): Response {
+    if (this.noGraph) return error(404, "not_found", "No such route.");
+    const kinds = q.get("kinds") || "flux";
+    if (kinds !== "flux" && kinds !== "all") return error(400, "bad_request", "kinds must be flux or all");
+    const hopsRaw = q.get("hops");
+    const hops = hopsRaw ? Number(hopsRaw) : 2;
+    if (!Number.isInteger(hops) || hops < 1)
+      return error(400, "bad_request", "hops must be a positive integer");
+    const focus = q.get("focus") || undefined;
+    const rows = [...cl.resources.values()].map(strip);
+    if (focus && !rows.some((r) => r.id === focus && (kinds === "all" || isFluxResource(r))))
+      return error(404, "not_found", `${focus} not found`);
+    const g = buildGraph(rows, { kinds, focus, hops: Math.min(hops, MAX_HOPS) });
+    return json({ ...g, truncated: g.truncated ?? false });
+  }
+
   private act(cl: MockCluster, r: MockResource, action: "reconcile" | "suspend" | "resume"): void {
     if (action === "suspend") {
       this.update(cl, r, { status: "suspended", suspended: true, message: "Reconciliation is suspended" });
       r.events.unshift(event("Normal", "Suspended", `Suspended by ${me.display}`));
       return;
     }
-    const before = { status: r.status, message: r.message };
-    this.update(cl, r, {
-      status: "reconciling",
-      suspended: false,
-      message: action === "resume" ? "Resuming reconciliation" : "Reconciliation in progress",
-    });
     r.events.unshift(event("Normal", "ReconcileRequested", `Reconcile requested by ${me.display}`));
+    this.reconcileWave(
+      cl,
+      r,
+      action === "resume" ? "Resuming reconciliation" : "Reconciliation in progress",
+      new Set(),
+    );
+  }
+
+  /** What a reconcile of `r` sets off afterwards: its dependents, and the Flux objects a Kustomization applies. */
+  private downstreamOf(cl: MockCluster, r: MockResource): MockResource[] {
+    const key = refKey(r);
+    return [...cl.resources.values()].filter(
+      (x) =>
+        !x.suspended &&
+        isFluxResource(x) &&
+        (x.dependsOn?.some((d) => refKey(d) === key) ||
+          (r.kind === "Kustomization" && x.owner && refKey(x.owner) === key && x.kind !== "GitRepository")),
+    );
+  }
+
+  /**
+   * One object reconciles (Reconciling, then its result about 1.4 s later). On success the
+   * objects downstream of it reconcile in turn, a little staggered, so the graph shows the
+   * wave travelling. An object whose dependency is still not ready ends up waiting
+   * (DependencyNotReady); a failing release fails again unless its fix has landed.
+   */
+  private reconcileWave(cl: MockCluster, r: MockResource, message: string, seen: Set<string>): void {
+    seen.add(r.id);
+    const before = { status: r.status, message: r.message };
+    this.update(cl, r, { status: "reconciling", suspended: false, blocked: undefined, message });
     setTimeout(() => {
-      if (before.status === "failed") {
+      const notReady = (r.dependsOn ?? [])
+        .map((d) => [...cl.resources.values()].find((x) => refKey(x) === refKey(d)))
+        .find((d) => d?.status !== "ready");
+      if (notReady) {
+        const msg = `Waiting for ${notReady.namespace}/${notReady.name}`;
+        r.conditions = [
+          {
+            type: "Ready",
+            status: "False",
+            reason: "DependencyNotReady",
+            message: `dependency '${notReady.namespace}/${notReady.name}' is not ready`,
+          },
+        ];
+        this.update(cl, r, { status: "reconciling", blocked: true, message: msg });
+        r.events.unshift(event("Normal", "DependencyNotReady", msg));
+        return;
+      }
+      if (before.status === "failed" && !r.recovers) {
         this.update(cl, r, { status: "failed", message: before.message });
         r.events.unshift(event("Warning", "ReconciliationFailed", before.message ?? ""));
-      } else {
-        const message =
-          r.kind === "Kustomization"
-            ? `Applied revision: ${r.revision ?? ""}`
-            : r.kind === "HelmRelease"
-              ? `Helm upgrade succeeded for release ${r.namespace}/${r.name} with chart ${r.chart ?? ""}`
-              : "stored artifact for the latest revision";
-        this.update(cl, r, { status: "ready", message });
-        r.events.unshift(event("Normal", "ReconciliationSucceeded", message));
+        return;
       }
+      r.recovers = undefined;
+      if (r.chart && r.kind === "HelmRelease") r.revision = r.chart.split("@")[1];
+      const done =
+        r.kind === "Kustomization"
+          ? `Applied revision: ${r.revision ?? ""}`
+          : r.kind === "HelmRelease"
+            ? `Helm upgrade succeeded for release ${r.namespace}/${r.name} with chart ${r.chart ?? ""}`
+            : "stored artifact for the latest revision";
+      r.conditions = [{ type: "Ready", status: "True", reason: "ReconciliationSucceeded", message: done }];
+      this.update(cl, r, { status: "ready", blocked: undefined, message: done });
+      r.events.unshift(event("Normal", "ReconciliationSucceeded", done));
+      this.downstreamOf(cl, r)
+        .filter((x) => !seen.has(x.id))
+        .forEach((x, i) => {
+          seen.add(x.id);
+          setTimeout(() => this.reconcileWave(cl, x, "Reconciliation in progress", seen), 500 + i * 350);
+        });
     }, 1400);
   }
 
@@ -1137,7 +1209,7 @@ const refKey = (r: { kind: string; namespace: string; name: string }) => `${r.ki
 
 /** Drops mock-only fields so responses match the wire shape. */
 function strip(r: MockResource) {
-  const { events: _events, spec: _spec, ...wire } = r;
+  const { events: _events, spec: _spec, recovers: _recovers, ...wire } = r;
   return wire;
 }
 

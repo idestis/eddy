@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { resourcesQuery, threadsQuery, useCluster, useMe } from "../../../../../../../api/queries";
 import type { ResourceRef } from "../../../../../../../api/types";
 import { AskAIPanel } from "../../../../../../../components/AskAI";
 import { ChildrenTree } from "../../../../../../../components/ChildrenTree";
 import { Empty } from "../../../../../../../components/Empty";
+import { Icon } from "../../../../../../../components/Icon";
 import { LogsView } from "../../../../../../../components/LogsView";
 import {
   Conditions,
@@ -18,6 +19,7 @@ import {
   YamlView,
 } from "../../../../../../../components/ResourceParts";
 import { Screen } from "../../../../../../../components/Screen";
+import { SEG, SEG_BTN } from "../../../../../../../components/SidePanel";
 import { KeyHint } from "../../../../../../../components/Status";
 import { TabIndicator, useTabIndicator } from "../../../../../../../components/TabIndicator";
 import { ResourceThreads } from "../../../../../../../components/Threads";
@@ -29,7 +31,13 @@ import { kindInfo } from "../../../../../../../lib/kinds";
 import { DETAIL_VIEWS, type DetailView, detailLink, nsFromParam } from "../../../../../../../lib/links";
 import { recallList } from "../../../../../../../lib/listMemory";
 import { useResourceActions } from "../../../../../../../lib/useResourceActions";
+import { setViewPrefs, useViewPrefs } from "../../../../../../../lib/viewPrefs";
 import { WORKLOAD_LOG_KINDS } from "../../../../../../../lib/workloadLogs";
+
+// The graph and its layout code load only when the Graph toggle is on.
+const LineageGraph = lazy(() =>
+  import("../../../../../../../components/graph").then((m) => ({ default: m.LineageGraph })),
+);
 
 export const Route = createFileRoute("/_app/c/$cluster/r/$kind/$ns/$name")({
   validateSearch: z.object({
@@ -70,6 +78,9 @@ function DetailPage() {
   const actions = useResourceActions(cluster);
   const namespace = nsFromParam(params.ns);
   const tabList = useTabIndicator(view);
+  const managesView = useViewPrefs().managesView ?? "tree";
+  // The node picked in the Manages graph; r and R act on it there.
+  const [graphPick, setGraphPick] = useState<string | undefined>();
 
   const { data, isPending } = useQuery({
     ...resourcesQuery(params.cluster),
@@ -92,6 +103,8 @@ function DetailPage() {
     if (found) setSeen(pageKey);
   }, [found, pageKey]);
   const deleted = !found && seen === pageKey && Boolean(data);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new page starts with nothing picked
+  useEffect(() => setGraphPick(undefined), [pageKey]);
   const target: ResourceRef | undefined = r && {
     cluster: params.cluster,
     group: r.group,
@@ -136,10 +149,12 @@ function DetailPage() {
     void navigate({ to: "/c/$cluster", params: { cluster: params.cluster }, search: place.search });
   };
 
+  const graphOn = view === "overview" && managesView === "graph" && Boolean(r && kindInfo(r.kind).flux);
+  const actTarget = (graphOn && graphPick && items.find((x) => x.id === graphPick)) || r;
   useKeys({
     back,
-    reconcile: () => actions.reconcile(r),
-    reconcileSource: () => actions.reconcile(r, true),
+    reconcile: () => actions.reconcile(actTarget),
+    reconcileSource: () => actions.reconcile(actTarget, true),
     suspend: () => actions.toggleSuspend(r),
     logs: () =>
       hasLogs ? setView("logs") : toast("Logs are available on pods and workloads. Open one from the tree."),
@@ -250,8 +265,51 @@ function DetailPage() {
               </div>
               {!r.inventoryOnly && (
                 <>
-                  <SectionTitle>Manages</SectionTitle>
-                  <ChildrenTree cluster={params.cluster} root={r} items={items} />
+                  <div className="flex items-center gap-3">
+                    <SectionTitle>Manages</SectionTitle>
+                    {kindInfo(r.kind).flux && (
+                      <fieldset className={`${SEG} m-0 mt-3 ml-auto shrink-0 p-[2px]`}>
+                        <legend className="sr-only">Show as</legend>
+                        {(
+                          [
+                            ["tree", "Tree", "list"],
+                            ["graph", "Graph", "graph"],
+                          ] as const
+                        ).map(([v, label, icon]) => (
+                          <button
+                            key={v}
+                            type="button"
+                            aria-pressed={managesView === v}
+                            className={`${SEG_BTN} h-[26px] flex-none aria-pressed:bg-ink`}
+                            title={
+                              v === "graph"
+                                ? "Dependencies, sources and managed objects as a graph"
+                                : "Ownership tree"
+                            }
+                            onClick={() => setViewPrefs({ managesView: v })}
+                          >
+                            <Icon name={icon} className="size-3.5" />
+                            {label}
+                          </button>
+                        ))}
+                      </fieldset>
+                    )}
+                  </div>
+                  {graphOn ? (
+                    <Suspense fallback={<Empty>Loading the graph…</Empty>}>
+                      <LineageGraph
+                        cluster={cluster}
+                        root={r}
+                        items={items}
+                        selectedId={graphPick}
+                        onSelect={setGraphPick}
+                        onOpen={(ref) => void navigate(detailLink(params.cluster, ref))}
+                        actions={actions}
+                      />
+                    </Suspense>
+                  ) : (
+                    <ChildrenTree cluster={params.cluster} root={r} items={items} />
+                  )}
                 </>
               )}
             </>

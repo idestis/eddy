@@ -13,5 +13,7 @@ declare global {
     readonly VITE_MOCK?: string;
     /** Extra generated pods in the mock "dev" cluster, for list performance checks. */
     readonly VITE_MOCK_ROWS?: string;
+    /** "1": the mock hub answers GET …/graph with 404, like an older hub. */
+    readonly VITE_MOCK_NO_GRAPH?: string;
   }
 }

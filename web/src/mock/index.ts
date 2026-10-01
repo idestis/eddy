@@ -57,6 +57,8 @@ class MockEventSource extends EventTarget {
 export function installMock(): void {
   const extra = Number.parseInt(import.meta.env.VITE_MOCK_ROWS ?? "0", 10) || 0;
   const hub = new MockHub(extra);
+  // An older hub without GET …/graph: the UI builds the graph in the browser.
+  hub.noGraph = import.meta.env.VITE_MOCK_NO_GRAPH === "1";
   const realFetch = window.fetch.bind(window);
   const RealEventSource = window.EventSource;
 
