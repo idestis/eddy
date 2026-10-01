@@ -73,6 +73,20 @@ for an agent in the hub's own cluster, so the install guide warns instead of pri
 
 {{/* Validation: fail early with a clear message. */}}
 {{- define "eddy-hub.validate" -}}
+{{- $prefix := .Values.config.auth.groups.prefix -}}
+{{- range .Values.onboarding.admins.groups -}}
+{{- if hasPrefix "system:" . -}}
+{{- fail (printf "onboarding.admins.groups: %q is a system group; bind only Eddy groups" .) -}}
+{{- end -}}
+{{- if not (hasPrefix $prefix .) -}}
+{{- fail (printf "onboarding.admins.groups: %q must start with config.auth.groups.prefix %q, the prefix the hub gives every group" . $prefix) -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.onboarding.admins.users -}}
+{{- if hasPrefix "system:" . -}}
+{{- fail (printf "onboarding.admins.users: %q is a system user" .) -}}
+{{- end -}}
+{{- end -}}
 {{- if not (has .Values.store.driver (list "postgres" "memory")) -}}
 {{- fail (printf "store.driver %q is not supported (postgres, memory). SQLite was removed in favour of PostgreSQL (ADR-0004)." .Values.store.driver) -}}
 {{- end -}}

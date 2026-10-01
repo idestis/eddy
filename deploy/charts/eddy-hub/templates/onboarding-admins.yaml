@@ -1,0 +1,39 @@
+{{- /*
+Who may add, change and remove clusters in the UI. The hub checks each request with a
+SubjectAccessReview as the signed-in user against these permissions (ADR-0005).
+*/ -}}
+{{- $a := .Values.onboarding.admins -}}
+{{- if and .Values.onboarding.enabled .Values.rbac.create (or $a.groups $a.users) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $a.roleName }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [gitops.eddy.dev]
+    resources: [clusters]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $a.roleName }}
+  labels:
+    {{- include "eddy-hub.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $a.roleName }}
+subjects:
+  {{- range $a.groups }}
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: {{ . | quote }}
+  {{- end }}
+  {{- range $a.users }}
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: {{ . | quote }}
+  {{- end }}
+{{- end }}

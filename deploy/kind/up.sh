@@ -133,6 +133,7 @@ log "Eddy hub"
 cat >"$tmp/hub-values.yaml" <<YAML
 publicURL: http://localhost:8080
 agentsPublicURL: https://eddy-hub-agents.${HUB_NS}.svc:443
+onboarding: {admins: {groups: ["eddy:platform"]}}
 image: {tag: ${IMAGE_TAG}, pullPolicy: Never}
 replicaCount: 2
 store:

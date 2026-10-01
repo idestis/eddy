@@ -20,6 +20,14 @@ agentsPublicURL: ""
 onboarding:
   enabled: true
   joinTokenTTL: 1h                 # default lifetime of a join token; at most 24h
+  # Who may use the wizard. The chart creates the ClusterRole `roleName` (get, list, watch,
+  # create, update, patch and delete on clusters.gitops.eddy.dev) in this management cluster
+  # and binds it to these Eddy groups and users. Nobody by default. Groups carry the
+  # config.auth.groups.prefix, e.g. [eddy:platform] or [eddy:github:acme/platform].
+  admins:
+    groups: []
+    users: []
+    roleName: eddy-cluster-admin
 
 nameOverride: ""
 fullnameOverride: ""

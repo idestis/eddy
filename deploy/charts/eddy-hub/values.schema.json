@@ -8,7 +8,16 @@
       "type": "object",
       "properties": {
         "enabled": {"type": "boolean"},
-        "joinTokenTTL": {"type": "string", "pattern": "^[0-9]+(m|h)$"}
+        "joinTokenTTL": {"type": "string", "pattern": "^[0-9]+(m|h)$"},
+        "admins": {
+          "type": "object",
+          "properties": {
+            "groups": {"type": "array", "items": {"type": "string", "minLength": 1, "not": {"pattern": "^system:"}}},
+            "users": {"type": "array", "items": {"type": "string", "minLength": 1, "not": {"pattern": "^system:"}}},
+            "roleName": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"}
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

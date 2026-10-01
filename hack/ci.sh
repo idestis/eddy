@@ -99,6 +99,16 @@ job_charts() {
     --set ingress.ui.enabled=true --set 'ingress.ui.hosts={eddy.example.com}' \
     --set ingress.agents.enabled=true --set 'ingress.agents.hosts={agents.example.com}' \
     --set networkPolicy.enabled=true --set 'clusters[0].name=prod' >/dev/null
+  helm template eddy deploy/charts/eddy-hub --set store.driver=memory --set 'onboarding.admins.groups={eddy:platform}' |
+    grep -q 'name: eddy-cluster-admin' || { echo "onboarding.admins must create eddy-cluster-admin"; exit 1; }
+  if helm template eddy deploy/charts/eddy-hub --set store.driver=memory | grep -q 'name: eddy-cluster-admin'; then
+    echo "eddy-cluster-admin must not exist without onboarding.admins"; exit 1
+  fi
+  for bad in platform system:masters; do
+    if helm template eddy deploy/charts/eddy-hub --set store.driver=memory --set "onboarding.admins.groups={$bad}" >/dev/null 2>&1; then
+      echo "onboarding.admins.groups=$bad must fail"; exit 1
+    fi
+  done
   step "charts: CRD copy matches config/crd"
   diff -u config/crd/gitops.eddy.dev_clusters.yaml deploy/charts/eddy-hub/crds/gitops.eddy.dev_clusters.yaml
 }

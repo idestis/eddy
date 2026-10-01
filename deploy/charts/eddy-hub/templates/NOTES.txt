@@ -72,6 +72,17 @@ Agent endpoint: {{ $agentsURL }}
   Set agentsPublicURL or ingress.agents.hosts for agents in other clusters. Until then the
   Add cluster wizard shows a placeholder hub URL instead of a working command.
 {{- end }}
+{{- if and .Values.onboarding.enabled .Values.rbac.create }}
+{{- $a := .Values.onboarding.admins }}
+{{- if or $a.groups $a.users }}
+
+Add cluster wizard: {{ $a.roleName }} is bound to {{ concat $a.groups $a.users | join ", " }}.
+{{- else }}
+
+Add cluster wizard: nobody may use it yet. Set onboarding.admins.groups (for example
+[eddy:platform]) and upgrade, or bind your own ClusterRole on clusters.gitops.eddy.dev.
+{{- end }}
+{{- end }}
 {{ if .Values.clusters }}
 Register each workload cluster by running this against THAT cluster:
 {{ range .Values.clusters }}
