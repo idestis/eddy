@@ -40,14 +40,35 @@ func TestHashSecretKeepsNoValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := out.(*corev1.Secret)
-	if len(s.Annotations) != 0 {
-		t.Fatal("annotations kept")
+	if len(s.Annotations) != 1 || s.Annotations[hashedAnnotation] == "" {
+		t.Fatalf("annotations = %v, want only the hashed marker", s.Annotations)
 	}
 	if h := sha256.Sum256([]byte("secret")); string(s.Data["token"]) != string(h[:]) {
 		t.Fatal("token not replaced by its sha256")
 	}
 	if h := sha256.Sum256([]byte("old")); string(s.Data["previousToken"]) != string(h[:]) {
 		t.Fatal("previousToken not hashed")
+	}
+}
+
+// client-go may transform an object twice (watch-list initial sync, then
+// Replace); a second pass must not hash the hashes.
+func TestHashSecretIsIdempotent(t *testing.T) {
+	in := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "eddy"},
+		Data:       map[string][]byte{"token": []byte("secret")},
+	}
+	once, err := hashSecret(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	twice, err := hashSecret(once)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := sha256.Sum256([]byte("secret"))
+	if got := twice.(*corev1.Secret).Data["token"]; string(got) != string(h[:]) {
+		t.Fatal("a second transform changed the stored hash")
 	}
 }
 

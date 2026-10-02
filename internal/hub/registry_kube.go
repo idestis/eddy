@@ -107,11 +107,23 @@ func newKubeSourceClients(reg *Registry, dyn dynamic.Interface, kube kubernetes.
 	return s, nil
 }
 
+// hashedAnnotation marks a Secret whose values hashSecret already replaced.
+const hashedAnnotation = "gitops.eddy.dev/hashed"
+
 // hashSecret keeps only the name and the sha256 of each data value.
+//
+// It must be idempotent: client-go may run a transform twice on the same
+// object (the watch-list initial sync transforms into a temporary store and
+// again on Replace). Hashing twice would store sha256(sha256(token)), which
+// still passes the 32-byte check, so every agent would be refused after a
+// hub restart. A marked Secret is returned as it is.
 func hashSecret(obj any) (any, error) {
 	sec, ok := obj.(*corev1.Secret)
 	if !ok {
 		return obj, nil
+	}
+	if _, done := sec.Annotations[hashedAnnotation]; done {
+		return sec, nil
 	}
 	out := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -119,6 +131,7 @@ func hashSecret(obj any) (any, error) {
 			Namespace:       sec.Namespace,
 			UID:             sec.UID,
 			ResourceVersion: sec.ResourceVersion,
+			Annotations:     map[string]string{hashedAnnotation: "sha256"},
 		},
 		Data: make(map[string][]byte, len(sec.Data)),
 	}
