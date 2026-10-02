@@ -114,7 +114,7 @@ clusters:
       />
       <CodeBlock
         code={`
-$ helm upgrade eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \\
+$ helm upgrade eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.1 \\
     --namespace eddy -f hub-values.yaml
 `}
       />
@@ -179,7 +179,7 @@ replicaCount: 2
           Install with the join token from the wizard:
           <CodeBlock
             code={`
-$ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.0 \\
+$ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.1 \\
     --kube-context prod-eu --namespace eddy-system \\
     -f agent-values.yaml \\
     --set-string joinToken=eddy_join_...
@@ -189,7 +189,7 @@ $ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.
           cluster. Prefer <code>token.existingSecret</code> under GitOps:
           <CodeBlock
             code={`
-$ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.0 \\
+$ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.1 \\
     --kube-context prod-eu --namespace eddy-system \\
     -f agent-values.yaml \\
     --set-string token.value="$(kubectl --context mgmt -n eddy get secret eddy-agent-prod-eu -o jsonpath='{.data.token}' | base64 -d)"

@@ -360,7 +360,7 @@ ingress:
       <h2 id="helm">6. Install</h2>
       <CodeBlock
         code={`
-$ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \\
+$ helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.1 \\
     --namespace eddy -f hub-values.yaml
 `}
       />

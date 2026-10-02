@@ -124,7 +124,7 @@ unset VALUE
 Hash a password for each local user. `hash-password` reads stdin, so the password stays out of shell history:
 
 ```sh
-read -rs PW && printf '%s' "$PW" | docker run --rm -i ghcr.io/idestis/eddy-hub:1.0.0 hash-password
+read -rs PW && printf '%s' "$PW" | docker run --rm -i ghcr.io/idestis/eddy-hub:1.0.1 hash-password
 ```
 
 Then write `hub-values.yaml`:
@@ -178,7 +178,7 @@ ingress:
 Install it:
 
 ```sh
-helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.0 \
+helm install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.1 \
   --namespace eddy -f hub-values.yaml
 ```
 
@@ -326,7 +326,7 @@ With Option A, run the command the Connect screen shows. With Option B, `helm up
 `helm install`) on the hub prints the exact command per cluster in NOTES.txt. It looks like this:
 
 ```sh
-helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.0 \
+helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.1 \
   --kube-context prod-eu --namespace eddy-system --create-namespace \
   --set cluster.name=prod-eu \
   --set hub.url=wss://eddy-agents.internal.example.com/agent/v1/connect \
