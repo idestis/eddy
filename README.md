@@ -2,6 +2,11 @@
 
 **A fast, keyboard-first, multi-cluster UI for [Flux](https://fluxcd.io).**
 
+[Website](https://idestis.github.io/eddy/) ·
+[Documentation](https://idestis.github.io/eddy/docs/) ·
+[Quickstart](https://idestis.github.io/eddy/docs/quickstart/) ·
+[Releases](https://github.com/idestis/eddy/releases)
+
 Eddy shows every Flux cluster you run in one place. You can jump anywhere with a command
 palette, reconcile or suspend with a single key, follow a live dependency graph from a
 source to everything it applies, and read logs, events and YAML without leaving the
@@ -88,7 +93,8 @@ open http://localhost:8080   # sign in as the dev user printed by the script
 ```
 
 For production installs, including internal ingress, local users, proxy auth, Bedrock and
-backups, see **[docs/install.md](docs/install.md)**.
+backups, see the **[install guide](https://idestis.github.io/eddy/docs/install/)**
+([docs/install.md](docs/install.md) in this repo).
 
 ## Connect Claude Code
 
@@ -100,8 +106,8 @@ claude mcp add --transport http eddy https://eddy.internal.example.com/mcp \
 ```
 
 Then ask, for example: *"Review every failing HelmRelease across the fleet and leave a thread
-on each one with the likely cause."* See [docs/mcp.md](docs/mcp.md) for the tools, scopes and
-guardrails.
+on each one with the likely cause."* See the [MCP guide](https://idestis.github.io/eddy/docs/mcp/)
+and [docs/mcp.md](docs/mcp.md) for the tools, scopes and guardrails.
 
 ## Choosing an Ask AI model
 
