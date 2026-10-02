@@ -103,6 +103,47 @@ Then ask, for example: *"Review every failing HelmRelease across the fleet and l
 on each one with the likely cause."* See [docs/mcp.md](docs/mcp.md) for the tools, scopes and
 guardrails.
 
+## Choosing an Ask AI model
+
+Ask AI runs a short tool loop: the model reads the resource, then calls tools (events,
+children, logs, YAML) for up to `maxRounds` rounds before it answers. Each round resends the
+conversation so far, so input tokens dominate the bill. As a rough guide, one conversation
+about a resource with a couple of follow-ups uses about **50K input and 3K output tokens**.
+
+```
+monthly cost ≈ users × resources per day × working days × (50K × input price + 3K × output price)
+```
+
+Example: 10 users asking about 10 resources each working day (22 days) is about 2,200
+conversations a month. On-demand prices in eu-west-2 (London) when this was written, per 1M
+tokens:
+
+| Bedrock `modelId` | Input / output | Per conversation | 2,200 a month |
+|---|---|---|---|
+| `eu.anthropic.claude-haiku-4-5-20251001-v1:0` | $1.10 / $5.50 | ~$0.07 | ~$154 |
+| `openai.gpt-oss-120b-1:0` | $0.23 / $0.93 | ~$0.014 | ~$31 |
+| `qwen.qwen3-235b-a22b-2507-v1:0` | $0.34 / $1.37 | ~$0.021 | ~$46 |
+| `global.amazon.nova-2-lite-v1:0` | $0.42 / $3.52 | ~$0.032 | ~$70 |
+| `amazon.nova-lite-v1:0` | $0.084 / $0.336 | ~$0.005 | ~$11 |
+
+Check current prices on the [Bedrock pricing page](https://aws.amazon.com/bedrock/pricing/).
+Some things to weigh besides price:
+
+- **Quality.** Finding a root cause across a source, a Kustomization and a HelmRelease takes
+  several well-chosen tool calls. Claude Haiku 4.5 is the tested default. Cheaper models
+  answer simple questions well but can stop early or miss the cause on multi-step failures.
+  Try a model on real failures from your fleet before switching.
+- **Latency.** Speed depends mostly on the number of rounds. Models that reason at length
+  can take several seconds per round.
+- **Data residency.** Models called in-region and `eu.` profiles stay in Europe. A `global.`
+  profile can route anywhere.
+- **Prompt injection.** Tool results include cluster data such as logs and annotations. Eddy
+  wraps them as untrusted content, and stronger models resist instructions hidden there
+  better. Ask AI is read-only either way.
+
+Any Bedrock model that supports tool use through the Converse API works; set its id as
+`ai.bedrock.modelId`. See [docs/install.md](docs/install.md) for the IAM setup.
+
 ## Security model
 
 - Agents only dial out. The agent's ServiceAccount is read-only, apart from `impersonate`
