@@ -40,6 +40,7 @@ contexts:
 	tokenFile := filepath.Join(dir, ".dev", "agent-token")
 	var stdout, stderr bytes.Buffer
 	t.Setenv("EDDY_DATABASE_URL", "postgres://eddy@127.0.0.1:55432/eddy?sslmode=disable")
+	t.Setenv("EDDY_AI_PROVIDER", "") // `task` loads .env, which may enable Ask AI
 	code := devConfig([]string{"--contexts", "kind-eddy," + arn, "--out", out, "--token-file", tokenFile, "--postgres"},
 		func(k string) string { return os.Getenv(k) }, &stdout, &stderr)
 	if code != 0 {
