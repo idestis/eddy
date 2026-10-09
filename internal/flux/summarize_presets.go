@@ -3,8 +3,11 @@ package flux
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/idestis/eddy/internal/model"
 )
@@ -104,6 +107,23 @@ func usageOf(used, limit string) string {
 	return used
 }
 
+// binaryQuantity rewrites a byte quantity in the largest binary unit that
+// keeps it at 1 or more, with at most one decimal: "273098696Ki" becomes
+// "260.4Gi". Unparseable input is returned unchanged.
+func binaryQuantity(s string) string {
+	q, err := resource.ParseQuantity(s)
+	if err != nil {
+		return s
+	}
+	v := q.AsApproximateFloat64()
+	units := []string{"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei"}
+	i := 0
+	for ; i < len(units)-1 && v >= 1024; i++ {
+		v /= 1024
+	}
+	return strings.TrimSuffix(strconv.FormatFloat(v, 'f', 1, 64), ".0") + units[i]
+}
+
 // --- Karpenter ---------------------------------------------------------------
 
 // summarizeNodePool: the Ready condition, with node count and CPU and
@@ -112,7 +132,7 @@ func summarizeNodePool(obj map[string]any, r *model.Resource) {
 	c := summarizeConditions(obj, r)
 	nodes := firstNonEmpty(scalar(obj, "status", "resources", "nodes"), scalar(obj, "status", "nodes"))
 	cpu := usageOf(scalar(obj, "status", "resources", "cpu"), scalar(obj, "spec", "limits", "cpu"))
-	mem := usageOf(scalar(obj, "status", "resources", "memory"), scalar(obj, "spec", "limits", "memory"))
+	mem := usageOf(binaryQuantity(scalar(obj, "status", "resources", "memory")), binaryQuantity(scalar(obj, "spec", "limits", "memory")))
 	addDetail(r, "Nodes", nodes)
 	addDetail(r, "CPU", cpu)
 	addDetail(r, "Memory", mem)

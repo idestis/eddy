@@ -370,3 +370,21 @@ func TestSummarizeConditionsGeneric(t *testing.T) {
 		})
 	}
 }
+
+func TestBinaryQuantity(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"273098696Ki", "260.4Gi"},
+		{"48Gi", "48Gi"},
+		{"1000Gi", "1000Gi"},
+		{"2048Gi", "2Ti"},
+		{"512Mi", "512Mi"},
+		{"16G", "14.9Gi"},
+		{"100", "100"},
+		{"", ""},
+		{"not-a-quantity", "not-a-quantity"},
+	} {
+		if got := binaryQuantity(tc.in); got != tc.want {
+			t.Errorf("binaryQuantity(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
