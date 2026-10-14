@@ -3,7 +3,7 @@ module github.com/idestis/eddy
 go 1.26.0
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.76.0
+	github.com/anthropics/anthropic-sdk-go v1.80.0
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.63.1
