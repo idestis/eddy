@@ -26,7 +26,7 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "tinykeys": "^4.0.1",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
