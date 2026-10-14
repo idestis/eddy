@@ -29,7 +29,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
+    "@biomejs/biome": "^2.5.15",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/router-plugin": "^1.168.41",
     "@testing-library/dom": "^10.4.2",
