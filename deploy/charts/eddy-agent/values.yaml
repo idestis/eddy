@@ -33,6 +33,9 @@ watch:
   #   karpenter        karpenter.sh NodePool, NodeClaim; karpenter.k8s.aws EC2NodeClass
   #   externalSecrets  external-secrets.io ExternalSecret, ClusterExternalSecret, SecretStore,
   #                    ClusterSecretStore, PushSecret (never the Secrets they produce)
+  #   cnpg             postgresql.cnpg.io Cluster, Backup, ScheduledBackup, Pooler (CloudNativePG)
+  #   rabbitmq         rabbitmq.com RabbitmqCluster
+  #   datadog          datadoghq.com DatadogAgent (API keys and tokens are never sent)
   presets: []         # e.g. [karpenter, externalSecrets]
 
 impersonation:

@@ -33,6 +33,9 @@ const (
 	GroupKarpenter    = "karpenter.sh"
 	GroupKarpenterAWS = "karpenter.k8s.aws"
 	GroupESO          = "external-secrets.io"
+	GroupCNPG         = "postgresql.cnpg.io"
+	GroupRabbitMQ     = "rabbitmq.com"
+	GroupDatadog      = "datadoghq.com"
 )
 
 // Names of the supported kinds.
@@ -73,6 +76,19 @@ const (
 	KindClusterSecretStore    = "ClusterSecretStore"
 	KindPushSecret            = "PushSecret"
 
+	// Kinds of the cnpg preset (CloudNativePG). KindCNPGCluster is a
+	// PostgreSQL cluster, not an Eddy cluster.
+	KindCNPGCluster     = "Cluster"
+	KindBackup          = "Backup"
+	KindScheduledBackup = "ScheduledBackup"
+	KindPooler          = "Pooler"
+
+	// Kinds of the rabbitmq preset.
+	KindRabbitmqCluster = "RabbitmqCluster"
+
+	// Kinds of the datadog preset.
+	KindDatadogAgent = "DatadogAgent"
+
 	// Kinds Eddy never watches. Secrets and ConfigMaps appear only by name,
 	// from a Kustomization's inventory.
 	KindSecret    = "Secret"
@@ -85,10 +101,15 @@ const (
 const (
 	PresetKarpenter       = "karpenter"
 	PresetExternalSecrets = "externalSecrets"
+	PresetCNPG            = "cnpg"
+	PresetRabbitMQ        = "rabbitmq"
+	PresetDatadog         = "datadog"
 )
 
 // Presets lists every supported preset.
-func Presets() []string { return []string{PresetKarpenter, PresetExternalSecrets} }
+func Presets() []string {
+	return []string{PresetKarpenter, PresetExternalSecrets, PresetCNPG, PresetRabbitMQ, PresetDatadog}
+}
 
 // ParsePresets validates preset names (exact spelling), dropping empty
 // entries and duplicates, in the order of Presets.
@@ -167,6 +188,15 @@ var kinds = []Kind{
 	{Group: GroupESO, Kind: KindSecretStore, Plural: "secretstores", Versions: []string{"v1", "v1beta1"}, Namespaced: true, Surfaced: true, Preset: PresetExternalSecrets},
 	{Group: GroupESO, Kind: KindClusterSecretStore, Plural: "clustersecretstores", Versions: []string{"v1", "v1beta1"}, Surfaced: true, Preset: PresetExternalSecrets},
 	{Group: GroupESO, Kind: KindPushSecret, Plural: "pushsecrets", Versions: []string{"v1alpha1"}, Namespaced: true, Surfaced: true, Preset: PresetExternalSecrets},
+
+	{Group: GroupCNPG, Kind: KindCNPGCluster, Plural: "clusters", Versions: []string{"v1"}, Namespaced: true, Surfaced: true, Preset: PresetCNPG},
+	{Group: GroupCNPG, Kind: KindBackup, Plural: "backups", Versions: []string{"v1"}, Namespaced: true, Surfaced: true, Preset: PresetCNPG},
+	{Group: GroupCNPG, Kind: KindScheduledBackup, Plural: "scheduledbackups", Versions: []string{"v1"}, Namespaced: true, Surfaced: true, Preset: PresetCNPG},
+	{Group: GroupCNPG, Kind: KindPooler, Plural: "poolers", Versions: []string{"v1"}, Namespaced: true, Surfaced: true, Preset: PresetCNPG},
+
+	{Group: GroupRabbitMQ, Kind: KindRabbitmqCluster, Plural: "rabbitmqclusters", Versions: []string{"v1beta1"}, Namespaced: true, Surfaced: true, Preset: PresetRabbitMQ},
+
+	{Group: GroupDatadog, Kind: KindDatadogAgent, Plural: "datadogagents", Versions: []string{"v2alpha1"}, Namespaced: true, Surfaced: true, Preset: PresetDatadog},
 }
 
 func (k Kind) clone() Kind {

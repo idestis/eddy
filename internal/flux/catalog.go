@@ -16,11 +16,14 @@ var (
 	ProjectFlux            = Project{ID: "flux", Name: "Flux"}
 	ProjectKarpenter       = Project{ID: "karpenter", Name: "Karpenter"}
 	ProjectExternalSecrets = Project{ID: "external-secrets", Name: "External Secrets"}
+	ProjectCNPG            = Project{ID: "cloudnative-pg", Name: "CloudNativePG"}
+	ProjectRabbitMQ        = Project{ID: "rabbitmq", Name: "RabbitMQ"}
+	ProjectDatadog         = Project{ID: "datadog", Name: "Datadog"}
 )
 
 // KnownProjects lists the well-known projects in display order.
 func KnownProjects() []Project {
-	return []Project{ProjectKubernetes, ProjectFlux, ProjectKarpenter, ProjectExternalSecrets}
+	return []Project{ProjectKubernetes, ProjectFlux, ProjectKarpenter, ProjectExternalSecrets, ProjectCNPG, ProjectRabbitMQ, ProjectDatadog}
 }
 
 // kubernetesGroups are the built-in API groups (the core group is "").
@@ -36,8 +39,9 @@ var kubernetesGroups = map[string]bool{
 // ProjectOf maps an API group to its project. Built-in groups belong to
 // Kubernetes, *.fluxcd.io to Flux, karpenter.sh and karpenter.k8s.aws to
 // Karpenter and external-secrets.io (with its *.external-secrets.io
-// generator groups) to External Secrets. Any other group is its own
-// project, named after the group.
+// generator groups) to External Secrets, postgresql.cnpg.io to CloudNativePG,
+// rabbitmq.com to RabbitMQ and datadoghq.com to Datadog. Any other group is
+// its own project, named after the group.
 func ProjectOf(group string) Project {
 	switch {
 	case kubernetesGroups[group]:
@@ -48,6 +52,12 @@ func ProjectOf(group string) Project {
 		return ProjectKarpenter
 	case group == GroupESO || strings.HasSuffix(group, "."+GroupESO):
 		return ProjectExternalSecrets
+	case group == GroupCNPG:
+		return ProjectCNPG
+	case group == GroupRabbitMQ:
+		return ProjectRabbitMQ
+	case group == GroupDatadog:
+		return ProjectDatadog
 	}
 	return Project{ID: group, Name: group}
 }

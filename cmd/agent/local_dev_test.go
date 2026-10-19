@@ -176,10 +176,10 @@ func TestLocalPresets(t *testing.T) {
 		env, want string
 		err       bool
 	}{
-		{"", "karpenter,externalSecrets", false},
+		{"", "karpenter,externalSecrets,cnpg,rabbitmq,datadog", false},
 		{"none", "", false},
 		{"karpenter", "karpenter", false},
-		{"karpenter,datadog", "", true},
+		{"karpenter,kyverno", "", true},
 	} {
 		got, err := localPresets(func(k string) string {
 			if k == envPresets {

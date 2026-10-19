@@ -311,9 +311,13 @@ computed from the user's SAR-filtered view of the cluster:
   allowed is `ready` with the message "0 disruptions allowed · blocks voluntary evictions"; a
   `DisruptionAllowed=False` condition for a reason other than `InsufficientPods` is `failed`.
   `Replicas` is `currentHealthy/desiredHealthy`. ConfigMaps and Secrets stay inventory-only rows.
-- **Watch presets** (agent `watch.presets` / `EDDY_WATCH_PRESETS`, opt-in; `task dev` enables both):
+- **Watch presets** (agent `watch.presets` / `EDDY_WATCH_PRESETS`, opt-in; `task dev` enables all):
   - `karpenter`: NodePool, NodeClaim (`karpenter.sh`) and EC2NodeClass (`karpenter.k8s.aws`), all cluster-scoped.
   - `externalSecrets`: ExternalSecret, ClusterExternalSecret, SecretStore, ClusterSecretStore and PushSecret (`external-secrets.io`).
+  - `cnpg`: Cluster, Backup, ScheduledBackup and Pooler (`postgresql.cnpg.io`, CloudNativePG), all namespaced.
+    The kind `Cluster` is a PostgreSQL cluster; pass `group=postgresql.cnpg.io` where another group's `Cluster` may exist.
+  - `rabbitmq`: RabbitmqCluster (`rabbitmq.com`).
+  - `datadog`: DatadogAgent (`datadoghq.com`).
   A preset kind the agent does not watch (preset off) still appears as an inventory-only row.
   `ClusterInfo.presets` lists the agent's enabled presets.
 - **Preset status rules:** `spec.suspend` → `suspended`; the first of the `Ready`, `Available`
@@ -321,11 +325,27 @@ computed from the user's SAR-filtered view of the cluster:
   Unknown → `reconciling`); a controller behind `metadata.generation` (status or condition
   `observedGeneration`) → `reconciling`. A NodeClaim follows Launched → Registered → Initialized
   → Ready; a False `Launched` is `failed`. A ClusterExternalSecret with failed namespaces is `failed`.
+  A CNPG Cluster is `suspended` when hibernated, `failed` in a phase that needs a human
+  (unrecoverable, cannot create objects, image catalog or plugin errors, waiting for user action),
+  `ready` with `Ready=True`, else `reconciling` with the phase. A Backup follows `status.phase`:
+  completed → `completed`, failed or walArchivingFailing → `failed` with `status.error`, else
+  `reconciling`. A ScheduledBackup is `ready` once scheduled (`suspended` with `spec.suspend`). A
+  Pooler compares `status.instances` with `spec.instances` (`suspended` when paused). A
+  RabbitmqCluster is `failed` on a False `ReconcileSuccess` or `ClusterAvailable` and
+  `reconciling` until `AllReplicasReady`. A DatadogAgent is `failed` when a component's state is
+  Failed or an `…Error` condition is True, and `reconciling` while any component has fewer ready
+  pods than desired.
 - **`Resource.details`** (new, optional): `[{label, value}]`, at most 12, one line each, in display
   order. For example NodePool `Nodes`, `CPU` ("12 / 1000"), `Memory`, `Node class`; NodeClaim
   `Instance type`, `Capacity type`, `Zone`, `Node`, `Node pool`; ExternalSecret `Target secret`
   (name only), `Store`, `Refresh interval`, `Last refresh`; StorageClass `Provisioner`,
   `Default class`, `Reclaim policy`, `Volume binding mode`.
+- CNPG Cluster `replicas` is `readyInstances/instances` and `images` its PostgreSQL image; details
+  `Instances`, `Primary`, `Image`, `Storage`, `WAL storage`, `Last backup`. Backup,
+  ScheduledBackup and Pooler put their CNPG Cluster in `source`; ScheduledBackup sets `schedule`.
+  RabbitmqCluster sets `replicas` (once all are ready) and `images`. DatadogAgent `replicas` is
+  the node agent's `ready/desired`, with details `Node agent`, `Cluster agent`, `Cluster checks
+  runner` and `Site`.
 - ExternalSecret and ClusterExternalSecret put the store in `source` (`{group: external-secrets.io,
   kind: SecretStore|ClusterSecretStore, …}`) and `spec.refreshInterval` in `interval`.
 - **Labels:** Namespaces also keep `pod-security.kubernetes.io/*`; Karpenter kinds keep
@@ -337,8 +357,9 @@ computed from the user's SAR-filtered view of the cluster:
 Every `Resource` (inventory-only rows too) carries `project`: `kubernetes` for built-in groups
 (core, apps, batch, networking.k8s.io, policy, storage.k8s.io, rbac.authorization.k8s.io,
 autoscaling, …), `flux` for `*.fluxcd.io`, `karpenter` for `karpenter.sh` and `karpenter.k8s.aws`,
-`external-secrets` for `external-secrets.io`, and the API group itself for any other group. The
-hub sets it.
+`external-secrets` for `external-secrets.io`, `cloudnative-pg` for `postgresql.cnpg.io`, `rabbitmq`
+for `rabbitmq.com`, `datadog` for `datadoghq.com`, and the API group itself for any other group.
+The hub sets it.
 
 `GET /api/v1/clusters/{c}/kinds`:
 

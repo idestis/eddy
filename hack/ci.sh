@@ -96,7 +96,7 @@ job_charts() {
   helm template eddy deploy/charts/eddy-agent "${agent[@]}" --set token.existingSecret=agent-token \
     --set replicaCount=3 --set limits.qps=30 --set 'impersonation.groups={eddy:authenticated,eddy:platform}' >/dev/null
   helm template eddy deploy/charts/eddy-agent "${agent[@]}" --set joinToken="$join" >/dev/null
-  helm template eddy deploy/charts/eddy-agent "${agent[@]}" --set 'watch.presets={karpenter,externalSecrets}' --set token.value=x >/dev/null
+  helm template eddy deploy/charts/eddy-agent "${agent[@]}" --set 'watch.presets={karpenter,externalSecrets,cnpg,rabbitmq,datadog}' --set token.value=x >/dev/null
   if helm template eddy deploy/charts/eddy-agent --set cluster.name=test --set joinToken="$join" --set token.value=x >/dev/null 2>&1; then
     echo "agent chart with both a join token and a token must fail"; exit 1
   fi

@@ -55,6 +55,24 @@ rules:
     resources: [externalsecrets, clusterexternalsecrets, secretstores, clustersecretstores, pushsecrets]
     verbs: [get, list, watch]
   {{- end }}
+  {{- if has "cnpg" .Values.watch.presets }}
+  # watch.presets: cnpg. The agent never reads the Secrets these reference.
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, backups, scheduledbackups, poolers]
+    verbs: [get, list, watch]
+  {{- end }}
+  {{- if has "rabbitmq" .Values.watch.presets }}
+  # watch.presets: rabbitmq
+  - apiGroups: [rabbitmq.com]
+    resources: [rabbitmqclusters]
+    verbs: [get, list, watch]
+  {{- end }}
+  {{- if has "datadog" .Values.watch.presets }}
+  # watch.presets: datadog
+  - apiGroups: [datadoghq.com]
+    resources: [datadogagents]
+    verbs: [get, list, watch]
+  {{- end }}
   - apiGroups: [authorization.k8s.io]
     resources: [subjectaccessreviews]
     verbs: [create]

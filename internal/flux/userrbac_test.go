@@ -75,7 +75,7 @@ func TestChartUserRolesMatchReferenceFile(t *testing.T) {
 		presets string
 		keep    func(rbacRule) bool
 	}{
-		{"all presets", "karpenter,externalSecrets", func(rbacRule) bool { return true }},
+		{"all presets", strings.Join(Presets(), ","), func(rbacRule) bool { return true }},
 		{"defaults", "", func(r rbacRule) bool {
 			return !slices.ContainsFunc(r.APIGroups, func(g string) bool { return presetGroups[g] })
 		}},

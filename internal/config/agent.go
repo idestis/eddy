@@ -31,7 +31,8 @@ type Agent struct {
 	CAFile         string   // EDDY_HUB_CA_FILE, optional
 	Namespaces     []string // EDDY_WATCH_NAMESPACES, comma-separated; empty = all
 	// Presets are opt-in groups of kinds to watch (EDDY_WATCH_PRESETS,
-	// comma-separated): "karpenter" and "externalSecrets".
+	// comma-separated): "karpenter", "externalSecrets", "cnpg", "rabbitmq"
+	// and "datadog" (flux.Presets).
 	Presets              []string
 	AllowedGroupPrefixes []string // EDDY_ALLOWED_GROUP_PREFIXES, default "eddy:"
 	AllowedGroups        []string // EDDY_ALLOWED_GROUPS, optional exact allowlist

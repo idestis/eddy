@@ -129,7 +129,7 @@ func TestInventoryReadsAreImpersonated(t *testing.T) {
 func TestKindsEndpoint(t *testing.T) {
 	hello := protocol.Hello{
 		Protocol: protocol.Version, Cluster: "dev", AgentVersion: "v0.2.0", KubernetesVersion: "v1.33.0",
-		Presets: []string{flux.PresetKarpenter, "datadog"},
+		Presets: []string{flux.PresetKarpenter, "kyverno"},
 		Kinds:   []string{"kustomize.toolkit.fluxcd.io/Kustomization", "karpenter.sh/NodePool", "/Secret", "bogus"},
 	}
 	e, _ := inventoryEnv(t, &hello)

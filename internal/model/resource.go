@@ -123,9 +123,10 @@ type Resource struct {
 	// capacity type on NodeClaims or Pod Security levels on Namespaces).
 	Labels map[string]string `json:"labels,omitempty"`
 	// Project groups the kind for navigation: "kubernetes", "flux",
-	// "karpenter", "external-secrets", or the API group itself for any
-	// other group (flux.ProjectOf). The hub sets it on every row, inventory
-	// rows included.
+	// "karpenter", "external-secrets", "cloudnative-pg", "rabbitmq",
+	// "datadog", or the API group itself for any other group
+	// (flux.ProjectOf). The hub sets it on every row, inventory rows
+	// included.
 	Project string `json:"project,omitempty"`
 	// Details are kind-specific facts in display order, e.g. a StorageClass
 	// provisioner or an ExternalSecret's target Secret name. At most
@@ -268,7 +269,7 @@ type ClusterInfo struct {
 	ReadOnly bool   `json:"readOnly,omitempty"`
 	Context  string `json:"context,omitempty"`
 	// Presets are the watch presets the connected agent enables (for
-	// example "karpenter", "externalSecrets").
+	// example "karpenter", "externalSecrets", "cnpg").
 	Presets []string `json:"presets,omitempty"`
 	// Counts are filtered to what the viewer may list.
 	Counts map[Status]int `json:"counts,omitempty"`

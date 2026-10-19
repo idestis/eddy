@@ -152,6 +152,8 @@ func TestProjectOf(t *testing.T) {
 		"image.toolkit.fluxcd.io": "flux", "notification.toolkit.fluxcd.io": "flux",
 		"karpenter.sh": "karpenter", "karpenter.k8s.aws": "karpenter",
 		"external-secrets.io": "external-secrets", "generators.external-secrets.io": "external-secrets",
+		"postgresql.cnpg.io": "cloudnative-pg", "rabbitmq.com": "rabbitmq", "datadoghq.com": "datadog",
+		"cnpg.io": "cnpg.io", "barmancloud.cnpg.io": "barmancloud.cnpg.io",
 		"cert-manager.io": "cert-manager.io", "notfluxcd.io": "notfluxcd.io", "evil-external-secrets.io": "evil-external-secrets.io",
 	}
 	for group, want := range tests {
@@ -163,18 +165,21 @@ func TestProjectOf(t *testing.T) {
 		t.Errorf("unknown group name %q", p.Name)
 	}
 	for _, k := range All() {
-		if want := ProjectOf(k.Group).ID; k.Preset != "" && want != map[string]string{PresetKarpenter: "karpenter", PresetExternalSecrets: "external-secrets"}[k.Preset] {
+		if want := ProjectOf(k.Group).ID; k.Preset != "" && want != map[string]string{
+			PresetKarpenter: "karpenter", PresetExternalSecrets: "external-secrets",
+			PresetCNPG: "cloudnative-pg", PresetRabbitMQ: "rabbitmq", PresetDatadog: "datadog",
+		}[k.Preset] {
 			t.Errorf("%s: preset %s in project %s", k.Kind, k.Preset, want)
 		}
 	}
 }
 
 func TestPresets(t *testing.T) {
-	got, err := ParsePresets([]string{" externalSecrets", "", "karpenter", "karpenter"})
-	if err != nil || !slices.Equal(got, []string{PresetKarpenter, PresetExternalSecrets}) {
+	got, err := ParsePresets([]string{"datadog", " externalSecrets", "", "karpenter", "karpenter"})
+	if err != nil || !slices.Equal(got, []string{PresetKarpenter, PresetExternalSecrets, PresetDatadog}) {
 		t.Fatalf("ParsePresets = %v %v", got, err)
 	}
-	for _, bad := range []string{"datadog", "certManager", "Karpenter"} {
+	for _, bad := range []string{"kyverno", "certManager", "Karpenter", "CNPG"} {
 		if _, err := ParsePresets([]string{bad}); err == nil {
 			t.Errorf("accepted %q", bad)
 		}

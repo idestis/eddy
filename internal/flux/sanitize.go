@@ -3,6 +3,7 @@ package flux
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
@@ -30,7 +31,10 @@ var ErrKindNotAllowed = errors.New("flux: kind is not allowed for yaml")
 //     (CronJobs). env[].valueFrom is kept: it only names the Secret,
 //     ConfigMap or field a value comes from;
 //   - redacts known inline credentials of preset kinds: an EC2NodeClass's
-//     spec.userData and the data of an External Secrets "fake" provider.
+//     spec.userData, the data of an External Secrets "fake" provider, a
+//     CloudNativePG Cluster's post-init SQL and env values, a
+//     RabbitmqCluster's configuration files and a DatadogAgent's API and app
+//     keys, cluster agent token and override env values.
 //
 // The hub runs its own redactor (redact.YAML) on the result as well.
 func SanitizeYAML(u *unstructured.Unstructured) ([]byte, error) {
@@ -80,6 +84,44 @@ func redactInline(group, kind string, obj map[string]any) {
 				}
 			}
 		}
+	case group == GroupCNPG && kind == KindCNPGCluster:
+		redactKeys(mapping(obj, "spec", "bootstrap", "initdb"), "postInitSQL", "postInitApplicationSQL", "postInitTemplateSQL")
+		redactEnvList(maps(obj, "spec", "env"))
+	case group == GroupRabbitMQ && kind == KindRabbitmqCluster:
+		redactKeys(mapping(obj, "spec", "rabbitmq"), "additionalConfig", "advancedConfig", "envConfig", "erlangInetConfig")
+		if spec := mapping(obj, "spec", "override", "statefulSet", "spec", "template", "spec"); spec != nil {
+			redactEnv(spec)
+		}
+	case group == GroupDatadog && kind == KindDatadogAgent:
+		redactKeys(mapping(obj, "spec", "global", "credentials"), "apiKey", "appKey")
+		redactKeys(mapping(obj, "spec", "global"), "clusterAgentToken")
+		for _, o := range mapping(obj, "spec", "override") {
+			comp, _ := o.(map[string]any)
+			redactEnvList(maps(comp, "env"))
+			for _, c := range mapping(comp, "containers") {
+				cont, _ := c.(map[string]any)
+				redactEnvList(maps(cont, "env"))
+			}
+		}
+		for _, d := range []string{"clusterAgent", "clusterChecksRunner"} {
+			redactKeys(mapping(obj, "status", d), "generatedToken")
+		}
+	}
+}
+
+// redactKeys replaces the value of each key present in m.
+func redactKeys(m map[string]any, keys ...string) {
+	for _, key := range keys {
+		if _, ok := m[key]; ok {
+			m[key] = Redacted
+		}
+	}
+}
+
+// redactEnvList replaces every env[].value of a list of EnvVars.
+func redactEnvList(env []map[string]any) {
+	for _, e := range env {
+		redactKeys(e, "value")
 	}
 }
 
@@ -115,11 +157,7 @@ func podSpec(k Kind, obj map[string]any) map[string]any {
 func redactEnv(spec map[string]any) {
 	for _, key := range []string{"initContainers", "containers", "ephemeralContainers"} {
 		for _, c := range maps(spec, key) {
-			for _, e := range maps(c, "env") {
-				if _, ok := e["value"]; ok {
-					e["value"] = Redacted
-				}
-			}
+			redactEnvList(maps(c, "env"))
 		}
 	}
 }
@@ -209,8 +247,10 @@ func trimDependsOn(spec map[string]any) {
 
 // trimPreset drops the parts of preset kinds that summaries never read and
 // that may hold inline data: templates of generated Secrets, provider
-// configuration of stores (only the provider name is kept) and node user
-// data.
+// configuration of stores (only the provider name is kept), node user
+// data, and everything in the spec of CloudNativePG, RabbitMQ and Datadog
+// kinds but the few fields their summaries read (a DatadogAgent's status
+// also loses its generated cluster agent tokens).
 func trimPreset(k Kind, obj map[string]any) {
 	spec := mapping(obj, "spec")
 	if spec == nil {
@@ -244,5 +284,36 @@ func trimPreset(k Kind, obj map[string]any) {
 		delete(spec, "userData")
 		delete(spec, "blockDeviceMappings")
 		delete(spec, "tags")
+	case KindCNPGCluster, KindBackup, KindScheduledBackup, KindPooler:
+		if k.Group == GroupCNPG {
+			keepOnly(spec, "instances", "imageName", "storage", "walStorage", "cluster", "method", "schedule", "suspend", "type", "pgbouncer")
+			keepOnly(mapping(spec, "storage"), "size")
+			keepOnly(mapping(spec, "walStorage"), "size")
+			keepOnly(mapping(spec, "pgbouncer"), "poolMode", "paused")
+		}
+		if k.Kind == KindCNPGCluster {
+			// The status also lists certificates, per-instance reports and
+			// Secret resource versions; summaries read none of them.
+			keepOnly(mapping(obj, "status"), "phase", "phaseReason", "currentPrimary", "image", "readyInstances", "lastSuccessfulBackup", "conditions", "observedGeneration")
+		}
+	case KindRabbitmqCluster:
+		keepOnly(spec, "replicas", "image", "service", "persistence")
+		keepOnly(mapping(spec, "service"), "type")
+		keepOnly(mapping(spec, "persistence"), "storage")
+	case KindDatadogAgent:
+		keepOnly(spec, "global")
+		keepOnly(mapping(spec, "global"), "site")
+		for _, d := range []string{"clusterAgent", "clusterChecksRunner"} {
+			delete(mapping(obj, "status", d), "generatedToken")
+		}
+	}
+}
+
+// keepOnly deletes every key of m not in keys.
+func keepOnly(m map[string]any, keys ...string) {
+	for key := range m {
+		if !slices.Contains(keys, key) {
+			delete(m, key)
+		}
 	}
 }

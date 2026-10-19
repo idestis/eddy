@@ -52,7 +52,7 @@
       "type": "object",
       "properties": {
         "namespaces": {"type": "array", "items": {"type": "string"}},
-        "presets": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["karpenter", "externalSecrets"]}}
+        "presets": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["karpenter", "externalSecrets", "cnpg", "rabbitmq", "datadog"]}}
       }
     },
     "impersonation": {

@@ -118,7 +118,7 @@ func TestAgentPresets(t *testing.T) {
 	}{
 		{"", "", false},
 		{"externalSecrets, karpenter", "karpenter,externalSecrets", false},
-		{"karpenter,datadog", "", true},
+		{"karpenter,kyverno", "", true},
 	} {
 		t.Setenv("EDDY_WATCH_PRESETS", tt.env)
 		a, err := LoadAgent()

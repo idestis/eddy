@@ -123,7 +123,9 @@ var presetCases = []struct {
 	{"", nil},
 	{"karpenter", []string{PresetKarpenter}},
 	{"externalSecrets", []string{PresetExternalSecrets}},
-	{"karpenter,externalSecrets", Presets()},
+	{"cnpg", []string{PresetCNPG}},
+	{"rabbitmq,datadog", []string{PresetRabbitMQ, PresetDatadog}},
+	{strings.Join(Presets(), ","), Presets()},
 }
 
 func hasRead(verbs []string) bool {

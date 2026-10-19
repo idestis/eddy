@@ -98,6 +98,18 @@ func Summarize(k Kind, u *unstructured.Unstructured, owners OwnerLookup) model.R
 		summarizeSecretStore(obj, &r)
 	case k.Kind == KindPushSecret:
 		summarizePushSecret(obj, &r)
+	case k.Group == GroupCNPG && k.Kind == KindCNPGCluster:
+		summarizeCNPGCluster(obj, &r)
+	case k.Group == GroupCNPG && k.Kind == KindBackup:
+		summarizeBackup(obj, &r)
+	case k.Kind == KindScheduledBackup:
+		summarizeScheduledBackup(obj, &r)
+	case k.Kind == KindPooler:
+		summarizePooler(obj, &r)
+	case k.Kind == KindRabbitmqCluster:
+		summarizeRabbitmqCluster(obj, &r)
+	case k.Kind == KindDatadogAgent:
+		summarizeDatadogAgent(obj, &r)
 	case !k.Namespaced || k.Preset != "":
 		// Not reached for the kinds above; a guard so a new cluster-scoped
 		// or preset kind never falls into the workload rules.

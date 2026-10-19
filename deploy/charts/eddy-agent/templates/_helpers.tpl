@@ -120,6 +120,24 @@ patch on the Flux kinds. Never Secrets or ConfigMaps.
   resources: [externalsecrets, clusterexternalsecrets, secretstores, clustersecretstores, pushsecrets]
   verbs: [get, list, watch]
 {{- end }}
+{{- if has "cnpg" $presets }}
+# watch.presets: cnpg. The Secrets these reference stay unreadable.
+- apiGroups: [postgresql.cnpg.io]
+  resources: [clusters, backups, scheduledbackups, poolers]
+  verbs: [get, list, watch]
+{{- end }}
+{{- if has "rabbitmq" $presets }}
+# watch.presets: rabbitmq
+- apiGroups: [rabbitmq.com]
+  resources: [rabbitmqclusters]
+  verbs: [get, list, watch]
+{{- end }}
+{{- if has "datadog" $presets }}
+# watch.presets: datadog
+- apiGroups: [datadoghq.com]
+  resources: [datadogagents]
+  verbs: [get, list, watch]
+{{- end }}
 # Logs are readable in the UI only with this (and over MCP only when mcp.allowLogs is on).
 - apiGroups: [""]
   resources: [pods/log]
