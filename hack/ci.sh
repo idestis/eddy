@@ -12,8 +12,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-STATICCHECK="${STATICCHECK:-honnef.co/go/tools/cmd/staticcheck@v0.8.1}"
-GOVULNCHECK="${GOVULNCHECK:-golang.org/x/vuln/cmd/govulncheck@v1.1.4}"
+STATICCHECK="${STATICCHECK:-honnef.co/go/tools/cmd/staticcheck@v0.8.2}"
+GOVULNCHECK="${GOVULNCHECK:-golang.org/x/vuln/cmd/govulncheck@v1.9.0}"
 PG_CONTAINER=eddy-ci-pg
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
