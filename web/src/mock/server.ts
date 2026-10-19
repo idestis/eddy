@@ -1548,7 +1548,15 @@ const CLUSTER_SCOPED = new Set([
   "ClusterSecretStore",
 ]);
 
-const PROJECT_ORDER = ["kubernetes", "flux", "karpenter", "external-secrets"];
+const PROJECT_ORDER = [
+  "kubernetes",
+  "flux",
+  "karpenter",
+  "external-secrets",
+  "cloudnative-pg",
+  "rabbitmq",
+  "datadog",
+];
 
 /** GET …/kinds: the watched kinds (count 0 included) plus every kind with inventory-only rows. */
 export function kindsOf(cl: MockCluster): KindsResponse {

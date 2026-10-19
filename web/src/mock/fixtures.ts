@@ -34,6 +34,11 @@ const VERSIONS: Record<string, string> = {
   EC2NodeClass: "v1",
   PushSecret: "v1alpha1",
   DatadogAgent: "v2alpha1",
+  Cluster: "v1",
+  Backup: "v1",
+  ScheduledBackup: "v1",
+  Pooler: "v1",
+  RabbitmqCluster: "v1beta1",
 };
 
 /** Kinds added with the kinds/projects work: they get no scaling events and show details instead. */
@@ -151,7 +156,7 @@ const SEEDS: ClusterSeed[] = [
       agentVersion: "v1.0.0",
       kubernetesVersion: "v1.33.1",
       fluxVersion: "v2.7.0",
-      presets: ["karpenter", "externalSecrets"],
+      presets: ["karpenter", "externalSecrets", "cnpg", "rabbitmq"],
     },
     branch: "main",
   },
@@ -169,7 +174,7 @@ const SEEDS: ClusterSeed[] = [
       agentVersion: "v1.0.0",
       kubernetesVersion: "v1.33.1",
       fluxVersion: "v2.7.0",
-      presets: ["externalSecrets"],
+      presets: ["externalSecrets", "datadog"],
     },
     branch: "main",
   },
@@ -553,7 +558,8 @@ export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockClus
   inv("ClusterRole", "rbac.authorization.k8s.io", "", "cert-manager-controller-certificates", hCert);
   inv("ClusterIssuer", "cert-manager.io", "", "letsencrypt-prod", kConfigs);
   if (prod || dev) {
-    inv("DatadogAgent", "datadoghq.com", "monitoring", "datadog", kInfra);
+    if (!info.presets?.includes("datadog"))
+      inv("DatadogAgent", "datadoghq.com", "monitoring", "datadog", kInfra);
     inv("DatadogMonitor", "datadoghq.com", "monitoring", "checkout-latency", kApps);
   }
   const preset = (name: string) => Boolean(info.presets?.includes(name));
@@ -709,6 +715,127 @@ export function buildCluster(seedInfo: ClusterSeed, extraPods: number): MockClus
     claim(general, "m6i.4xlarge", "on-demand", "eu-central-1b");
     claim(general, "m6i.2xlarge", "on-demand", "eu-central-1c", true);
     claim(batch, "c6i.4xlarge", "spot", "eu-central-1a");
+  }
+
+  // CloudNativePG (opt-in preset). One Backup fails.
+  if (preset("cnpg")) {
+    const pg = add(
+      make("Cluster", "apps", "checkout-pg", {
+        owner: refOf(kApps),
+        replicas: "3/3",
+        images: ["ghcr.io/cloudnative-pg/postgresql:16.4"],
+        message: "3/3 instances · primary checkout-pg-1",
+        conditions: readyCondition("ready", "ClusterIsReady", "Cluster is Ready"),
+        details: [
+          detail("Instances", "3/3"),
+          detail("Primary", "checkout-pg-1"),
+          detail("Image", "ghcr.io/cloudnative-pg/postgresql:16.4"),
+          detail("Storage", "50Gi"),
+          detail("Last backup", ago(60 * 5)),
+        ],
+      }),
+    );
+    const reporting = add(
+      make("Cluster", "apps", "reporting-pg", {
+        owner: refOf(kApps),
+        status: "failed",
+        replicas: "1/2",
+        images: ["ghcr.io/cloudnative-pg/postgresql:16.4"],
+        message: "Cluster is in an unrecoverable state, needs manual intervention",
+        conditions: readyCondition(
+          "failed",
+          "ClusterIsNotReady",
+          "Cluster is in an unrecoverable state, needs manual intervention",
+        ),
+        details: [
+          detail("Instances", "1/2"),
+          detail("Primary", "-"),
+          detail("Image", "ghcr.io/cloudnative-pg/postgresql:16.4"),
+          detail("Storage", "20Gi"),
+        ],
+      }),
+    );
+    reporting.events = [
+      ev("Warning", "ClusterUnrecoverable", reporting.message ?? "", 18, 3),
+      ev("Normal", "CreatingInstance", "Primary instance is being created", 2880),
+    ];
+    const backup = (name: string, status: Status, method: string, message: string, minutesAgo: number) =>
+      add(
+        make("Backup", "apps", name, {
+          owner: refOf(pg),
+          status,
+          message,
+          source: refOf(pg),
+          details: [
+            detail("Cluster", pg.name),
+            detail("Method", method),
+            detail("Started", ago(minutesAgo + 4)),
+            ...(status === "reconciling" ? [] : [detail("Stopped", ago(minutesAgo))]),
+          ],
+        }),
+      );
+    backup("checkout-pg-20250601", "completed", "barmanObjectStore", "Completed in 4m0s", 60 * 5);
+    backup("checkout-pg-20250531", "failed", "barmanObjectStore", "could not upload WAL archive", 60 * 29);
+    backup("checkout-pg-manual", "reconciling", "volumeSnapshot", "Running", 2);
+    const next = ago(-60 * 19);
+    add(
+      make("ScheduledBackup", "apps", "checkout-pg-daily", {
+        owner: refOf(kApps),
+        schedule: "0 0 2 * * *",
+        message: `Next backup at ${next}`,
+        details: [
+          detail("Cluster", pg.name),
+          detail("Method", "barmanObjectStore"),
+          detail("Last schedule", ago(60 * 5)),
+          detail("Next schedule", next),
+        ],
+      }),
+    );
+    add(
+      make("Pooler", "apps", "checkout-pg-pooler-rw", {
+        owner: refOf(kApps),
+        replicas: "2/2",
+        message: "2/2 instances",
+        details: [
+          detail("Cluster", pg.name),
+          detail("Type", "rw"),
+          detail("Pool mode", "transaction"),
+          detail("Instances", "2/2"),
+        ],
+      }),
+    );
+  }
+
+  // RabbitMQ (opt-in preset).
+  if (preset("rabbitmq")) {
+    add(
+      make("RabbitmqCluster", "apps", "events", {
+        owner: refOf(kApps),
+        replicas: "3/3",
+        images: ["rabbitmq:3.13.7-management"],
+        message: "3/3 replicas",
+        conditions: readyCondition("ready", "AllReplicasReady", "3/3 replicas"),
+        details: [detail("Replicas", "3"), detail("Image", "rabbitmq:3.13.7-management")],
+      }),
+    );
+  }
+
+  // Datadog (opt-in preset).
+  if (preset("datadog")) {
+    add(
+      make("DatadogAgent", "monitoring", "datadog", {
+        owner: refOf(kInfra),
+        replicas: "12/12",
+        message: "Node agent 12/12 · cluster agent 2/2",
+        conditions: readyCondition("ready", "Ready", "Node agent 12/12 · cluster agent 2/2"),
+        details: [
+          detail("Node agent", "12/12"),
+          detail("Cluster agent", "2/2"),
+          detail("Cluster checks runner", "2/2"),
+          detail("Site", "datadoghq.eu"),
+        ],
+      }),
+    );
   }
 
   // External Secrets (opt-in preset). One ExternalSecret fails to sync.

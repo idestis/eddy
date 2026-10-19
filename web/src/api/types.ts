@@ -69,7 +69,7 @@ export interface Resource extends Ref {
    * It carries kind, namespace and name only, with status "unknown".
    */
   inventoryOnly?: boolean;
-  /** The owning project: "kubernetes", "flux", "karpenter", "external-secrets" or the API group itself. */
+  /** The owning project: "kubernetes", "flux", "karpenter", "external-secrets", "cloudnative-pg", "rabbitmq", "datadog" or the API group itself. */
   project?: string;
   /** Kind-specific facts in display order (at most 12), e.g. a NodePool's CPU usage against its limit. */
   details?: Array<{ label: string; value: string }>;
@@ -131,7 +131,7 @@ export interface ClusterInfo {
   mode?: "local";
   /** The agent refuses reconcile, suspend and resume. */
   readOnly?: boolean;
-  /** Watch presets the agent has on ("karpenter", "externalSecrets"). */
+  /** Watch presets the agent has on ("karpenter", "externalSecrets", "cnpg", "rabbitmq", "datadog"). */
   presets?: string[];
   /** The kubeconfig context a local-mode agent serves. */
   context?: string;

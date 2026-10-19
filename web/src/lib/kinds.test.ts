@@ -80,7 +80,15 @@ describe("buildNav", () => {
   const nav = buildNav(kinds);
 
   it("groups the registered kinds into their project sections, in order", () => {
-    expect(ids(nav)).toEqual(["flux", "workloads", "cluster", "karpenter", "external-secrets", "other"]);
+    expect(ids(nav)).toEqual([
+      "flux",
+      "workloads",
+      "cluster",
+      "karpenter",
+      "external-secrets",
+      "datadog",
+      "other",
+    ]);
     expect(ids(nav.find((n) => n.id === "karpenter")?.children ?? [])).toEqual(["NodePool", "NodeClaim"]);
   });
 
@@ -90,6 +98,14 @@ describe("buildNav", () => {
     expect(workloads?.children?.[0]?.keep).toBe(true);
     // ExternalSecret is inventory-only here with no rows; PushSecret has one.
     expect(ids(nav.find((n) => n.id === "external-secrets")?.children ?? [])).toEqual(["PushSecret"]);
+  });
+
+  it("lists a preset project's registered kinds in its own section, not under Other", () => {
+    const datadog = nav.find((n) => n.id === "datadog");
+    expect(datadog?.label).toBe("Datadog");
+    expect(ids(datadog?.children ?? [])).toEqual(["DatadogAgent"]);
+    expect(ids(NAV_TREE).slice(-4)).toEqual(["cloudnative-pg", "rabbitmq", "datadog", "other"]);
+    expect(flatNav(NAV_TREE).find((n) => n.id === "Cluster")?.label).toBe("Postgres clusters");
   });
 
   it("marks kinds that appear only as inventory rows", () => {
@@ -105,8 +121,7 @@ describe("buildNav", () => {
       ["g:core", "core"],
       ["g:datadoghq.com", "datadoghq.com"],
     ]);
-    expect(ids(other?.children?.[1]?.children ?? [])).toEqual(["DatadogAgent", "DatadogMonitor"]);
-    expect(other?.children?.[1]?.children?.[0]?.label).toBe("DatadogAgents");
+    expect(ids(other?.children?.[1]?.children ?? [])).toEqual(["DatadogMonitor"]);
     expect(other?.children?.[0]?.children?.every((k) => k.inventory)).toBe(true);
   });
 
@@ -144,7 +159,7 @@ describe("kind filters and counts", () => {
       items: [
         item("NodePool", "karpenter.sh", 2),
         item("ConfigMap", "", 3, false),
-        item("DatadogAgent", "datadoghq.com", 1, false),
+        item("DatadogMonitor", "datadoghq.com", 1, false),
       ],
       projects: [],
       presets: [],
@@ -154,7 +169,7 @@ describe("kind filters and counts", () => {
       { kind: "NodePool", group: "karpenter.sh" },
       { kind: "ConfigMap", group: "" },
       { kind: "ConfigMap", group: "" },
-      { kind: "DatadogAgent", group: "datadoghq.com" },
+      { kind: "DatadogMonitor", group: "datadoghq.com" },
     ];
     const counts = navCounts(nav, rows);
     expect(counts.get("karpenter")).toBe(2);
@@ -166,13 +181,16 @@ describe("kind filters and counts", () => {
 
   it("names projects and headings", () => {
     expect(projectOf("karpenter.k8s.aws")).toBe("karpenter");
+    expect(projectOf("postgresql.cnpg.io")).toBe("cloudnative-pg");
+    expect(projectOf("rabbitmq.com")).toBe("rabbitmq");
+    expect(projectOf("datadoghq.com")).toBe("datadog");
     expect(projectOf("storage.k8s.io")).toBe("kubernetes");
     expect(projectOf("notification.toolkit.fluxcd.io")).toBe("flux");
-    expect(projectOf("datadoghq.com")).toBe("datadoghq.com");
+    expect(projectOf("cert-manager.io")).toBe("cert-manager.io");
     expect(kindHeading("NodePool", "karpenter")).toBe("Karpenter · NodePools");
     expect(kindHeading("Deployment", "kubernetes")).toBe("Deployments");
     expect(kindInfo("NetworkPolicy").plural).toBe("NetworkPolicies");
-    expect(kindInfo("DatadogAgent").plural).toBe("DatadogAgents");
+    expect(kindInfo("DatadogMonitor").plural).toBe("DatadogMonitors");
     expect(filterLabel("g:datadoghq.com")).toBe("datadoghq.com");
   });
 });

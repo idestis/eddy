@@ -162,7 +162,7 @@ hub:
 
 watch:
   namespaces: []           # empty = the whole cluster
-  presets: [karpenter, externalSecrets]   # optional, see below
+  presets: [karpenter, externalSecrets, cnpg, rabbitmq, datadog]   # optional, see below
 
 impersonation:
   groups: [eddy:authenticated, eddy:github:acme/platform]   # pin group impersonation (recommended)
@@ -249,7 +249,8 @@ $ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.
                 <code>watch.presets</code>
               </th>
               <td>
-                <code>karpenter</code> and <code>externalSecrets</code>
+                <code>karpenter</code>, <code>externalSecrets</code>, <code>cnpg</code>, <code>rabbitmq</code>{" "}
+                and <code>datadog</code>
               </td>
             </tr>
             <tr>
@@ -314,6 +315,15 @@ $ helm install eddy-agent oci://ghcr.io/idestis/charts/eddy-agent --version 1.0.
         <li>
           <code>externalSecrets</code>: ExternalSecret, ClusterExternalSecret, SecretStore, ClusterSecretStore
           and PushSecret (<code>external-secrets.io</code>). The Secrets they produce are never read.
+        </li>
+        <li>
+          <code>cnpg</code>: Cluster, Backup, ScheduledBackup and Pooler (<code>postgresql.cnpg.io</code>).
+        </li>
+        <li>
+          <code>rabbitmq</code>: RabbitmqCluster (<code>rabbitmq.com</code>).
+        </li>
+        <li>
+          <code>datadog</code>: DatadogAgent (<code>datadoghq.com</code>).
         </li>
       </ul>
       <p>

@@ -13,6 +13,9 @@ export type Section =
   | "cluster"
   | "karpenter"
   | "external-secrets"
+  | "cloudnative-pg"
+  | "rabbitmq"
+  | "datadog"
   | "other";
 
 /** The project (docs/api.md "Kinds and projects") an API group belongs to. */
@@ -21,6 +24,9 @@ export function projectOf(group: string): string {
   if (group.endsWith(".fluxcd.io")) return "flux";
   if (group === "karpenter.sh" || group === "karpenter.k8s.aws") return "karpenter";
   if (group === "external-secrets.io") return "external-secrets";
+  if (group === "postgresql.cnpg.io") return "cloudnative-pg";
+  if (group === "rabbitmq.com") return "rabbitmq";
+  if (group === "datadoghq.com") return "datadog";
   if (group.endsWith(".k8s.io")) return "kubernetes";
   return group;
 }
@@ -30,6 +36,9 @@ const PROJECT_NAMES: Record<string, string> = {
   flux: "Flux",
   karpenter: "Karpenter",
   "external-secrets": "External Secrets",
+  "cloudnative-pg": "CloudNativePG",
+  rabbitmq: "RabbitMQ",
+  datadog: "Datadog",
 };
 
 /** Display name of a project; an API-group project is shown as the group itself. */
@@ -65,6 +74,9 @@ const FLUX_SOURCE = "source.toolkit.fluxcd.io";
 const KARPENTER = "karpenter.sh";
 const KARPENTER_AWS = "karpenter.k8s.aws";
 const ESO = "external-secrets.io";
+const CNPG = "postgresql.cnpg.io";
+const RABBITMQ = "rabbitmq.com";
+const DATADOG = "datadoghq.com";
 
 const k = (
   kind: string,
@@ -125,6 +137,15 @@ export const KINDS: readonly KindInfo[] = [
     preset: "externalSecrets",
   }),
   k("PushSecret", ESO, "PS", "PushSecrets", "upload", "external-secrets", { preset: "externalSecrets" }),
+  k("Cluster", CNPG, "PG", "Postgres clusters", "db", "cloudnative-pg", { preset: "cnpg", workload: true }),
+  k("Backup", CNPG, "BAK", "Backups", "disk", "cloudnative-pg", { preset: "cnpg" }),
+  k("ScheduledBackup", CNPG, "SBAK", "ScheduledBackups", "clock", "cloudnative-pg", { preset: "cnpg" }),
+  k("Pooler", CNPG, "POOL", "Poolers", "plug", "cloudnative-pg", { preset: "cnpg" }),
+  k("RabbitmqCluster", RABBITMQ, "RMQ", "RabbitmqClusters", "nodes", "rabbitmq", {
+    preset: "rabbitmq",
+    workload: true,
+  }),
+  k("DatadogAgent", DATADOG, "DDA", "DatadogAgents", "chip", "datadog", { preset: "datadog" }),
 ];
 
 const BY_KIND = new Map(KINDS.map((info, i) => [info.kind, { ...info, order: i }]));
@@ -195,7 +216,7 @@ const OTHER: NavNode = { id: "other", label: "Other", icon: "file", kinds: [], h
 /**
  * The static Browse tree: the fallback for a hub without the kinds endpoint. Every parent is
  * also a page that shows all of its children, grouped by kind. The sections an older hub does
- * not serve (Cluster, Karpenter, External Secrets) hide while they hold nothing.
+ * not serve (Cluster, Karpenter, External Secrets, CloudNativePG, RabbitMQ, Datadog) hide while they hold nothing.
  */
 export const NAV_TREE: readonly NavNode[] = [
   parent("flux", "Flux", "flux", [
@@ -244,6 +265,14 @@ export const NAV_TREE: readonly NavNode[] = [
     leaf("ClusterSecretStore", undefined, false),
     leaf("PushSecret", undefined, false),
   ]),
+  parent("cloudnative-pg", "CloudNativePG", "db", [
+    leaf("Cluster", "Postgres clusters", false),
+    leaf("Backup", undefined, false),
+    leaf("ScheduledBackup", undefined, false),
+    leaf("Pooler", undefined, false),
+  ]),
+  parent("rabbitmq", "RabbitMQ", "nodes", [leaf("RabbitmqCluster", undefined, false)]),
+  parent("datadog", "Datadog", "chip", [leaf("DatadogAgent", undefined, false)]),
   OTHER,
 ];
 

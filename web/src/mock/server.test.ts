@@ -162,13 +162,27 @@ describe("mock kinds and inventory reads", () => {
       project: "karpenter",
     });
     expect(find(prod, "NodePool")?.count).toBeGreaterThan(0);
-    expect(find(prod, "DatadogAgent")).toMatchObject({ watched: false, project: "datadoghq.com" });
-    expect(prod.projects.map((p) => p.id).slice(0, 4)).toEqual([
+    expect(find(prod, "DatadogAgent")).toMatchObject({ watched: false, project: "datadog" });
+    expect(find(prod, "Cluster")).toMatchObject({
+      watched: true,
+      preset: "cnpg",
+      project: "cloudnative-pg",
+    });
+    expect(find(prod, "RabbitmqCluster")).toMatchObject({ watched: true, preset: "rabbitmq" });
+    expect(prod.projects.map((p) => p.id).slice(0, 6)).toEqual([
       "kubernetes",
       "flux",
       "karpenter",
       "external-secrets",
+      "cloudnative-pg",
+      "rabbitmq",
     ]);
+    const staging = (await call<KindsResponse>(hub, "GET", "/api/v1/clusters/staging/kinds")).data;
+    expect(find(staging, "DatadogAgent")).toMatchObject({
+      watched: true,
+      preset: "datadog",
+      project: "datadog",
+    });
     const dev = (await call<KindsResponse>(hub, "GET", "/api/v1/clusters/dev/kinds")).data;
     expect(find(dev, "ExternalSecret")).toMatchObject({ watched: false });
     expect(find(dev, "NodePool")?.watched).toBe(false);
