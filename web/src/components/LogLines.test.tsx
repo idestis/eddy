@@ -33,11 +33,21 @@ beforeAll(() => {
     },
   });
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 800 });
+  // The virtualizer sizes the scroller from its client box.
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return height(this);
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 800 });
 });
 afterAll(() => {
   HTMLElement.prototype.getBoundingClientRect = realRect;
   if (realHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", realHeight);
   if (realWidth) Object.defineProperty(HTMLElement.prototype, "offsetWidth", realWidth);
+  Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+  Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
 });
 
 function setup(onAsk = vi.fn()) {
