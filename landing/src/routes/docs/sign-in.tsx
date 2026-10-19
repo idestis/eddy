@@ -206,7 +206,7 @@ config:
           Then upgrade:
           <CodeBlock
             code={`
-$ helm upgrade --install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.0.1 \\
+$ helm upgrade --install eddy-hub oci://ghcr.io/idestis/charts/eddy-hub --version 1.1.0 \\
     -n eddy -f hub-values.yaml
 `}
           />
@@ -566,7 +566,7 @@ config:
           Generate a hash. The command reads the password from standard input:
           <CodeBlock
             code={`
-$ read -rs PW && printf '%s' "$PW" | docker run --rm -i ghcr.io/idestis/eddy-hub:1.0.1 hash-password
+$ read -rs PW && printf '%s' "$PW" | docker run --rm -i ghcr.io/idestis/eddy-hub:1.1.0 hash-password
 `}
           />
         </li>
