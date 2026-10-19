@@ -15,7 +15,7 @@ discuss larger changes before you write code.
 
 Requirements:
 - Go 1.26+
-- Node 22+ with pnpm (`corepack enable`)
+- Node 26+ with pnpm (the version `web/package.json` pins; Node 25+ has no corepack)
 - [Task](https://taskfile.dev)
 - Optional: [air](https://github.com/air-verse/air) for Go hot reload. The tasks fall back to
   `go run` of a pinned air version when it is not installed.

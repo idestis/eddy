@@ -11,8 +11,8 @@ quickstart in [install.md](install.md).
 ## Prerequisites
 
 - Go 1.26 or later. The module asks for toolchain 1.27, which `go` downloads if needed.
-- Node 22 or later and pnpm (`corepack enable` gives you the version pinned in
-  `web/package.json`).
+- Node 26 or later and pnpm. Node 25+ no longer ships corepack, so install the version
+  `web/package.json` pins with `npm install -g pnpm@<version>`.
 - [Task](https://taskfile.dev) 3.
 - Optional: [air](https://github.com/air-verse/air) on your `PATH`
   (`go install github.com/air-verse/air@latest`). Without it, the tasks run a pinned
